@@ -1,5 +1,3 @@
-This is a work in progress and will work with next Centrifugo release.
-
 Gocent
 ======
 
