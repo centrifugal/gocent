@@ -191,6 +191,19 @@ func (c *Client) AddHistory(channel string) error {
 	return nil
 }
 
+// AddChannels adds channels command to client command buffer but not actually
+// send it until Send method explicitly called.
+func (c *Client) AddChannels() error {
+	c.Lock()
+	defer c.Unlock()
+	cmd := Command{
+		Method: "channels",
+		Params: map[string]string{},
+	}
+	c.cmds = append(c.cmds, cmd)
+	return nil
+}
+
 // Publish sends publish command to server and returns boolean indicator of success and
 // any error occurred in process.
 func (c *Client) Publish(channel string, data []byte) (bool, error) {
@@ -291,6 +304,26 @@ func (c *Client) History(channel string) ([]libcentrifugo.Message, error) {
 	return DecodeHistory(resp.Body)
 }
 
+// Channels sends channels command to server and returns slice with
+// active channels (with one or more subscribers) in project.
+func (c *Client) Channels() ([]libcentrifugo.Channel, error) {
+	if !c.empty() {
+		return []libcentrifugo.Channel{}, ErrClientNotEmpty
+	}
+	c.AddChannels()
+	c.Lock()
+	defer c.Unlock()
+	result, err := c.Send()
+	if err != nil {
+		return []libcentrifugo.Channel{}, err
+	}
+	resp := result[0]
+	if resp.Error != "" {
+		return []libcentrifugo.Channel{}, errors.New(resp.Error)
+	}
+	return DecodeChannels(resp.Body)
+}
+
 // DecodePublish allows to decode response body of publish command to get
 // success flag from it. Currently no error in response means success - so nothing
 // to do here yet.
@@ -318,6 +351,16 @@ func DecodeHistory(body []byte) ([]libcentrifugo.Message, error) {
 	err := json.Unmarshal(body, &d)
 	if err != nil {
 		return []libcentrifugo.Message{}, err
+	}
+	return d.Data, nil
+}
+
+// DecodeChannels allows to decode channels command response body to get a slice of channels.
+func DecodeChannels(body []byte) ([]libcentrifugo.Channel, error) {
+	var d libcentrifugo.ChannelsBody
+	err := json.Unmarshal(body, &d)
+	if err != nil {
+		return []libcentrifugo.Channel{}, err
 	}
 	return d.Data, nil
 }
