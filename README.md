@@ -1,7 +1,7 @@
 Gocent
 ======
 
-Gocent is a [Go](http://golang.org/) HTTP API client for the [Centrifugo](https://github.com/centrifugal/centrifugo) real-time messaging server.
+Gocent is a [Go](http://golang.org/) HTTP API client for [Centrifugo](https://github.com/centrifugal/centrifugo) real-time messaging server.
 
 Documentation
 -------------
