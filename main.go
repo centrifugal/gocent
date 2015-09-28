@@ -11,7 +11,7 @@
 // for channel and finally show how to publish several messages in one POST request to API
 // endpoint using internal command buffer.
 //
-//  c := NewClient("http://localhost:8000", "development", "secret", 5*time.Second)
+//  c := NewClient("http://localhost:8000", "secret", 5*time.Second)
 //  ok, err := c.Publish("$public:chat", []byte(`{"input": "test"}`))
 //  if err != nil {
 //  	println(err.Error())
@@ -57,7 +57,6 @@ type Client struct {
 	sync.RWMutex
 
 	Endpoint string
-	Key      string
 	Secret   string
 	Timeout  time.Duration
 	cmds     []Command
@@ -81,18 +80,17 @@ type Result []Response
 
 // NewClient returns initialized client instance based on provided server address,
 //project key, project secret and timeout.
-func NewClient(addr, key, secret string, timeout time.Duration) *Client {
+func NewClient(addr, secret string, timeout time.Duration) *Client {
 
 	addr = strings.TrimRight(addr, "/")
 	if !strings.HasSuffix(addr, "/api") {
 		addr = addr + "/api"
 	}
 
-	apiEndpoint := addr + "/" + key
+	apiEndpoint := addr + "/"
 
 	return &Client{
 		Endpoint: apiEndpoint,
-		Key:      key,
 		Secret:   secret,
 		Timeout:  timeout,
 		cmds:     []Command{},
@@ -404,7 +402,7 @@ func (c *Client) send(cmds []Command) (Result, error) {
 		return Result{}, err
 	}
 
-	r.Header.Set("X-API-Sign", auth.GenerateApiSign(c.Secret, c.Key, data))
+	r.Header.Set("X-API-Sign", auth.GenerateApiSign(c.Secret, data))
 	r.Header.Add("Content-Type", "application/json")
 
 	resp, err := client.Do(r)
