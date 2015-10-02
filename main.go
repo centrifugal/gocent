@@ -202,6 +202,19 @@ func (c *Client) AddChannels() error {
 	return nil
 }
 
+// AddStats adds stats command to client command buffer but not actually
+// send it until Send method explicitly called.
+func (c *Client) AddStats() error {
+	c.Lock()
+	defer c.Unlock()
+	cmd := Command{
+		Method: "stats",
+		Params: map[string]string{},
+	}
+	c.cmds = append(c.cmds, cmd)
+	return nil
+}
+
 // Publish sends publish command to server and returns boolean indicator of success and
 // any error occurred in process.
 func (c *Client) Publish(channel string, data []byte) (bool, error) {
@@ -303,7 +316,7 @@ func (c *Client) History(channel string) ([]libcentrifugo.Message, error) {
 }
 
 // Channels sends channels command to server and returns slice with
-// active channels (with one or more subscribers) in project.
+// active channels (with one or more subscribers).
 func (c *Client) Channels() ([]libcentrifugo.Channel, error) {
 	if !c.empty() {
 		return []libcentrifugo.Channel{}, ErrClientNotEmpty
@@ -320,6 +333,25 @@ func (c *Client) Channels() ([]libcentrifugo.Channel, error) {
 		return []libcentrifugo.Channel{}, errors.New(resp.Error)
 	}
 	return DecodeChannels(resp.Body)
+}
+
+// Stats sends stats command to server and returns libcentrifugo.Stats.
+func (c *Client) Stats() ([]libcentrifugo.Stats, error) {
+	if !c.empty() {
+		return libcentrifugo.Stats{}, ErrClientNotEmpty
+	}
+	c.AddStats()
+	c.Lock()
+	defer c.Unlock()
+	result, err := c.Send()
+	if err != nil {
+		return libcentrifugo.Stats{}, err
+	}
+	resp := result[0]
+	if resp.Error != "" {
+		return libcentrifugo.Stats{}, errors.New(resp.Error)
+	}
+	return DecodeStats(resp.Body)
 }
 
 // DecodePublish allows to decode response body of publish command to get
@@ -359,6 +391,16 @@ func DecodeChannels(body []byte) ([]libcentrifugo.Channel, error) {
 	err := json.Unmarshal(body, &d)
 	if err != nil {
 		return []libcentrifugo.Channel{}, err
+	}
+	return d.Data, nil
+}
+
+// DecodeStats allows to decode stats command response body.
+func DecodeStats(body []byte) (libcentrifugo.Stats, error) {
+	var d libcentrifugo.StatsBody
+	err := json.Unmarshal(body, &d)
+	if err != nil {
+		return libcentrifugo.Stats{}, err
 	}
 	return d.Data, nil
 }
