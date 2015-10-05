@@ -128,6 +128,25 @@ func (c *Client) AddPublish(channel string, data []byte) error {
 	return nil
 }
 
+// AddPublishClient adds publish command to client command buffer but not actually
+// send it until Send method explicitly called.
+func (c *Client) AddPublishClient(channel string, data []byte, client string) error {
+	c.Lock()
+	defer c.Unlock()
+	var raw json.RawMessage
+	raw = json.RawMessage(data)
+	cmd := Command{
+		Method: "publish",
+		Params: map[string]interface{}{
+			"channel": channel,
+			"data":    &raw,
+			"client":  client,
+		},
+	}
+	c.cmds = append(c.cmds, cmd)
+	return nil
+}
+
 // AddUnsubscribe adds unsubscribe command to client command buffer but not actually
 // send it until Send method explicitly called.
 func (c *Client) AddUnsubscribe(channel string, user string) error {
@@ -222,6 +241,26 @@ func (c *Client) Publish(channel string, data []byte) (bool, error) {
 		return false, ErrClientNotEmpty
 	}
 	c.AddPublish(channel, data)
+	c.Lock()
+	defer c.Unlock()
+	result, err := c.Send()
+	if err != nil {
+		return false, err
+	}
+	resp := result[0]
+	if resp.Error != "" {
+		return false, errors.New(resp.Error)
+	}
+	return DecodePublish(resp.Body)
+}
+
+// PublishClient sends publish command to server and returns boolean indicator of success and
+// any error occurred in process. `client` is client ID initiating this event.
+func (c *Client) PublishClient(channel string, data []byte, client string) (bool, error) {
+	if !c.empty() {
+		return false, ErrClientNotEmpty
+	}
+	c.AddPublishClient(channel, data, client)
 	c.Lock()
 	defer c.Unlock()
 	result, err := c.Send()
