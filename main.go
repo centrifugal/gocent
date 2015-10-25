@@ -11,22 +11,26 @@
 // for channel and finally show how to publish several messages in one POST request to API
 // endpoint using internal command buffer.
 //
-//  c := NewClient("http://localhost:8000", "development", "secret", 5*time.Second)
+//  c := NewClient("http://localhost:8000", "secret", 5*time.Second)
 //  ok, err := c.Publish("$public:chat", []byte(`{"input": "test"}`))
 //  if err != nil {
 //  	println(err.Error())
 //  	return
 //  }
-//  println(ok)
+//  println("Publish successful:", ok)
 //  presence, _ := c.Presence("$public:chat")
-//  fmt.Printf("%v", presence)
+//  fmt.Printf("Presense: %v\n", presence)
 //  history, _ := c.History("$public:chat")
-//  fmt.Printf("%v", history)
+//  fmt.Printf("History: %v\n", history)
+//	channels, _ := c.Channels()
+//	fmt.Printf("Channels: %v\n", channels)
+//	stats, _ := c.Stats()
+//	fmt.Printf("Stats: %v\n", stats)
 //  _ = c.AddPublish("$public:chat", []byte(`{"input": "test1"}`))
 //  _ = c.AddPublish("$public:chat", []byte(`{"input": "test2"}`))
 //  _ = c.AddPublish("$public:chat", []byte(`{"input": "test3"}`))
 //  result, err := c.Send()
-//  println(len(result))
+//  println("Sent", len(result), "publish commands in one request")
 //
 package gocent // import "github.com/centrifugal/gocent"
 
@@ -42,6 +46,7 @@ import (
 
 	"github.com/centrifugal/centrifugo/libcentrifugo"
 	"github.com/centrifugal/centrifugo/libcentrifugo/auth"
+	"github.com/nu7hatch/gouuid"
 )
 
 var (
@@ -57,7 +62,6 @@ type Client struct {
 	sync.RWMutex
 
 	Endpoint string
-	Key      string
 	Secret   string
 	Timeout  time.Duration
 	cmds     []Command
@@ -65,6 +69,7 @@ type Client struct {
 
 // Command represents API command to send.
 type Command struct {
+	UID    string                 `json:"uid"`
 	Method string                 `json:"method"`
 	Params map[string]interface{} `json:"params"`
 }
@@ -81,18 +86,17 @@ type Result []Response
 
 // NewClient returns initialized client instance based on provided server address,
 //project key, project secret and timeout.
-func NewClient(addr, key, secret string, timeout time.Duration) *Client {
+func NewClient(addr, secret string, timeout time.Duration) *Client {
 
 	addr = strings.TrimRight(addr, "/")
 	if !strings.HasSuffix(addr, "/api") {
 		addr = addr + "/api"
 	}
 
-	apiEndpoint := addr + "/" + key
+	apiEndpoint := addr + "/"
 
 	return &Client{
 		Endpoint: apiEndpoint,
-		Key:      key,
 		Secret:   secret,
 		Timeout:  timeout,
 		cmds:     []Command{},
@@ -112,6 +116,17 @@ func (c *Client) Reset() {
 	c.cmds = []Command{}
 }
 
+// Lock must be held outside this method.
+func (c *Client) add(cmd Command) error {
+	uid, err := uuid.NewV4()
+	if err != nil {
+		return err
+	}
+	cmd.UID = uid.String()
+	c.cmds = append(c.cmds, cmd)
+	return nil
+}
+
 // AddPublish adds publish command to client command buffer but not actually
 // send it until Send method explicitly called.
 func (c *Client) AddPublish(channel string, data []byte) error {
@@ -126,8 +141,25 @@ func (c *Client) AddPublish(channel string, data []byte) error {
 			"data":    &raw,
 		},
 	}
-	c.cmds = append(c.cmds, cmd)
-	return nil
+	return c.add(cmd)
+}
+
+// AddPublishClient adds publish command to client command buffer but not actually
+// send it until Send method explicitly called.
+func (c *Client) AddPublishClient(channel string, data []byte, client string) error {
+	c.Lock()
+	defer c.Unlock()
+	var raw json.RawMessage
+	raw = json.RawMessage(data)
+	cmd := Command{
+		Method: "publish",
+		Params: map[string]interface{}{
+			"channel": channel,
+			"data":    &raw,
+			"client":  client,
+		},
+	}
+	return c.add(cmd)
 }
 
 // AddUnsubscribe adds unsubscribe command to client command buffer but not actually
@@ -142,8 +174,7 @@ func (c *Client) AddUnsubscribe(channel string, user string) error {
 			"user":    user,
 		},
 	}
-	c.cmds = append(c.cmds, cmd)
-	return nil
+	return c.add(cmd)
 }
 
 // AddDisconnect adds disconnect command to client command buffer but not actually
@@ -157,8 +188,7 @@ func (c *Client) AddDisconnect(user string) error {
 			"user": user,
 		},
 	}
-	c.cmds = append(c.cmds, cmd)
-	return nil
+	return c.add(cmd)
 }
 
 // AddPresence adds presence command to client command buffer but not actually
@@ -172,8 +202,7 @@ func (c *Client) AddPresence(channel string) error {
 			"channel": channel,
 		},
 	}
-	c.cmds = append(c.cmds, cmd)
-	return nil
+	return c.add(cmd)
 }
 
 // AddHistory adds history command to client command buffer but not actually
@@ -187,8 +216,7 @@ func (c *Client) AddHistory(channel string) error {
 			"channel": channel,
 		},
 	}
-	c.cmds = append(c.cmds, cmd)
-	return nil
+	return c.add(cmd)
 }
 
 // AddChannels adds channels command to client command buffer but not actually
@@ -198,10 +226,21 @@ func (c *Client) AddChannels() error {
 	defer c.Unlock()
 	cmd := Command{
 		Method: "channels",
-		Params: map[string]string{},
+		Params: map[string]interface{}{},
 	}
-	c.cmds = append(c.cmds, cmd)
-	return nil
+	return c.add(cmd)
+}
+
+// AddStats adds stats command to client command buffer but not actually
+// send it until Send method explicitly called.
+func (c *Client) AddStats() error {
+	c.Lock()
+	defer c.Unlock()
+	cmd := Command{
+		Method: "stats",
+		Params: map[string]interface{}{},
+	}
+	return c.add(cmd)
 }
 
 // Publish sends publish command to server and returns boolean indicator of success and
@@ -210,7 +249,33 @@ func (c *Client) Publish(channel string, data []byte) (bool, error) {
 	if !c.empty() {
 		return false, ErrClientNotEmpty
 	}
-	c.AddPublish(channel, data)
+	err := c.AddPublish(channel, data)
+	if err != nil {
+		return false, err
+	}
+	c.Lock()
+	defer c.Unlock()
+	result, err := c.Send()
+	if err != nil {
+		return false, err
+	}
+	resp := result[0]
+	if resp.Error != "" {
+		return false, errors.New(resp.Error)
+	}
+	return DecodePublish(resp.Body)
+}
+
+// PublishClient sends publish command to server and returns boolean indicator of success and
+// any error occurred in process. `client` is client ID initiating this event.
+func (c *Client) PublishClient(channel string, data []byte, client string) (bool, error) {
+	if !c.empty() {
+		return false, ErrClientNotEmpty
+	}
+	err := c.AddPublishClient(channel, data, client)
+	if err != nil {
+		return false, err
+	}
 	c.Lock()
 	defer c.Unlock()
 	result, err := c.Send()
@@ -230,7 +295,10 @@ func (c *Client) Unsubscribe(channel, user string) (bool, error) {
 	if !c.empty() {
 		return false, ErrClientNotEmpty
 	}
-	c.AddUnsubscribe(channel, user)
+	err := c.AddUnsubscribe(channel, user)
+	if err != nil {
+		return false, err
+	}
 	c.Lock()
 	defer c.Unlock()
 	result, err := c.Send()
@@ -250,7 +318,10 @@ func (c *Client) Disconnect(user string) (bool, error) {
 	if !c.empty() {
 		return false, ErrClientNotEmpty
 	}
-	c.AddDisconnect(user)
+	err := c.AddDisconnect(user)
+	if err != nil {
+		return false, err
+	}
 	c.Lock()
 	defer c.Unlock()
 	result, err := c.Send()
@@ -270,7 +341,10 @@ func (c *Client) Presence(channel string) (map[libcentrifugo.ConnID]libcentrifug
 	if !c.empty() {
 		return map[libcentrifugo.ConnID]libcentrifugo.ClientInfo{}, ErrClientNotEmpty
 	}
-	c.AddPresence(channel)
+	err := c.AddPresence(channel)
+	if err != nil {
+		return map[libcentrifugo.ConnID]libcentrifugo.ClientInfo{}, err
+	}
 	c.Lock()
 	defer c.Unlock()
 	result, err := c.Send()
@@ -290,7 +364,10 @@ func (c *Client) History(channel string) ([]libcentrifugo.Message, error) {
 	if !c.empty() {
 		return []libcentrifugo.Message{}, ErrClientNotEmpty
 	}
-	c.AddHistory(channel)
+	err := c.AddHistory(channel)
+	if err != nil {
+		return []libcentrifugo.Message{}, err
+	}
 	c.Lock()
 	defer c.Unlock()
 	result, err := c.Send()
@@ -305,12 +382,15 @@ func (c *Client) History(channel string) ([]libcentrifugo.Message, error) {
 }
 
 // Channels sends channels command to server and returns slice with
-// active channels (with one or more subscribers) in project.
+// active channels (with one or more subscribers).
 func (c *Client) Channels() ([]libcentrifugo.Channel, error) {
 	if !c.empty() {
 		return []libcentrifugo.Channel{}, ErrClientNotEmpty
 	}
-	c.AddChannels()
+	err := c.AddChannels()
+	if err != nil {
+		return []libcentrifugo.Channel{}, err
+	}
 	c.Lock()
 	defer c.Unlock()
 	result, err := c.Send()
@@ -322,6 +402,28 @@ func (c *Client) Channels() ([]libcentrifugo.Channel, error) {
 		return []libcentrifugo.Channel{}, errors.New(resp.Error)
 	}
 	return DecodeChannels(resp.Body)
+}
+
+// Stats sends stats command to server and returns libcentrifugo.Stats.
+func (c *Client) Stats() (libcentrifugo.Stats, error) {
+	if !c.empty() {
+		return libcentrifugo.Stats{}, ErrClientNotEmpty
+	}
+	err := c.AddStats()
+	if err != nil {
+		return libcentrifugo.Stats{}, err
+	}
+	c.Lock()
+	defer c.Unlock()
+	result, err := c.Send()
+	if err != nil {
+		return libcentrifugo.Stats{}, err
+	}
+	resp := result[0]
+	if resp.Error != "" {
+		return libcentrifugo.Stats{}, errors.New(resp.Error)
+	}
+	return DecodeStats(resp.Body)
 }
 
 // DecodePublish allows to decode response body of publish command to get
@@ -365,6 +467,16 @@ func DecodeChannels(body []byte) ([]libcentrifugo.Channel, error) {
 	return d.Data, nil
 }
 
+// DecodeStats allows to decode stats command response body.
+func DecodeStats(body []byte) (libcentrifugo.Stats, error) {
+	var d libcentrifugo.StatsBody
+	err := json.Unmarshal(body, &d)
+	if err != nil {
+		return libcentrifugo.Stats{}, err
+	}
+	return d.Data, nil
+}
+
 // DecodePresence allows to decode presence response body to get a map of clients.
 func DecodePresence(body []byte) (map[libcentrifugo.ConnID]libcentrifugo.ClientInfo, error) {
 	var d libcentrifugo.PresenceBody
@@ -404,7 +516,7 @@ func (c *Client) send(cmds []Command) (Result, error) {
 		return Result{}, err
 	}
 
-	r.Header.Set("X-API-Sign", auth.GenerateApiSign(c.Secret, c.Key, data))
+	r.Header.Set("X-API-Sign", auth.GenerateApiSign(c.Secret, data))
 	r.Header.Add("Content-Type", "application/json")
 
 	resp, err := client.Do(r)
