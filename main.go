@@ -162,6 +162,41 @@ func (c *Client) AddPublishClient(channel string, data []byte, client string) er
 	return c.add(cmd)
 }
 
+// AddBroadcast adds broadcast command to client command buffer but not actually
+// send it until Send method explicitly called.
+func (c *Client) AddBroadcast(channels []string, data []byte) error {
+	c.Lock()
+	defer c.Unlock()
+	var raw json.RawMessage
+	raw = json.RawMessage(data)
+	cmd := Command{
+		Method: "broadcast",
+		Params: map[string]interface{}{
+			"channels": channels,
+			"data":     &raw,
+		},
+	}
+	return c.add(cmd)
+}
+
+// AddBroadcastClient adds broadcast command to client command buffer but not actually
+// send it until Send method explicitly called.
+func (c *Client) AddBroadcastClient(channels []string, data []byte, client string) error {
+	c.Lock()
+	defer c.Unlock()
+	var raw json.RawMessage
+	raw = json.RawMessage(data)
+	cmd := Command{
+		Method: "broadcast",
+		Params: map[string]interface{}{
+			"channels": channels,
+			"data":     &raw,
+			"client":   client,
+		},
+	}
+	return c.add(cmd)
+}
+
 // AddUnsubscribe adds unsubscribe command to client command buffer but not actually
 // send it until Send method explicitly called.
 func (c *Client) AddUnsubscribe(channel string, user string) error {
@@ -287,6 +322,50 @@ func (c *Client) PublishClient(channel string, data []byte, client string) (bool
 		return false, errors.New(resp.Error)
 	}
 	return DecodePublish(resp.Body)
+}
+
+// Broadcast sends broadcast command to server.
+func (c *Client) Broadcast(channels []string, data []byte) (bool, error) {
+	if !c.empty() {
+		return false, ErrClientNotEmpty
+	}
+	err := c.AddBroadcast(channels, data)
+	if err != nil {
+		return false, err
+	}
+	c.Lock()
+	defer c.Unlock()
+	result, err := c.Send()
+	if err != nil {
+		return false, err
+	}
+	resp := result[0]
+	if resp.Error != "" {
+		return false, errors.New(resp.Error)
+	}
+	return DecodeBroadcast(resp.Body)
+}
+
+// BroadcastClient sends broadcast command to server with client ID.
+func (c *Client) BroadcastClient(channels []string, data []byte, client string) (bool, error) {
+	if !c.empty() {
+		return false, ErrClientNotEmpty
+	}
+	err := c.AddBroadcastClient(channels, data, client)
+	if err != nil {
+		return false, err
+	}
+	c.Lock()
+	defer c.Unlock()
+	result, err := c.Send()
+	if err != nil {
+		return false, err
+	}
+	resp := result[0]
+	if resp.Error != "" {
+		return false, errors.New(resp.Error)
+	}
+	return DecodeBroadcast(resp.Body)
 }
 
 // Unsubscribe sends unsubscribe command to server and returns boolean indicator of success and
@@ -430,6 +509,13 @@ func (c *Client) Stats() (libcentrifugo.Stats, error) {
 // success flag from it. Currently no error in response means success - so nothing
 // to do here yet.
 func DecodePublish(body []byte) (bool, error) {
+	return true, nil
+}
+
+// DecodeBroadcast allows to decode response body of broadcast command to get
+// success flag from it. Currently no error in response means success - so nothing
+// to do here yet.
+func DecodeBroadcast(body []byte) (bool, error) {
 	return true, nil
 }
 
