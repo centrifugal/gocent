@@ -44,7 +44,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/centrifugal/centrifugo/libcentrifugo"
 	"github.com/centrifugal/centrifugo/libcentrifugo/auth"
 	"github.com/nu7hatch/gouuid"
 )
@@ -59,30 +58,13 @@ var (
 
 // Client is API client for project registered in server.
 type Client struct {
-	sync.RWMutex
+	mu sync.RWMutex
 
 	Endpoint string
 	Secret   string
 	Timeout  time.Duration
 	cmds     []Command
 }
-
-// Command represents API command to send.
-type Command struct {
-	UID    string                 `json:"uid"`
-	Method string                 `json:"method"`
-	Params map[string]interface{} `json:"params"`
-}
-
-// Response is a response of server on command sent.
-type Response struct {
-	Method string
-	Error  string
-	Body   json.RawMessage
-}
-
-// Result is a slice of responses.
-type Result []Response
 
 // NewClient returns initialized client instance based on provided server address,
 //project key, project secret and timeout.
@@ -104,15 +86,15 @@ func NewClient(addr, secret string, timeout time.Duration) *Client {
 }
 
 func (c *Client) empty() bool {
-	c.RLock()
-	defer c.RUnlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return len(c.cmds) == 0
 }
 
 // Reset allows to clear client command buffer.
 func (c *Client) Reset() {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.cmds = []Command{}
 }
 
@@ -130,8 +112,8 @@ func (c *Client) add(cmd Command) error {
 // AddPublish adds publish command to client command buffer but not actually
 // send it until Send method explicitly called.
 func (c *Client) AddPublish(channel string, data []byte) error {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	var raw json.RawMessage
 	raw = json.RawMessage(data)
 	cmd := Command{
@@ -147,8 +129,8 @@ func (c *Client) AddPublish(channel string, data []byte) error {
 // AddPublishClient adds publish command to client command buffer but not actually
 // send it until Send method explicitly called.
 func (c *Client) AddPublishClient(channel string, data []byte, client string) error {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	var raw json.RawMessage
 	raw = json.RawMessage(data)
 	cmd := Command{
@@ -165,8 +147,8 @@ func (c *Client) AddPublishClient(channel string, data []byte, client string) er
 // AddBroadcast adds broadcast command to client command buffer but not actually
 // send it until Send method explicitly called.
 func (c *Client) AddBroadcast(channels []string, data []byte) error {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	var raw json.RawMessage
 	raw = json.RawMessage(data)
 	cmd := Command{
@@ -182,8 +164,8 @@ func (c *Client) AddBroadcast(channels []string, data []byte) error {
 // AddBroadcastClient adds broadcast command to client command buffer but not actually
 // send it until Send method explicitly called.
 func (c *Client) AddBroadcastClient(channels []string, data []byte, client string) error {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	var raw json.RawMessage
 	raw = json.RawMessage(data)
 	cmd := Command{
@@ -200,8 +182,8 @@ func (c *Client) AddBroadcastClient(channels []string, data []byte, client strin
 // AddUnsubscribe adds unsubscribe command to client command buffer but not actually
 // send it until Send method explicitly called.
 func (c *Client) AddUnsubscribe(channel string, user string) error {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	cmd := Command{
 		Method: "unsubscribe",
 		Params: map[string]interface{}{
@@ -215,8 +197,8 @@ func (c *Client) AddUnsubscribe(channel string, user string) error {
 // AddDisconnect adds disconnect command to client command buffer but not actually
 // send it until Send method explicitly called.
 func (c *Client) AddDisconnect(user string) error {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	cmd := Command{
 		Method: "disconnect",
 		Params: map[string]interface{}{
@@ -229,8 +211,8 @@ func (c *Client) AddDisconnect(user string) error {
 // AddPresence adds presence command to client command buffer but not actually
 // send it until Send method explicitly called.
 func (c *Client) AddPresence(channel string) error {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	cmd := Command{
 		Method: "presence",
 		Params: map[string]interface{}{
@@ -243,8 +225,8 @@ func (c *Client) AddPresence(channel string) error {
 // AddHistory adds history command to client command buffer but not actually
 // send it until Send method explicitly called.
 func (c *Client) AddHistory(channel string) error {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	cmd := Command{
 		Method: "history",
 		Params: map[string]interface{}{
@@ -257,8 +239,8 @@ func (c *Client) AddHistory(channel string) error {
 // AddChannels adds channels command to client command buffer but not actually
 // send it until Send method explicitly called.
 func (c *Client) AddChannels() error {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	cmd := Command{
 		Method: "channels",
 		Params: map[string]interface{}{},
@@ -269,8 +251,8 @@ func (c *Client) AddChannels() error {
 // AddStats adds stats command to client command buffer but not actually
 // send it until Send method explicitly called.
 func (c *Client) AddStats() error {
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	cmd := Command{
 		Method: "stats",
 		Params: map[string]interface{}{},
@@ -288,8 +270,8 @@ func (c *Client) Publish(channel string, data []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	result, err := c.Send()
 	if err != nil {
 		return false, err
@@ -311,8 +293,8 @@ func (c *Client) PublishClient(channel string, data []byte, client string) (bool
 	if err != nil {
 		return false, err
 	}
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	result, err := c.Send()
 	if err != nil {
 		return false, err
@@ -333,8 +315,8 @@ func (c *Client) Broadcast(channels []string, data []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	result, err := c.Send()
 	if err != nil {
 		return false, err
@@ -355,8 +337,8 @@ func (c *Client) BroadcastClient(channels []string, data []byte, client string) 
 	if err != nil {
 		return false, err
 	}
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	result, err := c.Send()
 	if err != nil {
 		return false, err
@@ -378,8 +360,8 @@ func (c *Client) Unsubscribe(channel, user string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	result, err := c.Send()
 	if err != nil {
 		return false, err
@@ -401,8 +383,8 @@ func (c *Client) Disconnect(user string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	result, err := c.Send()
 	if err != nil {
 		return false, err
@@ -416,91 +398,91 @@ func (c *Client) Disconnect(user string) (bool, error) {
 
 // Presence sends presence command for channel to server and returns map with client
 // information and any error occurred in process.
-func (c *Client) Presence(channel string) (map[libcentrifugo.ConnID]libcentrifugo.ClientInfo, error) {
+func (c *Client) Presence(channel string) (map[string]ClientInfo, error) {
 	if !c.empty() {
-		return map[libcentrifugo.ConnID]libcentrifugo.ClientInfo{}, ErrClientNotEmpty
+		return map[string]ClientInfo{}, ErrClientNotEmpty
 	}
 	err := c.AddPresence(channel)
 	if err != nil {
-		return map[libcentrifugo.ConnID]libcentrifugo.ClientInfo{}, err
+		return map[string]ClientInfo{}, err
 	}
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	result, err := c.Send()
 	if err != nil {
-		return map[libcentrifugo.ConnID]libcentrifugo.ClientInfo{}, err
+		return map[string]ClientInfo{}, err
 	}
 	resp := result[0]
 	if resp.Error != "" {
-		return map[libcentrifugo.ConnID]libcentrifugo.ClientInfo{}, errors.New(resp.Error)
+		return map[string]ClientInfo{}, errors.New(resp.Error)
 	}
 	return DecodePresence(resp.Body)
 }
 
 // History sends history command for channel to server and returns slice with
 // messages and any error occurred in process.
-func (c *Client) History(channel string) ([]libcentrifugo.Message, error) {
+func (c *Client) History(channel string) ([]Message, error) {
 	if !c.empty() {
-		return []libcentrifugo.Message{}, ErrClientNotEmpty
+		return []Message{}, ErrClientNotEmpty
 	}
 	err := c.AddHistory(channel)
 	if err != nil {
-		return []libcentrifugo.Message{}, err
+		return []Message{}, err
 	}
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	result, err := c.Send()
 	if err != nil {
-		return []libcentrifugo.Message{}, err
+		return []Message{}, err
 	}
 	resp := result[0]
 	if resp.Error != "" {
-		return []libcentrifugo.Message{}, errors.New(resp.Error)
+		return []Message{}, errors.New(resp.Error)
 	}
 	return DecodeHistory(resp.Body)
 }
 
 // Channels sends channels command to server and returns slice with
 // active channels (with one or more subscribers).
-func (c *Client) Channels() ([]libcentrifugo.Channel, error) {
+func (c *Client) Channels() ([]string, error) {
 	if !c.empty() {
-		return []libcentrifugo.Channel{}, ErrClientNotEmpty
+		return []string{}, ErrClientNotEmpty
 	}
 	err := c.AddChannels()
 	if err != nil {
-		return []libcentrifugo.Channel{}, err
+		return []string{}, err
 	}
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	result, err := c.Send()
 	if err != nil {
-		return []libcentrifugo.Channel{}, err
+		return []string{}, err
 	}
 	resp := result[0]
 	if resp.Error != "" {
-		return []libcentrifugo.Channel{}, errors.New(resp.Error)
+		return []string{}, errors.New(resp.Error)
 	}
 	return DecodeChannels(resp.Body)
 }
 
-// Stats sends stats command to server and returns libcentrifugo.Stats.
-func (c *Client) Stats() (libcentrifugo.Stats, error) {
+// Stats sends stats command to server and returns Stats.
+func (c *Client) Stats() (Stats, error) {
 	if !c.empty() {
-		return libcentrifugo.Stats{}, ErrClientNotEmpty
+		return Stats{}, ErrClientNotEmpty
 	}
 	err := c.AddStats()
 	if err != nil {
-		return libcentrifugo.Stats{}, err
+		return Stats{}, err
 	}
-	c.Lock()
-	defer c.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	result, err := c.Send()
 	if err != nil {
-		return libcentrifugo.Stats{}, err
+		return Stats{}, err
 	}
 	resp := result[0]
 	if resp.Error != "" {
-		return libcentrifugo.Stats{}, errors.New(resp.Error)
+		return Stats{}, errors.New(resp.Error)
 	}
 	return DecodeStats(resp.Body)
 }
@@ -534,41 +516,41 @@ func DecodeDisconnect(body []byte) (bool, error) {
 }
 
 // DecodeHistory allows to decode history response body to get a slice of messages.
-func DecodeHistory(body []byte) ([]libcentrifugo.Message, error) {
-	var d libcentrifugo.HistoryBody
+func DecodeHistory(body []byte) ([]Message, error) {
+	var d historyBody
 	err := json.Unmarshal(body, &d)
 	if err != nil {
-		return []libcentrifugo.Message{}, err
+		return []Message{}, err
 	}
 	return d.Data, nil
 }
 
 // DecodeChannels allows to decode channels command response body to get a slice of channels.
-func DecodeChannels(body []byte) ([]libcentrifugo.Channel, error) {
-	var d libcentrifugo.ChannelsBody
+func DecodeChannels(body []byte) ([]string, error) {
+	var d channelsBody
 	err := json.Unmarshal(body, &d)
 	if err != nil {
-		return []libcentrifugo.Channel{}, err
+		return []string{}, err
 	}
 	return d.Data, nil
 }
 
 // DecodeStats allows to decode stats command response body.
-func DecodeStats(body []byte) (libcentrifugo.Stats, error) {
-	var d libcentrifugo.StatsBody
+func DecodeStats(body []byte) (Stats, error) {
+	var d statsBody
 	err := json.Unmarshal(body, &d)
 	if err != nil {
-		return libcentrifugo.Stats{}, err
+		return Stats{}, err
 	}
 	return d.Data, nil
 }
 
 // DecodePresence allows to decode presence response body to get a map of clients.
-func DecodePresence(body []byte) (map[libcentrifugo.ConnID]libcentrifugo.ClientInfo, error) {
-	var d libcentrifugo.PresenceBody
+func DecodePresence(body []byte) (map[string]ClientInfo, error) {
+	var d presenceBody
 	err := json.Unmarshal(body, &d)
 	if err != nil {
-		return map[libcentrifugo.ConnID]libcentrifugo.ClientInfo{}, err
+		return map[string]ClientInfo{}, err
 	}
 	return d.Data, nil
 }

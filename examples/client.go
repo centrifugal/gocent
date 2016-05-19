@@ -19,15 +19,15 @@ func main() {
 		println(err.Error())
 		return
 	}
-	println("Publish successful:", ok)
+	fmt.Printf("Publish into channel %s successful: %v\n", ch, ok)
 
 	// How to get presence.
 	presence, _ := c.Presence(ch)
-	fmt.Printf("Presense: %v\n", presence)
+	fmt.Printf("Presense for channel %s: %v\n", ch, presence)
 
 	// How to get history.
 	history, _ := c.History(ch)
-	fmt.Printf("History: %v\n", history)
+	fmt.Printf("History for channel %s, %d messages: %v\n", ch, len(history), history)
 
 	// How to get channels.
 	channels, _ := c.Channels()
@@ -37,14 +37,14 @@ func main() {
 	stats, _ := c.Stats()
 	fmt.Printf("Stats: %v\n", stats)
 
-	// How to send 3 commands in ome request.
+	// How to send 3 commands in one request.
 	_ = c.AddPublish(ch, []byte(`{"input": "test1"}`))
 	_ = c.AddPublish(ch, []byte(`{"input": "test2"}`))
 	_ = c.AddPublish(ch, []byte(`{"input": "test3"}`))
 	result, err := c.Send()
-	println("Sent", len(result), "publish commands in one request")
+	fmt.Println("Sent", len(result), "publish commands in one request")
 
-	// How to broadcast the same data into 3 different channels.
+	// How to broadcast the same data into 3 different channels in one request.
 	chs := []string{"$public:chat_1", "$public:chat_2", "$public:chat_3"}
 	ok, err = c.Broadcast(chs, []byte(`{"input": "test"}`))
 	if err != nil {
