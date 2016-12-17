@@ -6,7 +6,7 @@
 //
 // Usage example
 //
-// In example below we initialize new client with server URL address, project key, project
+// In example below we initialize new client with server URL address, project
 // secret and request timeout. Then publish data into channel, call presence and history
 // for channel and finally show how to publish several messages in one POST request to API
 // endpoint using internal command buffer.
@@ -64,6 +64,7 @@ type Client struct {
 	Secret   string
 	Timeout  time.Duration
 	cmds     []Command
+	insecure bool
 }
 
 // NewClient returns initialized client instance based on provided server address,
@@ -82,6 +83,25 @@ func NewClient(addr, secret string, timeout time.Duration) *Client {
 		Secret:   secret,
 		Timeout:  timeout,
 		cmds:     []Command{},
+	}
+}
+
+// NewInsecureAPIClient allows to create client that won't sign every HTTP API request.
+// This is useful when your Centrifugo /api/ endpoint protected by firewall.
+func NewInsecureAPIClient(addr string, timeout time.Duration) *Client {
+
+	addr = strings.TrimRight(addr, "/")
+	if !strings.HasSuffix(addr, "/api") {
+		addr = addr + "/api"
+	}
+
+	apiEndpoint := addr + "/"
+
+	return &Client{
+		Endpoint: apiEndpoint,
+		Timeout:  timeout,
+		cmds:     []Command{},
+		insecure: true,
 	}
 }
 
@@ -584,8 +604,10 @@ func (c *Client) send(cmds []Command) (Result, error) {
 		return Result{}, err
 	}
 
-	r.Header.Set("X-API-Sign", auth.GenerateApiSign(c.Secret, data))
-	r.Header.Add("Content-Type", "application/json")
+	if !c.insecure {
+		r.Header.Set("X-API-Sign", auth.GenerateApiSign(c.Secret, data))
+	}
+	r.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(r)
 	if err != nil {

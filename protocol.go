@@ -46,46 +46,10 @@ type NodeInfo struct {
 	UID string `json:"uid"`
 	// Name is a name of node (config defined or generated automatically).
 	Name string `json:"name"`
-	// Goroutines is a number of current running goroutines.
-	Goroutines int `json:"num_goroutine"`
-	// Clients is how many clients currently connected to node.
-	Clients int `json:"num_clients"`
-	// Unique shows how many clients are unique (different user ID).
-	Unique int `json:"num_unique_clients"`
-	// Channels shows how many different channels exist at moment.
-	Channels int `json:"num_channels"`
 	// Started is node start timestamp.
 	Started int64 `json:"started_at"`
-	// Gomaxprocs shows how many CPUs node process using.
-	Gomaxprocs int `json:"gomaxprocs"`
-	// NumCPU is total CPU number on machine running node.
-	NumCPU int `json:"num_cpu"`
-	// NumMsgPublished is how many messages were published into channels.
-	NumMsgPublished int64 `json:"num_msg_published"`
-	// NumMsgQueued is how many messages were put into client queues.
-	NumMsgQueued int64 `json:"num_msg_queued"`
-	// NumMsgSent is how many messages were actually sent into client connections.
-	NumMsgSent int64 `json:"num_msg_sent"`
-	// NumAPIRequests shows amount of requests to server API.
-	NumAPIRequests int64 `json:"num_api_requests"`
-	// NumClientRequests shows amount of requests to client API.
-	NumClientRequests int64 `json:"num_client_requests"`
-	// BytesClientIn shows amount of data in bytes coming into client API.
-	BytesClientIn int64 `json:"bytes_client_in"`
-	// BytesClientOut shows amount of data in bytes coming out if client API.
-	BytesClientOut int64 `json:"bytes_client_out"`
-	// TimeAPIMean shows mean response time in nanoseconds to API requests. DEPRECATED!
-	TimeAPIMean int64 `json:"time_api_mean"`
-	// TimeClientMean shows mean response time in nanoseconds to client requests. DEPRECATED!
-	TimeClientMean int64 `json:"time_client_mean"`
-	// TimeAPIMax shows maximum response time to API request. DEPRECATED!
-	TimeAPIMax int64 `json:"time_api_max"`
-	// TimeClientMax shows maximum response time to client request. DEPRECATED!
-	TimeClientMax int64 `json:"time_client_max"`
-	// MemSys shows system memory usage in bytes.
-	MemSys int64 `json:"memory_sys"`
-	// CPU shows cpu usage (actually just a snapshot value) in percents.
-	CPU int64 `json:"cpu_usage"`
+	// Metrics contains Centrifugo metrics.
+	Metrics map[string]int64 `json:"metrics"`
 }
 
 // Stats contains state and metrics information from all running Centrifugo nodes.
