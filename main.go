@@ -25,6 +25,7 @@
 //  
 //  history, _ := c.History("$public:chat")
 //  fmt.Printf("History: %v\n", history)
+//  
 //  channels, _ := c.Channels()
 //  fmt.Printf("Channels: %v\n", channels)
 //  
