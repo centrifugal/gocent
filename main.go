@@ -12,23 +12,29 @@
 // endpoint using internal command buffer.
 //
 //  c := NewClient("http://localhost:8000", "secret", 5*time.Second)
+//  
 //  ok, err := c.Publish("$public:chat", []byte(`{"input": "test"}`))
 //  if err != nil {
 //  	println(err.Error())
 //  	return
 //  }
 //  println("Publish successful:", ok)
+//  
 //  presence, _ := c.Presence("$public:chat")
 //  fmt.Printf("Presense: %v\n", presence)
+//  
 //  history, _ := c.History("$public:chat")
 //  fmt.Printf("History: %v\n", history)
-//	channels, _ := c.Channels()
-//	fmt.Printf("Channels: %v\n", channels)
-//	stats, _ := c.Stats()
-//	fmt.Printf("Stats: %v\n", stats)
+//  channels, _ := c.Channels()
+//  fmt.Printf("Channels: %v\n", channels)
+//  
+//  stats, _ := c.Stats()
+//  fmt.Printf("Stats: %v\n", stats)
+//  
 //  _ = c.AddPublish("$public:chat", []byte(`{"input": "test1"}`))
 //  _ = c.AddPublish("$public:chat", []byte(`{"input": "test2"}`))
 //  _ = c.AddPublish("$public:chat", []byte(`{"input": "test3"}`))
+//  
 //  result, err := c.Send()
 //  println("Sent", len(result), "publish commands in one request")
 //
