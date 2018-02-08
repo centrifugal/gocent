@@ -12,30 +12,30 @@
 // endpoint using internal command buffer.
 //
 //  c := NewClient("http://localhost:8000", "secret", 5*time.Second)
-//  
+//
 //  ok, err := c.Publish("$public:chat", []byte(`{"input": "test"}`))
 //  if err != nil {
 //  	println(err.Error())
 //  	return
 //  }
 //  println("Publish successful:", ok)
-//  
+//
 //  presence, _ := c.Presence("$public:chat")
 //  fmt.Printf("Presense: %v\n", presence)
-//  
+//
 //  history, _ := c.History("$public:chat")
 //  fmt.Printf("History: %v\n", history)
-//  
+//
 //  channels, _ := c.Channels()
 //  fmt.Printf("Channels: %v\n", channels)
-//  
+//
 //  stats, _ := c.Stats()
 //  fmt.Printf("Stats: %v\n", stats)
-//  
+//
 //  _ = c.AddPublish("$public:chat", []byte(`{"input": "test1"}`))
 //  _ = c.AddPublish("$public:chat", []byte(`{"input": "test2"}`))
 //  _ = c.AddPublish("$public:chat", []byte(`{"input": "test3"}`))
-//  
+//
 //  result, err := c.Send()
 //  println("Sent", len(result), "publish commands in one request")
 //
@@ -43,6 +43,9 @@ package gocent // import "github.com/centrifugal/gocent"
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io/ioutil"
@@ -51,7 +54,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/centrifugal/centrifugo/libcentrifugo/auth"
 	"github.com/nu7hatch/gouuid"
 )
 
@@ -612,7 +614,7 @@ func (c *Client) send(cmds []Command) (Result, error) {
 	}
 
 	if !c.insecure {
-		r.Header.Set("X-API-Sign", auth.GenerateApiSign(c.Secret, data))
+		r.Header.Set("X-API-Sign", GenerateAPISign(c.Secret, data))
 	}
 	r.Header.Set("Content-Type", "application/json")
 
@@ -630,4 +632,31 @@ func (c *Client) send(cmds []Command) (Result, error) {
 	var result Result
 	err = json.Unmarshal(body, &result)
 	return result, err
+}
+
+// GenerateClientToken generates client token based on secret key and provided
+// connection parameters such as user ID, timestamp and info JSON string.
+func GenerateClientToken(secret, user, timestamp, info string) string {
+	token := hmac.New(sha256.New, []byte(secret))
+	token.Write([]byte(user))
+	token.Write([]byte(timestamp))
+	token.Write([]byte(info))
+	return hex.EncodeToString(token.Sum(nil))
+}
+
+// GenerateAPISign generates sign which is used to sign HTTP API requests.
+func GenerateAPISign(secret string, data []byte) string {
+	sign := hmac.New(sha256.New, []byte(secret))
+	sign.Write(data)
+	return hex.EncodeToString(sign.Sum(nil))
+}
+
+// GenerateChannelSign generates sign which is used to prove permission of
+// client to subscribe on private channel.
+func GenerateChannelSign(secret, client, channel, channelData string) string {
+	sign := hmac.New(sha256.New, []byte(secret))
+	sign.Write([]byte(client))
+	sign.Write([]byte(channel))
+	sign.Write([]byte(channelData))
+	return hex.EncodeToString(sign.Sum(nil))
 }
