@@ -1,55 +1,70 @@
 package main
 
 import (
-	"fmt"
-	"time"
+	"context"
+	"log"
 
 	"github.com/centrifugal/gocent"
 )
 
 func main() {
 
-	ch := "$public:chat"
+	ch := "$chat:index"
 
-	c := gocent.NewClient("http://localhost:8000", "secret", 5*time.Second)
+	ctx := context.Background()
+	c := gocent.New("http://localhost:8000", "<API key>")
 
-	// How to publish.
-	ok, err := c.Publish(ch, []byte(`{"input": "test"}`))
+	err := c.Publish(ctx, ch, []byte(`{"input": "test"}`))
 	if err != nil {
-		println(err.Error())
-		return
+		log.Fatalf("Error calling publish: %v", err)
 	}
-	fmt.Printf("Publish into channel %s successful: %v\n", ch, ok)
+	log.Printf("Publish into channel %s successful", ch)
 
 	// How to get presence.
-	presence, _ := c.Presence(ch)
-	fmt.Printf("Presense for channel %s: %v\n", ch, presence)
+	presenceResult, err := c.Presence(ctx, ch)
+	if err != nil {
+		log.Fatalf("Error calling presence: %v", err)
+	}
+	log.Printf("Presense for channel %s: %d active subscribers", ch, len(presenceResult.Presence))
+
+	// How to get presence stats.
+	presenceStatsResult, err := c.PresenceStats(ctx, ch)
+	if err != nil {
+		log.Fatalf("Error calling presence: %v", err)
+	}
+	log.Printf("Presense stats for channel %s: %d unique users, %d total subscribers", ch, presenceStatsResult.NumUsers, presenceStatsResult.NumClients)
 
 	// How to get history.
-	history, _ := c.History(ch)
-	fmt.Printf("History for channel %s, %d messages: %v\n", ch, len(history), history)
+	historyResult, err := c.History(ctx, ch)
+	if err != nil {
+		log.Fatalf("Error calling history: %v", err)
+	}
+	log.Printf("History for channel %s, %d messages", ch, len(historyResult.Publications))
 
 	// How to get channels.
-	channels, _ := c.Channels()
-	fmt.Printf("Channels: %v\n", channels)
+	channelsResult, _ := c.Channels(ctx)
+	log.Printf("Channels: %v", channelsResult.Channels)
 
-	// How to export stats.
-	stats, _ := c.Stats()
-	fmt.Printf("Stats: %v\n", stats)
-
-	// How to send 3 commands in one request.
-	_ = c.AddPublish(ch, []byte(`{"input": "test1"}`))
-	_ = c.AddPublish(ch, []byte(`{"input": "test2"}`))
-	_ = c.AddPublish(ch, []byte(`{"input": "test3"}`))
-	result, err := c.Send()
-	fmt.Println("Sent", len(result), "publish commands in one request")
+	// Get info about nodes.
+	info, err := c.Info(ctx)
+	if err != nil {
+		log.Fatalf("Error calling info: %v", err)
+	}
+	log.Printf("Info: %d Centrifugo nodes running", len(info.Nodes))
 
 	// How to broadcast the same data into 3 different channels in one request.
 	chs := []string{"$public:chat_1", "$public:chat_2", "$public:chat_3"}
-	ok, err = c.Broadcast(chs, []byte(`{"input": "test"}`))
+	err = c.Broadcast(ctx, chs, []byte(`{"input": "test"}`))
 	if err != nil {
-		println(err.Error())
-		return
+		log.Fatalf("Error calling broadcast: %v", err)
 	}
-	println("Broadcast successful:", ok)
+	log.Printf("Broadcast to %d channels is successful", len(chs))
+
+	// How to send 3 commands in one request.
+	pipe := c.Pipe()
+	pipe.AddPublish(ch, []byte(`{"input": "test1"}`))
+	pipe.AddPublish(ch, []byte(`{"input": "test2"}`))
+	pipe.AddPublish(ch, []byte(`{"input": "test3"}`))
+	replies, err := c.SendPipe(ctx, pipe)
+	log.Printf("Sent %d publish commands in one HTTP request ", len(replies))
 }
