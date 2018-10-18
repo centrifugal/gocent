@@ -51,8 +51,16 @@ type NodeInfo struct {
 	UID string `json:"uid"`
 	// Name is a name of node (config defined or generated automatically).
 	Name string `json:"name"`
-	// Started is node start timestamp.
-	Started int64 `json:"started_at"`
+	// Version of Centrifugo node.
+	Version string `json:"version"`
+	// NumClients is a number of clients connected to node.
+	NumClients int `json:"num_clients"`
+	// NumUsers is a number of unique users connected to node.
+	NumUsers int `json:"num_users"`
+	// NumChannels is a number of channels on node.
+	NumChannels int `json:"num_channels"`
+	// Uptime of node in seconds.
+	Uptime int `json:"uptime"`
 }
 
 // InfoResult is a result of info command.
