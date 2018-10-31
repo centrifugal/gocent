@@ -169,7 +169,7 @@ func (c *Client) Presence(ctx context.Context, channel string) (PresenceResult, 
 	if resp.Error != nil {
 		return PresenceResult{}, resp.Error
 	}
-	return DecodePresence(resp.Result)
+	return decodePresence(resp.Result)
 }
 
 // PresenceStats sends presence stats command for channel to server and returns short presence
@@ -188,7 +188,7 @@ func (c *Client) PresenceStats(ctx context.Context, channel string) (PresenceSta
 	if resp.Error != nil {
 		return PresenceStatsResult{}, resp.Error
 	}
-	return DecodePresenceStats(resp.Result)
+	return decodePresenceStats(resp.Result)
 }
 
 // History sends history command for channel to server and returns slice with
@@ -207,7 +207,7 @@ func (c *Client) History(ctx context.Context, channel string) (HistoryResult, er
 	if resp.Error != nil {
 		return HistoryResult{}, resp.Error
 	}
-	return DecodeHistory(resp.Result)
+	return decodeHistory(resp.Result)
 }
 
 // Channels sends channels command to server and returns slice with
@@ -226,7 +226,7 @@ func (c *Client) Channels(ctx context.Context) (ChannelsResult, error) {
 	if resp.Error != nil {
 		return ChannelsResult{}, resp.Error
 	}
-	return DecodeChannels(resp.Result)
+	return decodeChannels(resp.Result)
 }
 
 // Info sends info command to server and returns Info.
@@ -244,11 +244,11 @@ func (c *Client) Info(ctx context.Context) (InfoResult, error) {
 	if resp.Error != nil {
 		return InfoResult{}, resp.Error
 	}
-	return DecodeInfo(resp.Result)
+	return decodeInfo(resp.Result)
 }
 
-// DecodeHistory allows to decode history reply result to get a slice of messages.
-func DecodeHistory(result []byte) (HistoryResult, error) {
+// decodeHistory allows to decode history reply result to get a slice of messages.
+func decodeHistory(result []byte) (HistoryResult, error) {
 	var r HistoryResult
 	err := json.Unmarshal(result, &r)
 	if err != nil {
@@ -257,8 +257,8 @@ func DecodeHistory(result []byte) (HistoryResult, error) {
 	return r, nil
 }
 
-// DecodeChannels allows to decode channels command reply result to get a slice of channels.
-func DecodeChannels(result []byte) (ChannelsResult, error) {
+// decodeChannels allows to decode channels command reply result to get a slice of channels.
+func decodeChannels(result []byte) (ChannelsResult, error) {
 	var r ChannelsResult
 	err := json.Unmarshal(result, &r)
 	if err != nil {
@@ -267,8 +267,8 @@ func DecodeChannels(result []byte) (ChannelsResult, error) {
 	return r, nil
 }
 
-// DecodeInfo allows to decode info command response result.
-func DecodeInfo(result []byte) (InfoResult, error) {
+// decodeInfo allows to decode info command response result.
+func decodeInfo(result []byte) (InfoResult, error) {
 	var info InfoResult
 	err := json.Unmarshal(result, &info)
 	if err != nil {
@@ -277,8 +277,8 @@ func DecodeInfo(result []byte) (InfoResult, error) {
 	return info, nil
 }
 
-// DecodePresence allows to decode presence reply result to get a map of clients.
-func DecodePresence(result []byte) (PresenceResult, error) {
+// decodePresence allows to decode presence reply result to get a map of clients.
+func decodePresence(result []byte) (PresenceResult, error) {
 	var r PresenceResult
 	err := json.Unmarshal(result, &r)
 	if err != nil {
@@ -287,8 +287,8 @@ func DecodePresence(result []byte) (PresenceResult, error) {
 	return r, nil
 }
 
-// DecodePresenceStats allows to decode presence stats reply result to get a map of clients.
-func DecodePresenceStats(result []byte) (PresenceStatsResult, error) {
+// decodePresenceStats allows to decode presence stats reply result to get a map of clients.
+func decodePresenceStats(result []byte) (PresenceStatsResult, error) {
 	var r PresenceStatsResult
 	err := json.Unmarshal(result, &r)
 	if err != nil {
