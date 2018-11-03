@@ -9,10 +9,13 @@ import (
 
 func main() {
 
-	ch := "$chat:index"
+	c := gocent.New(gocent.Config{
+		Addr: "http://localhost:8000",
+		Key:  "<API key>",
+	})
 
+	ch := "$chat:index"
 	ctx := context.Background()
-	c := gocent.New("http://localhost:8000", "<API key>")
 
 	err := c.Publish(ctx, ch, []byte(`{"input": "test"}`))
 	if err != nil {

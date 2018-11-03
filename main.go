@@ -30,6 +30,17 @@ func (e ErrStatusCode) Error() string {
 	return fmt.Sprintf("wrong status code: %d", e.Code)
 }
 
+// Config of client.
+type Config struct {
+	// Addr is Centrifugo API endpoint.
+	Addr string
+	// Key is Centrifugo API key.
+	Key string
+	// HTTPClient is a custom HTTP client to be used.
+	// If nil DefaultHTTPClient will be used.
+	HTTPClient *http.Client
+}
+
 // Client is API client for project registered in server.
 type Client struct {
 	mu sync.RWMutex
@@ -40,30 +51,29 @@ type Client struct {
 	cmds       []Command
 }
 
-func defaultHTTPClient() *http.Client {
-	tr := &http.Transport{
-		MaxIdleConns:    100,
-		MaxConnsPerHost: 100,
-	}
-	return &http.Client{Transport: tr, Timeout: time.Second}
-}
+// DefaultHTTPClient will be used by default for HTTP requests.
+var DefaultHTTPClient = &http.Client{Transport: &http.Transport{
+	MaxIdleConns:    100,
+	MaxConnsPerHost: 100,
+}, Timeout: time.Second}
 
-// New returns initialized client instance based on provided server address, API key.
-func New(addr, apiKey string) *Client {
-
-	addr = strings.TrimRight(addr, "/")
+// New returns initialized client instance based on provided config.
+func New(c Config) *Client {
+	addr := strings.TrimRight(c.Addr, "/")
 	if !strings.HasSuffix(addr, "/api") {
 		addr = addr + "/api"
 	}
-
-	c := &Client{
-		httpClient: defaultHTTPClient(),
-		endpoint:   addr,
-		apiKey:     apiKey,
-		cmds:       []Command{},
+	var httpClient *http.Client
+	if c.HTTPClient != nil {
+		httpClient = c.HTTPClient
+	} else {
+		httpClient = DefaultHTTPClient
 	}
-
-	return c
+	return &Client{
+		endpoint:   addr,
+		apiKey:     c.Key,
+		httpClient: httpClient,
+	}
 }
 
 // SetHTTPClient allows to set custom http Client to use for requests. Not goroutine-safe.
