@@ -1,5 +1,5 @@
 // Package gocent is a Go language client for Centrifugo real-time messaging server HTTP API.
-package gocent // import "github.com/centrifugal/gocent"
+package gocent
 
 import (
 	"bytes"
