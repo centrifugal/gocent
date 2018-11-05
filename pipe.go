@@ -26,7 +26,7 @@ func (p *Pipe) add(cmd Command) error {
 }
 
 // AddPublish adds publish command to client command buffer but not actually
-// sends request to server until Pipe will be explicitely sent.
+// sends request to server until Pipe will be explicitly sent.
 func (p *Pipe) AddPublish(channel string, data []byte) error {
 	var raw json.RawMessage
 	raw = json.RawMessage(data)
@@ -41,7 +41,7 @@ func (p *Pipe) AddPublish(channel string, data []byte) error {
 }
 
 // AddBroadcast adds broadcast command to client command buffer but not actually
-// sends request to server until Pipe will be explicitely sent.
+// sends request to server until Pipe will be explicitly sent.
 func (p *Pipe) AddBroadcast(channels []string, data []byte) error {
 	var raw json.RawMessage
 	raw = json.RawMessage(data)
@@ -56,7 +56,7 @@ func (p *Pipe) AddBroadcast(channels []string, data []byte) error {
 }
 
 // AddUnsubscribe adds unsubscribe command to client command buffer but not actually
-// sends request to server until Pipe will be explicitely sent.
+// sends request to server until Pipe will be explicitly sent.
 func (p *Pipe) AddUnsubscribe(channel string, user string) error {
 	cmd := Command{
 		Method: "unsubscribe",
@@ -69,7 +69,7 @@ func (p *Pipe) AddUnsubscribe(channel string, user string) error {
 }
 
 // AddDisconnect adds disconnect command to client command buffer but not actually
-// sends request to server until Pipe will be explicitely sent.
+// sends request to server until Pipe will be explicitly sent.
 func (p *Pipe) AddDisconnect(user string) error {
 	cmd := Command{
 		Method: "disconnect",
@@ -81,7 +81,7 @@ func (p *Pipe) AddDisconnect(user string) error {
 }
 
 // AddPresence adds presence command to client command buffer but not actually
-// sends request to server until Pipe will be explicitely sent.
+// sends request to server until Pipe will be explicitly sent.
 func (p *Pipe) AddPresence(channel string) error {
 	cmd := Command{
 		Method: "presence",
@@ -93,7 +93,7 @@ func (p *Pipe) AddPresence(channel string) error {
 }
 
 // AddPresenceStats adds presence stats command to client command buffer but not actually
-// sends request to server until Pipe will be explicitely sent.
+// sends request to server until Pipe will be explicitly sent.
 func (p *Pipe) AddPresenceStats(channel string) error {
 	cmd := Command{
 		Method: "presence_stats",
@@ -105,7 +105,7 @@ func (p *Pipe) AddPresenceStats(channel string) error {
 }
 
 // AddHistory adds history command to client command buffer but not actually
-// sends request to server until Pipe will be explicitely sent.
+// sends request to server until Pipe will be explicitly sent.
 func (p *Pipe) AddHistory(channel string) error {
 	cmd := Command{
 		Method: "history",
@@ -117,7 +117,7 @@ func (p *Pipe) AddHistory(channel string) error {
 }
 
 // AddChannels adds channels command to client command buffer but not actually
-// sends request to server until Pipe will be explicitely sent.
+// sends request to server until Pipe will be explicitly sent.
 func (p *Pipe) AddChannels() error {
 	cmd := Command{
 		Method: "channels",
@@ -127,7 +127,7 @@ func (p *Pipe) AddChannels() error {
 }
 
 // AddInfo adds info command to client command buffer but not actually
-// sends request to server until Pipe will be explicitely sent.
+// sends request to server until Pipe will be explicitly sent.
 func (p *Pipe) AddInfo() error {
 	cmd := Command{
 		Method: "info",
