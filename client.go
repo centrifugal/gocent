@@ -53,7 +53,7 @@ type Client struct {
 
 // DefaultHTTPClient will be used by default for HTTP requests.
 var DefaultHTTPClient = &http.Client{Transport: &http.Transport{
-	MaxConnsPerHost: 100,
+	MaxIdleConnsPerHost: 100,
 }, Timeout: time.Second}
 
 // New returns initialized client instance based on provided config.
