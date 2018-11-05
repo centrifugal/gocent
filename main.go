@@ -39,7 +39,7 @@
 //  result, err := c.Send()
 //  println("Sent", len(result), "publish commands in one request")
 //
-package gocent // import "github.com/centrifugal/gocent"
+package gocent
 
 import (
 	"bytes"
