@@ -87,8 +87,7 @@ func (c *Client) Pipe() *Pipe {
 	}
 }
 
-// Publish sends publish command to server and returns boolean indicator of success and
-// any error occurred in process.
+// Publish allows to publish data to channel.
 func (c *Client) Publish(ctx context.Context, channel string, data []byte) error {
 	pipe := c.Pipe()
 	err := pipe.AddPublish(channel, data)
@@ -106,7 +105,7 @@ func (c *Client) Publish(ctx context.Context, channel string, data []byte) error
 	return nil
 }
 
-// Broadcast sends broadcast command to server.
+// Broadcast allows to broadcast the same data into many channels..
 func (c *Client) Broadcast(ctx context.Context, channels []string, data []byte) error {
 	pipe := c.Pipe()
 	err := pipe.AddBroadcast(channels, data)
@@ -124,8 +123,7 @@ func (c *Client) Broadcast(ctx context.Context, channels []string, data []byte) 
 	return nil
 }
 
-// Unsubscribe sends unsubscribe command to server and returns boolean indicator of success and
-// any error occurred in process.
+// Unsubscribe allows to unsubscribe user from channel.
 func (c *Client) Unsubscribe(ctx context.Context, channel, user string) error {
 	pipe := c.Pipe()
 	err := pipe.AddUnsubscribe(channel, user)
@@ -143,8 +141,7 @@ func (c *Client) Unsubscribe(ctx context.Context, channel, user string) error {
 	return nil
 }
 
-// Disconnect sends disconnect command to server and returns boolean indicator of success and
-// any error occurred in process.
+// Disconnect allows to close all connections of user to server.
 func (c *Client) Disconnect(ctx context.Context, user string) error {
 	pipe := c.Pipe()
 	err := pipe.AddDisconnect(user)
@@ -162,8 +159,7 @@ func (c *Client) Disconnect(ctx context.Context, user string) error {
 	return nil
 }
 
-// Presence sends presence command for channel to server and returns map with client
-// information and any error occurred in process.
+// Presence returns channel presence information.
 func (c *Client) Presence(ctx context.Context, channel string) (PresenceResult, error) {
 	pipe := c.Pipe()
 	err := pipe.AddPresence(channel)
@@ -181,8 +177,7 @@ func (c *Client) Presence(ctx context.Context, channel string) (PresenceResult, 
 	return decodePresence(resp.Result)
 }
 
-// PresenceStats sends presence stats command for channel to server and returns short presence
-// information and any error occurred in process.
+// PresenceStats returns short channel presence information (only counters).
 func (c *Client) PresenceStats(ctx context.Context, channel string) (PresenceStatsResult, error) {
 	pipe := c.Pipe()
 	err := pipe.AddPresenceStats(channel)
@@ -200,8 +195,7 @@ func (c *Client) PresenceStats(ctx context.Context, channel string) (PresenceSta
 	return decodePresenceStats(resp.Result)
 }
 
-// History sends history command for channel to server and returns slice with
-// messages and any error occurred in process.
+// History returns channel history.
 func (c *Client) History(ctx context.Context, channel string) (HistoryResult, error) {
 	pipe := c.Pipe()
 	err := pipe.AddHistory(channel)
@@ -219,8 +213,7 @@ func (c *Client) History(ctx context.Context, channel string) (HistoryResult, er
 	return decodeHistory(resp.Result)
 }
 
-// Channels sends channels command to server and returns slice with
-// active channels (with one or more subscribers).
+// Channels returns information about active channels (with one or more subscribers) on server.
 func (c *Client) Channels(ctx context.Context) (ChannelsResult, error) {
 	pipe := c.Pipe()
 	err := pipe.AddChannels()
@@ -238,7 +231,7 @@ func (c *Client) Channels(ctx context.Context) (ChannelsResult, error) {
 	return decodeChannels(resp.Result)
 }
 
-// Info sends info command to server and returns Info.
+// Info returnes information about server nodes.
 func (c *Client) Info(ctx context.Context) (InfoResult, error) {
 	pipe := c.Pipe()
 	err := pipe.AddInfo()
