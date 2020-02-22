@@ -213,6 +213,24 @@ func (c *Client) History(ctx context.Context, channel string) (HistoryResult, er
 	return decodeHistory(resp.Result)
 }
 
+// HistoryRemove removes channel history.
+func (c *Client) HistoryRemove(ctx context.Context, channel string) error {
+	pipe := c.Pipe()
+	err := pipe.AddHistoryRemove(channel)
+	if err != nil {
+		return err
+	}
+	result, err := c.SendPipe(ctx, pipe)
+	if err != nil {
+		return err
+	}
+	resp := result[0]
+	if resp.Error != nil {
+		return resp.Error
+	}
+	return nil
+}
+
 // Channels returns information about active channels (with one or more subscribers) on server.
 func (c *Client) Channels(ctx context.Context) (ChannelsResult, error) {
 	pipe := c.Pipe()

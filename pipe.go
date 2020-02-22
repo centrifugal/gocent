@@ -116,6 +116,18 @@ func (p *Pipe) AddHistory(channel string) error {
 	return p.add(cmd)
 }
 
+// AddHistoryRemove adds history remove command to client command buffer but not
+// actually sends request to server until Pipe will be explicitly sent.
+func (p *Pipe) AddHistoryRemove(channel string) error {
+	cmd := Command{
+		Method: "history_remove",
+		Params: map[string]interface{}{
+			"channel": channel,
+		},
+	}
+	return p.add(cmd)
+}
+
 // AddChannels adds channels command to client command buffer but not actually
 // sends request to server until Pipe will be explicitly sent.
 func (p *Pipe) AddChannels() error {

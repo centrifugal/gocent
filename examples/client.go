@@ -63,6 +63,13 @@ func main() {
 	}
 	log.Printf("Broadcast to %d channels is successful", len(chs))
 
+	// How to remove history.
+	err = c.HistoryRemove(ctx, ch)
+	if err != nil {
+		log.Fatalf("Error calling history remove: %v", err)
+	}
+	log.Print("History for channel removed")
+
 	// How to send 3 commands in one request.
 	pipe := c.Pipe()
 	pipe.AddPublish(ch, []byte(`{"input": "test1"}`))
