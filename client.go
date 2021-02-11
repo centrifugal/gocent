@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -30,10 +32,18 @@ func (e ErrStatusCode) Error() string {
 	return fmt.Sprintf("wrong status code: %d", e.Code)
 }
 
+type SRV struct {
+	Scheme  string
+	Domain  string
+	Service string
+}
+
 // Config of client.
 type Config struct {
 	// Addr is Centrifugo API endpoint.
 	Addr string
+	// SRV is Centrifugo API SRV record
+	SRV *SRV
 	// Key is Centrifugo API key.
 	Key string
 	// HTTPClient is a custom HTTP client to be used.
@@ -45,6 +55,8 @@ type Config struct {
 type Client struct {
 	mu sync.RWMutex
 
+	rrSelector uint
+	srv        *SRV
 	endpoint   string
 	apiKey     string
 	httpClient *http.Client
@@ -68,7 +80,18 @@ func New(c Config) *Client {
 	} else {
 		httpClient = DefaultHTTPClient
 	}
+
+	var srv *SRV
+	if c.SRV != nil {
+		srv = &(*c.SRV)
+
+		if srv.Scheme == "" {
+			srv.Scheme = "http"
+		}
+	}
+
 	return &Client{
+		srv:        srv,
 		endpoint:   addr,
 		apiKey:     c.Key,
 		httpClient: httpClient,
@@ -345,7 +368,12 @@ func (c *Client) send(ctx context.Context, cmds []Command) ([]Reply, error) {
 		}
 	}
 
-	req, err := http.NewRequest("POST", c.endpoint, &buf)
+	endpoint, err := c.getEndpoint()
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, endpoint, &buf)
 	if err != nil {
 		return nil, err
 	}
@@ -380,4 +408,29 @@ func (c *Client) send(ctx context.Context, cmds []Command) ([]Reply, error) {
 	}
 
 	return replies, err
+}
+
+// getEndpoint returns an endpoint
+func (c *Client) getEndpoint() (string, error) {
+	if c.srv == nil {
+		return c.endpoint, nil
+	}
+
+	_, addrs, err := net.LookupSRV(c.srv.Service, "tcp", c.srv.Domain)
+	if err != nil {
+		return "", err
+	}
+
+	if len(addrs) == 0 {
+		return "", errors.New("no SRV records found")
+	}
+
+	record := addrs[c.rrSelector%uint(len(addrs))]
+	endpoint := url.URL{
+		Scheme: c.srv.Scheme,
+		Host:   fmt.Sprintf("%s:%d", record.Target, record.Port),
+		Path:   "/api",
+	}
+	c.rrSelector++
+	return endpoint.String(), nil
 }
