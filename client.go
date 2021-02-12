@@ -34,6 +34,10 @@ func (e ErrStatusCode) Error() string {
 type Config struct {
 	// Addr is Centrifugo API endpoint.
 	Addr string
+	// GetAddr when set will be used before every API call to extract
+	// Centrifugo API endpoint. In this case Addr field of Config will be
+	// ignored. Nil value means using static Config.Addr field.
+	GetAddr func() (string, error)
 	// Key is Centrifugo API key.
 	Key string
 	// HTTPClient is a custom HTTP client to be used.
@@ -45,10 +49,11 @@ type Config struct {
 type Client struct {
 	mu sync.RWMutex
 
-	endpoint   string
-	apiKey     string
-	httpClient *http.Client
-	cmds       []Command
+	endpoint    string
+	getEndpoint func() (string, error)
+	apiKey      string
+	httpClient  *http.Client
+	cmds        []Command
 }
 
 // DefaultHTTPClient will be used by default for HTTP requests.
@@ -58,10 +63,6 @@ var DefaultHTTPClient = &http.Client{Transport: &http.Transport{
 
 // New returns initialized client instance based on provided config.
 func New(c Config) *Client {
-	addr := strings.TrimRight(c.Addr, "/")
-	if !strings.HasSuffix(addr, "/api") {
-		addr = addr + "/api"
-	}
 	var httpClient *http.Client
 	if c.HTTPClient != nil {
 		httpClient = c.HTTPClient
@@ -69,9 +70,10 @@ func New(c Config) *Client {
 		httpClient = DefaultHTTPClient
 	}
 	return &Client{
-		endpoint:   addr,
-		apiKey:     c.Key,
-		httpClient: httpClient,
+		endpoint:    strings.TrimRight(c.Addr, "/"),
+		getEndpoint: c.GetAddr,
+		apiKey:      c.Key,
+		httpClient:  httpClient,
 	}
 }
 
@@ -334,7 +336,6 @@ func (c *Client) SendPipe(ctx context.Context, pipe *Pipe) ([]Reply, error) {
 }
 
 func (c *Client) send(ctx context.Context, cmds []Command) ([]Reply, error) {
-
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 
@@ -345,7 +346,19 @@ func (c *Client) send(ctx context.Context, cmds []Command) ([]Reply, error) {
 		}
 	}
 
-	req, err := http.NewRequest("POST", c.endpoint, &buf)
+	var endpoint string
+
+	if c.getEndpoint != nil {
+		e, err := c.getEndpoint()
+		if err != nil {
+			return nil, err
+		}
+		endpoint = e
+	} else {
+		endpoint = c.endpoint
+	}
+
+	req, err := http.NewRequest(http.MethodPost, endpoint, &buf)
 	if err != nil {
 		return nil, err
 	}
