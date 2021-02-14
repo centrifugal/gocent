@@ -10,7 +10,7 @@ import (
 func main() {
 
 	c := gocent.New(gocent.Config{
-		Addr: "http://localhost:8000/api",
+		Addr: "http://localhost:8000",
 		Key:  "<API key>",
 	})
 

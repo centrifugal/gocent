@@ -63,6 +63,10 @@ var DefaultHTTPClient = &http.Client{Transport: &http.Transport{
 
 // New returns initialized client instance based on provided config.
 func New(c Config) *Client {
+	addr := strings.TrimRight(c.Addr, "/")
+	if !strings.HasSuffix(addr, "/api") {
+		addr = addr + "/api"
+	}
 	var httpClient *http.Client
 	if c.HTTPClient != nil {
 		httpClient = c.HTTPClient
@@ -70,7 +74,7 @@ func New(c Config) *Client {
 		httpClient = DefaultHTTPClient
 	}
 	return &Client{
-		endpoint:    strings.TrimRight(c.Addr, "/"),
+		endpoint:    addr,
 		getEndpoint: c.GetAddr,
 		apiKey:      c.Key,
 		httpClient:  httpClient,
