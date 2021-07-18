@@ -228,9 +228,44 @@ func (c *Client) HistoryRemove(ctx context.Context, channel string) error {
 	return nil
 }
 
+// RPC can call rpc.
+func (c *Client) RPC(ctx context.Context, method string, params json.RawMessage) (RPCResult, error) {
+	pipe := c.Pipe()
+	err := pipe.AddRPC(method, params)
+	if err != nil {
+		return RPCResult{}, err
+	}
+	result, err := c.SendPipe(ctx, pipe)
+	if err != nil {
+		return RPCResult{}, err
+	}
+	resp := result[0]
+	if resp.Error != nil {
+		return RPCResult{}, resp.Error
+	}
+	return decodeRPC(resp.Result)
+}
+
 // Channels returns information about active channels (with one or more subscribers) on server.
-func (c *Client) Channels(_ context.Context) (ChannelsResult, error) {
-	return ChannelsResult{}, errors.New("not implemented")
+func (c *Client) Channels(ctx context.Context) (ChannelsResult, error) {
+	pipe := c.Pipe()
+	err := pipe.AddChannels()
+	if err != nil {
+		return ChannelsResult{}, err
+	}
+	result, err := c.SendPipe(ctx, pipe)
+	if err != nil {
+		return ChannelsResult{}, err
+	}
+	resp := result[0]
+	if resp.Error != nil {
+		return ChannelsResult{}, resp.Error
+	}
+	rpcResult, err := decodeRPC(resp.Result)
+	if err != nil {
+		return ChannelsResult{}, err
+	}
+	return decodeChannels(rpcResult.Data)
 }
 
 // Info returns information about server nodes.
@@ -270,15 +305,25 @@ func decodeHistory(result []byte) (HistoryResult, error) {
 	return r, nil
 }
 
-//// decodeChannels allows to decode channels command reply result to get a slice of channels.
-//func decodeChannels(result []byte) (ChannelsResult, error) {
-//	var r ChannelsResult
-//	err := json.Unmarshal(result, &r)
-//	if err != nil {
-//		return ChannelsResult{}, err
-//	}
-//	return r, nil
-//}
+// decodeRPC allows to decode rpc reply result.
+func decodeRPC(result []byte) (RPCResult, error) {
+	var r RPCResult
+	err := json.Unmarshal(result, &r)
+	if err != nil {
+		return RPCResult{}, err
+	}
+	return r, nil
+}
+
+// decodeChannels allows to decode channels command reply result to get a slice of channels.
+func decodeChannels(result []byte) (ChannelsResult, error) {
+	var r map[string]int
+	err := json.Unmarshal(result, &r)
+	if err != nil {
+		return ChannelsResult{}, err
+	}
+	return ChannelsResult{Channels: r}, nil
+}
 
 // decodeInfo allows to decode info command response result.
 func decodeInfo(result []byte) (InfoResult, error) {

@@ -165,6 +165,24 @@ func (p *Pipe) AddHistory(channel string, opts ...HistoryOption) error {
 	return p.add(cmd)
 }
 
+type rpcRequest struct {
+	Method string          `json:"method,omitempty"`
+	Params json.RawMessage `json:"params,omitempty"`
+}
+
+// AddRPC adds rpc command to client command buffer but not actually
+// sends request to server until Pipe will be explicitly sent.
+func (p *Pipe) AddRPC(method string, params json.RawMessage) error {
+	cmd := Command{
+		Method: "rpc",
+		Params: rpcRequest{
+			Method: method,
+			Params: params,
+		},
+	}
+	return p.add(cmd)
+}
+
 // AddHistoryRemove adds history remove command to client command buffer but not
 // actually sends request to server until Pipe will be explicitly sent.
 func (p *Pipe) AddHistoryRemove(channel string) error {

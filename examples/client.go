@@ -44,8 +44,11 @@ func main() {
 	log.Printf("History for channel %s, %d messages", ch, len(historyResult.Publications))
 
 	// How to get channels.
-	channelsResult, _ := c.Channels(ctx)
-	log.Printf("Channels: %v", channelsResult.Channels)
+	channelsResult, err := c.Channels(ctx)
+	if err != nil {
+		log.Fatalf("Error calling channels: %v", err)
+	}
+	log.Printf("Channels: %#v", channelsResult.Channels)
 
 	// Get info about nodes.
 	info, err := c.Info(ctx)

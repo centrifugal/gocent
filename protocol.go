@@ -97,3 +97,7 @@ type HistoryResult struct {
 type ChannelsResult struct {
 	Channels map[string]int `json:"channels"`
 }
+
+type RPCResult struct {
+	Data json.RawMessage `json:"data"`
+}
