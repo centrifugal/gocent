@@ -72,8 +72,15 @@ type PublishResult struct {
 	Epoch  string `json:"epoch"`
 }
 
+type PublishResponse struct {
+	Error  *Error         `json:"error"`
+	Result *PublishResult `json:"result"`
+}
+
 // BroadcastResult is a result of broadcast command.
-type BroadcastResult struct{}
+type BroadcastResult struct {
+	Responses []PublishResponse `json:"responses"`
+}
 
 // PresenceResult is a result of presence command.
 type PresenceResult struct {

@@ -117,7 +117,7 @@ func (c *Client) Broadcast(ctx context.Context, channels []string, data []byte, 
 	if resp.Error != nil {
 		return BroadcastResult{}, resp.Error
 	}
-	return BroadcastResult{}, nil
+	return decodeBroadcast(resp.Result)
 }
 
 // Unsubscribe allows to unsubscribe user from channel.
@@ -291,6 +291,15 @@ func decodePublish(result []byte) (PublishResult, error) {
 	err := json.Unmarshal(result, &r)
 	if err != nil {
 		return PublishResult{}, err
+	}
+	return r, nil
+}
+
+func decodeBroadcast(result []byte) (BroadcastResult, error) {
+	var r BroadcastResult
+	err := json.Unmarshal(result, &r)
+	if err != nil {
+		return BroadcastResult{}, err
 	}
 	return r, nil
 }

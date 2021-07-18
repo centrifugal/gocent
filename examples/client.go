@@ -59,11 +59,20 @@ func main() {
 
 	// How to broadcast the same data into 3 different channels in one request.
 	chs := []string{"chat_1", "chat_2", "chat_3"}
-	_, err = c.Broadcast(ctx, chs, []byte(`{"input": "test"}`))
+	broadcastResult, err := c.Broadcast(ctx, chs, []byte(`{"input": "test"}`))
 	if err != nil {
 		log.Fatalf("Error calling broadcast: %v", err)
 	}
-	log.Printf("Broadcast to %d channels is successful", len(chs))
+	var hasPublishError bool
+	for i, resp := range broadcastResult.Responses {
+		if resp.Error != nil {
+			hasPublishError = true
+			log.Printf("error broadcasting to %s: %v", chs[i], resp.Error)
+		}
+	}
+	if !hasPublishError {
+		log.Printf("Broadcast to %d channels is successful", len(chs))
+	}
 
 	// How to remove history.
 	err = c.HistoryRemove(ctx, ch)
