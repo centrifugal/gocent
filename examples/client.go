@@ -4,24 +4,23 @@ import (
 	"context"
 	"log"
 
-	"github.com/centrifugal/gocent"
+	"github.com/centrifugal/gocent/v3"
 )
 
 func main() {
-
 	c := gocent.New(gocent.Config{
-		Addr: "http://localhost:8000",
+		Addr: "http://localhost:8000/api",
 		Key:  "<API key>",
 	})
 
 	ch := "$chat:index"
 	ctx := context.Background()
 
-	err := c.Publish(ctx, ch, []byte(`{"input": "test"}`))
+	result, err := c.Publish(ctx, ch, []byte(`{"input": "test"}`))
 	if err != nil {
 		log.Fatalf("Error calling publish: %v", err)
 	}
-	log.Printf("Publish into channel %s successful", ch)
+	log.Printf("Publish into channel %s successful, stream position {offset: %d, epoch: %s}", ch, result.Offset, result.Epoch)
 
 	// How to get presence.
 	presenceResult, err := c.Presence(ctx, ch)
@@ -56,8 +55,8 @@ func main() {
 	log.Printf("Info: %d Centrifugo nodes running", len(info.Nodes))
 
 	// How to broadcast the same data into 3 different channels in one request.
-	chs := []string{"$public:chat_1", "$public:chat_2", "$public:chat_3"}
-	err = c.Broadcast(ctx, chs, []byte(`{"input": "test"}`))
+	chs := []string{"chat_1", "chat_2", "chat_3"}
+	_, err = c.Broadcast(ctx, chs, []byte(`{"input": "test"}`))
 	if err != nil {
 		log.Fatalf("Error calling broadcast: %v", err)
 	}
@@ -72,9 +71,18 @@ func main() {
 
 	// How to send 3 commands in one request.
 	pipe := c.Pipe()
-	pipe.AddPublish(ch, []byte(`{"input": "test1"}`))
-	pipe.AddPublish(ch, []byte(`{"input": "test2"}`))
-	pipe.AddPublish(ch, []byte(`{"input": "test3"}`))
+	_ = pipe.AddPublish(ch, []byte(`{"input": "test1"}`))
+	_ = pipe.AddPublish(ch, []byte(`{"input": "test2"}`))
+	_ = pipe.AddPublish(ch, []byte(`{"input": "test3"}`))
 	replies, err := c.SendPipe(ctx, pipe)
+	if err != nil {
+		log.Fatalf("Error sending pipe: %v", err)
+	}
+	for _, reply := range replies {
+		if reply.Error != nil {
+			log.Fatalf("Error in pipe reply: %v", err)
+		}
+	}
 	log.Printf("Sent %d publish commands in one HTTP request ", len(replies))
+
 }

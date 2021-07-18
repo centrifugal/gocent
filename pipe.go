@@ -7,74 +7,113 @@ import (
 
 // Pipe allows to send several commands in one HTTP request.
 type Pipe struct {
-	mu   sync.RWMutex
-	cmds []Command
+	mu       sync.RWMutex
+	commands []Command
 }
 
 // Reset allows to clear client command buffer.
 func (p *Pipe) Reset() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.cmds = nil
+	p.commands = nil
 }
 
 func (p *Pipe) add(cmd Command) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.cmds = append(p.cmds, cmd)
+	p.commands = append(p.commands, cmd)
 	return nil
+}
+
+type publishRequest struct {
+	Channel string          `json:"channel"`
+	Data    json.RawMessage `json:"data"`
+	PublishOptions
 }
 
 // AddPublish adds publish command to client command buffer but not actually
 // sends request to server until Pipe will be explicitly sent.
-func (p *Pipe) AddPublish(channel string, data []byte) error {
-	var raw json.RawMessage
-	raw = json.RawMessage(data)
+func (p *Pipe) AddPublish(channel string, data []byte, opts ...PublishOption) error {
+	options := &PublishOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
 	cmd := Command{
 		Method: "publish",
-		Params: map[string]interface{}{
-			"channel": channel,
-			"data":    &raw,
+		Params: publishRequest{
+			Channel:        channel,
+			Data:           data,
+			PublishOptions: *options,
 		},
 	}
 	return p.add(cmd)
+}
+
+type broadcastRequest struct {
+	Channels []string `json:"channels"`
+	Data     []byte   `json:"data"`
+	PublishOptions
 }
 
 // AddBroadcast adds broadcast command to client command buffer but not actually
 // sends request to server until Pipe will be explicitly sent.
-func (p *Pipe) AddBroadcast(channels []string, data []byte) error {
-	var raw json.RawMessage
-	raw = json.RawMessage(data)
+func (p *Pipe) AddBroadcast(channels []string, data []byte, opts ...PublishOption) error {
+	options := &PublishOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
 	cmd := Command{
 		Method: "broadcast",
-		Params: map[string]interface{}{
-			"channels": channels,
-			"data":     &raw,
+		Params: broadcastRequest{
+			Channels:       channels,
+			Data:           data,
+			PublishOptions: *options,
 		},
 	}
 	return p.add(cmd)
+}
+
+type unsubscribeRequest struct {
+	Channel string `json:"channel"`
+	User    string `json:"user"`
+	UnsubscribeOptions
 }
 
 // AddUnsubscribe adds unsubscribe command to client command buffer but not actually
 // sends request to server until Pipe will be explicitly sent.
-func (p *Pipe) AddUnsubscribe(channel string, user string) error {
+func (p *Pipe) AddUnsubscribe(channel string, user string, opts ...UnsubscribeOption) error {
+	options := &UnsubscribeOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
 	cmd := Command{
 		Method: "unsubscribe",
-		Params: map[string]interface{}{
-			"channel": channel,
-			"user":    user,
+		Params: unsubscribeRequest{
+			Channel:            channel,
+			User:               user,
+			UnsubscribeOptions: *options,
 		},
 	}
 	return p.add(cmd)
 }
 
+type disconnectRequest struct {
+	User string `json:"user"`
+	DisconnectOptions
+}
+
 // AddDisconnect adds disconnect command to client command buffer but not actually
 // sends request to server until Pipe will be explicitly sent.
-func (p *Pipe) AddDisconnect(user string) error {
+func (p *Pipe) AddDisconnect(user string, opts ...DisconnectOption) error {
+	options := &DisconnectOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
 	cmd := Command{
 		Method: "disconnect",
-		Params: map[string]interface{}{
-			"user": user,
+		Params: disconnectRequest{
+			User:              user,
+			DisconnectOptions: *options,
 		},
 	}
 	return p.add(cmd)
@@ -104,13 +143,23 @@ func (p *Pipe) AddPresenceStats(channel string) error {
 	return p.add(cmd)
 }
 
+type historyRequest struct {
+	Channel string `json:"channel"`
+	HistoryOptions
+}
+
 // AddHistory adds history command to client command buffer but not actually
 // sends request to server until Pipe will be explicitly sent.
-func (p *Pipe) AddHistory(channel string) error {
+func (p *Pipe) AddHistory(channel string, opts ...HistoryOption) error {
+	options := &HistoryOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
 	cmd := Command{
 		Method: "history",
-		Params: map[string]interface{}{
-			"channel": channel,
+		Params: historyRequest{
+			Channel:        channel,
+			HistoryOptions: *options,
 		},
 	}
 	return p.add(cmd)
@@ -132,8 +181,11 @@ func (p *Pipe) AddHistoryRemove(channel string) error {
 // sends request to server until Pipe will be explicitly sent.
 func (p *Pipe) AddChannels() error {
 	cmd := Command{
-		Method: "channels",
-		Params: map[string]interface{}{},
+		Method: "rpc",
+		Params: map[string]interface{}{
+			"method": "getChannels",
+			"params": map[string]string{},
+		},
 	}
 	return p.add(cmd)
 }
