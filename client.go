@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sync"
 	"time"
 )
 
@@ -46,13 +45,10 @@ type Config struct {
 
 // Client is API client for project registered in server.
 type Client struct {
-	mu sync.RWMutex
-
 	endpoint    string
 	getEndpoint func() (string, error)
 	apiKey      string
 	httpClient  *http.Client
-	commands    []Command
 }
 
 // DefaultHTTPClient will be used by default for HTTP requests.
@@ -274,15 +270,15 @@ func decodeHistory(result []byte) (HistoryResult, error) {
 	return r, nil
 }
 
-// decodeChannels allows to decode channels command reply result to get a slice of channels.
-func decodeChannels(result []byte) (ChannelsResult, error) {
-	var r ChannelsResult
-	err := json.Unmarshal(result, &r)
-	if err != nil {
-		return ChannelsResult{}, err
-	}
-	return r, nil
-}
+//// decodeChannels allows to decode channels command reply result to get a slice of channels.
+//func decodeChannels(result []byte) (ChannelsResult, error) {
+//	var r ChannelsResult
+//	err := json.Unmarshal(result, &r)
+//	if err != nil {
+//		return ChannelsResult{}, err
+//	}
+//	return r, nil
+//}
 
 // decodeInfo allows to decode info command response result.
 func decodeInfo(result []byte) (InfoResult, error) {
