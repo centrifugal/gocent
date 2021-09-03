@@ -228,24 +228,6 @@ func (c *Client) HistoryRemove(ctx context.Context, channel string) error {
 	return nil
 }
 
-// RPC can call rpc.
-func (c *Client) RPC(ctx context.Context, method string, params json.RawMessage) (RPCResult, error) {
-	pipe := c.Pipe()
-	err := pipe.AddRPC(method, params)
-	if err != nil {
-		return RPCResult{}, err
-	}
-	result, err := c.SendPipe(ctx, pipe)
-	if err != nil {
-		return RPCResult{}, err
-	}
-	resp := result[0]
-	if resp.Error != nil {
-		return RPCResult{}, resp.Error
-	}
-	return decodeRPC(resp.Result)
-}
-
 // Channels returns information about active channels (with one or more subscribers) on server.
 func (c *Client) Channels(ctx context.Context, opts ...ChannelsOption) (ChannelsResult, error) {
 	pipe := c.Pipe()
@@ -306,16 +288,6 @@ func decodeHistory(result []byte) (HistoryResult, error) {
 	err := json.Unmarshal(result, &r)
 	if err != nil {
 		return HistoryResult{}, err
-	}
-	return r, nil
-}
-
-// decodeRPC allows to decode rpc reply result.
-func decodeRPC(result []byte) (RPCResult, error) {
-	var r RPCResult
-	err := json.Unmarshal(result, &r)
-	if err != nil {
-		return RPCResult{}, err
 	}
 	return r, nil
 }

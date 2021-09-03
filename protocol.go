@@ -108,7 +108,3 @@ type ChannelInfo struct {
 type ChannelsResult struct {
 	Channels map[string]ChannelInfo `json:"channels"`
 }
-
-type RPCResult struct {
-	Data json.RawMessage `json:"data"`
-}
