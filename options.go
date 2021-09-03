@@ -47,13 +47,6 @@ type SubscribeOptions struct {
 // SubscribeOption is a type to represent various Subscribe options.
 type SubscribeOption func(*SubscribeOptions)
 
-// WithExpireAt allows to set ExpireAt field.
-func WithExpireAt(expireAt int64) SubscribeOption {
-	return func(opts *SubscribeOptions) {
-		opts.ExpireAt = expireAt
-	}
-}
-
 // WithSubscribeInfo ...
 func WithSubscribeInfo(chanInfo json.RawMessage) SubscribeOption {
 	return func(opts *SubscribeOptions) {
