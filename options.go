@@ -18,9 +18,6 @@ func WithSkipHistory(skip bool) PublishOption {
 
 // SubscribeOptions define per-subscription options.
 type SubscribeOptions struct {
-	// ExpireAt defines time in future when subscription should expire,
-	// zero value means no expiration.
-	ExpireAt int64 `json:"expire_at,omitempty"`
 	// ChannelInfo defines custom channel information, zero value means no channel information.
 	Info json.RawMessage `json:"info,omitempty"`
 	// Presence turns on participating in channel presence.
