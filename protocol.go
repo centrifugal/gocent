@@ -100,9 +100,13 @@ type HistoryResult struct {
 	Epoch        string        `json:"epoch"`
 }
 
+type ChannelInfo struct {
+	NumUsers int32 `json:"num_users"`
+}
+
 // ChannelsResult is a result of channels command.
 type ChannelsResult struct {
-	Channels map[string]int `json:"channels"`
+	Channels map[string]ChannelInfo `json:"channels"`
 }
 
 type RPCResult struct {

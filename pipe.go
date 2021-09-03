@@ -195,14 +195,21 @@ func (p *Pipe) AddHistoryRemove(channel string) error {
 	return p.add(cmd)
 }
 
+type channelsRequest struct {
+	Pattern string `json:"pattern,omitempty"`
+}
+
 // AddChannels adds channels command to client command buffer but not actually
 // sends request to server until Pipe will be explicitly sent.
-func (p *Pipe) AddChannels() error {
+func (p *Pipe) AddChannels(opts ...ChannelsOption) error {
+	options := &ChannelsOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
 	cmd := Command{
-		Method: "rpc",
-		Params: map[string]interface{}{
-			"method": "getChannels",
-			"params": map[string]string{},
+		Method: "channels",
+		Params: channelsRequest{
+			Pattern: options.Pattern,
 		},
 	}
 	return p.add(cmd)

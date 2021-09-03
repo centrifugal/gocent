@@ -235,3 +235,19 @@ func WithReverse(reverse bool) HistoryOption {
 		opts.Reverse = reverse
 	}
 }
+
+// ChannelsOptions define some fields to alter Channels method behaviour.
+type ChannelsOptions struct {
+	// Pattern to filter channels.
+	Pattern string `json:"pattern,omitempty"`
+}
+
+// ChannelsOption is a type to represent various Channels call options.
+type ChannelsOption func(options *ChannelsOptions)
+
+// WithLimit allows to set HistoryOptions.Limit.
+func WithPattern(pattern string) ChannelsOption {
+	return func(opts *ChannelsOptions) {
+		opts.Pattern = pattern
+	}
+}

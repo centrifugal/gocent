@@ -247,9 +247,9 @@ func (c *Client) RPC(ctx context.Context, method string, params json.RawMessage)
 }
 
 // Channels returns information about active channels (with one or more subscribers) on server.
-func (c *Client) Channels(ctx context.Context) (ChannelsResult, error) {
+func (c *Client) Channels(ctx context.Context, opts ...ChannelsOption) (ChannelsResult, error) {
 	pipe := c.Pipe()
-	err := pipe.AddChannels()
+	err := pipe.AddChannels(opts...)
 	if err != nil {
 		return ChannelsResult{}, err
 	}
@@ -261,11 +261,7 @@ func (c *Client) Channels(ctx context.Context) (ChannelsResult, error) {
 	if resp.Error != nil {
 		return ChannelsResult{}, resp.Error
 	}
-	rpcResult, err := decodeRPC(resp.Result)
-	if err != nil {
-		return ChannelsResult{}, err
-	}
-	return decodeChannels(rpcResult.Data)
+	return decodeChannels(resp.Result)
 }
 
 // Info returns information about server nodes.
@@ -326,12 +322,12 @@ func decodeRPC(result []byte) (RPCResult, error) {
 
 // decodeChannels allows to decode channels command reply result to get a slice of channels.
 func decodeChannels(result []byte) (ChannelsResult, error) {
-	var r map[string]int
+	var r ChannelsResult
 	err := json.Unmarshal(result, &r)
 	if err != nil {
 		return ChannelsResult{}, err
 	}
-	return ChannelsResult{Channels: r}, nil
+	return r, nil
 }
 
 // decodeInfo allows to decode info command response result.
