@@ -7,8 +7,8 @@ import (
 
 // Command represents API command to send.
 type Command struct {
-	Method string                 `json:"method"`
-	Params map[string]interface{} `json:"params"`
+	Method string      `json:"method"`
+	Params interface{} `json:"params"`
 }
 
 // Error represents API request error.
@@ -38,11 +38,9 @@ type ClientInfo struct {
 
 // Publication represents message published into channel.
 type Publication struct {
-	UID     string          `json:"uid"`
-	Info    *ClientInfo     `json:"info"`
-	Channel string          `json:"channel"`
-	Data    json.RawMessage `json:"data"`
-	Client  string          `json:"client"`
+	Offset uint64          `json:"offset"`
+	Data   json.RawMessage `json:"data"`
+	Info   *ClientInfo     `json:"info"`
 }
 
 // NodeInfo contains information and statistics about Centrifugo node.
@@ -68,6 +66,22 @@ type InfoResult struct {
 	Nodes []NodeInfo `json:"nodes"`
 }
 
+// PublishResult is a result of publish command.
+type PublishResult struct {
+	Offset uint64 `json:"offset"`
+	Epoch  string `json:"epoch"`
+}
+
+type PublishResponse struct {
+	Error  *Error         `json:"error"`
+	Result *PublishResult `json:"result"`
+}
+
+// BroadcastResult is a result of broadcast command.
+type BroadcastResult struct {
+	Responses []PublishResponse `json:"responses"`
+}
+
 // PresenceResult is a result of presence command.
 type PresenceResult struct {
 	Presence map[string]ClientInfo `json:"presence"`
@@ -82,9 +96,15 @@ type PresenceStatsResult struct {
 // HistoryResult is a result of history command.
 type HistoryResult struct {
 	Publications []Publication `json:"publications"`
+	Offset       uint64        `json:"offset"`
+	Epoch        string        `json:"epoch"`
+}
+
+type ChannelInfo struct {
+	NumUsers int32 `json:"num_users"`
 }
 
 // ChannelsResult is a result of channels command.
 type ChannelsResult struct {
-	Channels []string `json:"channels"`
+	Channels map[string]ChannelInfo `json:"channels"`
 }

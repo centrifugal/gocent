@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
-	"sync"
 	"time"
 )
 
@@ -47,13 +45,10 @@ type Config struct {
 
 // Client is API client for project registered in server.
 type Client struct {
-	mu sync.RWMutex
-
 	endpoint    string
 	getEndpoint func() (string, error)
 	apiKey      string
 	httpClient  *http.Client
-	cmds        []Command
 }
 
 // DefaultHTTPClient will be used by default for HTTP requests.
@@ -63,10 +58,6 @@ var DefaultHTTPClient = &http.Client{Transport: &http.Transport{
 
 // New returns initialized client instance based on provided config.
 func New(c Config) *Client {
-	addr := strings.TrimRight(c.Addr, "/")
-	if !strings.HasSuffix(addr, "/api") {
-		addr = addr + "/api"
-	}
 	var httpClient *http.Client
 	if c.HTTPClient != nil {
 		httpClient = c.HTTPClient
@@ -74,7 +65,7 @@ func New(c Config) *Client {
 		httpClient = DefaultHTTPClient
 	}
 	return &Client{
-		endpoint:    addr,
+		endpoint:    c.Addr,
 		getEndpoint: c.GetAddr,
 		apiKey:      c.Key,
 		httpClient:  httpClient,
@@ -89,50 +80,50 @@ func (c *Client) SetHTTPClient(httpClient *http.Client) {
 // Pipe allows to create new Pipe to send several commands in one HTTP request.
 func (c *Client) Pipe() *Pipe {
 	return &Pipe{
-		cmds: make([]Command, 0),
+		commands: make([]Command, 0),
 	}
 }
 
 // Publish allows to publish data to channel.
-func (c *Client) Publish(ctx context.Context, channel string, data []byte) error {
+func (c *Client) Publish(ctx context.Context, channel string, data []byte, opts ...PublishOption) (PublishResult, error) {
 	pipe := c.Pipe()
-	err := pipe.AddPublish(channel, data)
+	err := pipe.AddPublish(channel, data, opts...)
 	if err != nil {
-		return err
+		return PublishResult{}, err
 	}
 	result, err := c.SendPipe(ctx, pipe)
 	if err != nil {
-		return err
+		return PublishResult{}, err
 	}
 	resp := result[0]
 	if resp.Error != nil {
-		return resp.Error
+		return PublishResult{}, resp.Error
 	}
-	return nil
+	return decodePublish(resp.Result)
 }
 
 // Broadcast allows to broadcast the same data into many channels..
-func (c *Client) Broadcast(ctx context.Context, channels []string, data []byte) error {
+func (c *Client) Broadcast(ctx context.Context, channels []string, data []byte, opts ...PublishOption) (BroadcastResult, error) {
 	pipe := c.Pipe()
-	err := pipe.AddBroadcast(channels, data)
+	err := pipe.AddBroadcast(channels, data, opts...)
 	if err != nil {
-		return err
+		return BroadcastResult{}, err
 	}
 	result, err := c.SendPipe(ctx, pipe)
 	if err != nil {
-		return err
+		return BroadcastResult{}, err
 	}
 	resp := result[0]
 	if resp.Error != nil {
-		return resp.Error
+		return BroadcastResult{}, resp.Error
 	}
-	return nil
+	return decodeBroadcast(resp.Result)
 }
 
 // Unsubscribe allows to unsubscribe user from channel.
-func (c *Client) Unsubscribe(ctx context.Context, channel, user string) error {
+func (c *Client) Unsubscribe(ctx context.Context, channel, user string, opts ...UnsubscribeOption) error {
 	pipe := c.Pipe()
-	err := pipe.AddUnsubscribe(channel, user)
+	err := pipe.AddUnsubscribe(channel, user, opts...)
 	if err != nil {
 		return err
 	}
@@ -148,9 +139,9 @@ func (c *Client) Unsubscribe(ctx context.Context, channel, user string) error {
 }
 
 // Disconnect allows to close all connections of user to server.
-func (c *Client) Disconnect(ctx context.Context, user string) error {
+func (c *Client) Disconnect(ctx context.Context, user string, opts ...DisconnectOption) error {
 	pipe := c.Pipe()
-	err := pipe.AddDisconnect(user)
+	err := pipe.AddDisconnect(user, opts...)
 	if err != nil {
 		return err
 	}
@@ -202,9 +193,9 @@ func (c *Client) PresenceStats(ctx context.Context, channel string) (PresenceSta
 }
 
 // History returns channel history.
-func (c *Client) History(ctx context.Context, channel string) (HistoryResult, error) {
+func (c *Client) History(ctx context.Context, channel string, opts ...HistoryOption) (HistoryResult, error) {
 	pipe := c.Pipe()
-	err := pipe.AddHistory(channel)
+	err := pipe.AddHistory(channel, opts...)
 	if err != nil {
 		return HistoryResult{}, err
 	}
@@ -238,9 +229,9 @@ func (c *Client) HistoryRemove(ctx context.Context, channel string) error {
 }
 
 // Channels returns information about active channels (with one or more subscribers) on server.
-func (c *Client) Channels(ctx context.Context) (ChannelsResult, error) {
+func (c *Client) Channels(ctx context.Context, opts ...ChannelsOption) (ChannelsResult, error) {
 	pipe := c.Pipe()
-	err := pipe.AddChannels()
+	err := pipe.AddChannels(opts...)
 	if err != nil {
 		return ChannelsResult{}, err
 	}
@@ -255,7 +246,7 @@ func (c *Client) Channels(ctx context.Context) (ChannelsResult, error) {
 	return decodeChannels(resp.Result)
 }
 
-// Info returnes information about server nodes.
+// Info returns information about server nodes.
 func (c *Client) Info(ctx context.Context) (InfoResult, error) {
 	pipe := c.Pipe()
 	err := pipe.AddInfo()
@@ -271,6 +262,24 @@ func (c *Client) Info(ctx context.Context) (InfoResult, error) {
 		return InfoResult{}, resp.Error
 	}
 	return decodeInfo(resp.Result)
+}
+
+func decodePublish(result []byte) (PublishResult, error) {
+	var r PublishResult
+	err := json.Unmarshal(result, &r)
+	if err != nil {
+		return PublishResult{}, err
+	}
+	return r, nil
+}
+
+func decodeBroadcast(result []byte) (BroadcastResult, error) {
+	var r BroadcastResult
+	err := json.Unmarshal(result, &r)
+	if err != nil {
+		return BroadcastResult{}, err
+	}
+	return r, nil
 }
 
 // decodeHistory allows to decode history reply result to get a slice of messages.
@@ -326,24 +335,24 @@ func decodePresenceStats(result []byte) (PresenceStatsResult, error) {
 // SendPipe sends Commands collected in Pipe to Centrifugo. Using this method you
 // should manually inspect all replies.
 func (c *Client) SendPipe(ctx context.Context, pipe *Pipe) ([]Reply, error) {
-	if len(pipe.cmds) == 0 {
+	if len(pipe.commands) == 0 {
 		return nil, ErrPipeEmpty
 	}
-	result, err := c.send(ctx, pipe.cmds)
+	result, err := c.send(ctx, pipe.commands)
 	if err != nil {
 		return nil, err
 	}
-	if len(result) != len(pipe.cmds) {
+	if len(result) != len(pipe.commands) {
 		return nil, ErrMalformedResponse
 	}
 	return result, nil
 }
 
-func (c *Client) send(ctx context.Context, cmds []Command) ([]Reply, error) {
+func (c *Client) send(ctx context.Context, commands []Command) ([]Reply, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 
-	for _, cmd := range cmds {
+	for _, cmd := range commands {
 		err := enc.Encode(cmd)
 		if err != nil {
 			return nil, err
@@ -377,7 +386,7 @@ func (c *Client) send(ctx context.Context, cmds []Command) ([]Reply, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, ErrStatusCode{resp.StatusCode}
