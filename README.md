@@ -14,7 +14,7 @@ Installation
 Install Gocent using the "go get" command:
 
 ```
-go get github.com/centrifugal/gocent
+go get github.com/centrifugal/gocent/v3
 ```
 
 License
