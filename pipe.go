@@ -73,6 +73,30 @@ func (p *Pipe) AddBroadcast(channels []string, data []byte, opts ...PublishOptio
 	return p.add(cmd)
 }
 
+type subscribeRequest struct {
+	Channel string `json:"channel"`
+	User    string `json:"user"`
+	SubscribeOptions
+}
+
+// AddUnsubscribe adds unsubscribe command to client command buffer but not actually
+// sends request to server until Pipe will be explicitly sent.
+func (p *Pipe) AddSubscribe(channel string, user string, opts ...SubscribeOption) error {
+	options := &SubscribeOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+	cmd := Command{
+		Method: "unsubscribe",
+		Params: subscribeRequest{
+			Channel:          channel,
+			User:             user,
+			SubscribeOptions: *options,
+		},
+	}
+	return p.add(cmd)
+}
+
 type unsubscribeRequest struct {
 	Channel string `json:"channel"`
 	User    string `json:"user"`
