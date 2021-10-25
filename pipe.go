@@ -87,7 +87,7 @@ func (p *Pipe) AddSubscribe(channel string, user string, opts ...SubscribeOption
 		opt(options)
 	}
 	cmd := Command{
-		Method: "unsubscribe",
+		Method: "subscribe",
 		Params: subscribeRequest{
 			Channel:          channel,
 			User:             user,
