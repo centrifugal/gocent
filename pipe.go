@@ -79,7 +79,7 @@ type subscribeRequest struct {
 	SubscribeOptions
 }
 
-// AddUnsubscribe adds unsubscribe command to client command buffer but not actually
+// AddSubscribe adds subscribe command to client command buffer but not actually
 // sends request to server until Pipe will be explicitly sent.
 func (p *Pipe) AddSubscribe(channel string, user string, opts ...SubscribeOption) error {
 	options := &SubscribeOptions{}

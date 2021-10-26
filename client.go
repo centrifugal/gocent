@@ -120,7 +120,7 @@ func (c *Client) Broadcast(ctx context.Context, channels []string, data []byte, 
 	return decodeBroadcast(resp.Result)
 }
 
-// Subscribe allow (authorize) user to be subscribed to a channel.
+// Subscribe allow subscribing user to a channel (using server-side subscriptions).
 func (c *Client) Subscribe(ctx context.Context, channel, user string, opts ...SubscribeOption) error {
 	pipe := c.Pipe()
 	err := pipe.AddSubscribe(channel, user, opts...)
