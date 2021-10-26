@@ -1,3 +1,18 @@
+# v3.1.0
+
+* Add `Client.Subscribe` method to dynamically subscribe user to a channel (using server-side subscriptions).
+
+```
+gorelease -base v3.0.0 -version v3.1.0
+github.com/centrifugal/gocent/v3
+--------------------------------
+Compatible changes:
+- (*Client).Subscribe: added
+- (*Pipe).AddSubscribe: added
+
+v3.1.0 is a valid semantic version for this release.
+```
+
 # v3.0.0
 
 HTTP API client for Centrifugo >= v3.0.0
