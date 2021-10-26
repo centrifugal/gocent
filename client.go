@@ -120,6 +120,24 @@ func (c *Client) Broadcast(ctx context.Context, channels []string, data []byte, 
 	return decodeBroadcast(resp.Result)
 }
 
+// Subscribe allow subscribing user to a channel (using server-side subscriptions).
+func (c *Client) Subscribe(ctx context.Context, channel, user string, opts ...SubscribeOption) error {
+	pipe := c.Pipe()
+	err := pipe.AddSubscribe(channel, user, opts...)
+	if err != nil {
+		return err
+	}
+	result, err := c.SendPipe(ctx, pipe)
+	if err != nil {
+		return err
+	}
+	resp := result[0]
+	if resp.Error != nil {
+		return resp.Error
+	}
+	return nil
+}
+
 // Unsubscribe allows to unsubscribe user from channel.
 func (c *Client) Unsubscribe(ctx context.Context, channel, user string, opts ...UnsubscribeOption) error {
 	pipe := c.Pipe()
