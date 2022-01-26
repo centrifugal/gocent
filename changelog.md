@@ -1,3 +1,7 @@
+# v3.2.0
+
+* Fix broadcast request bug: JSON payloads were additionally encoded to base64 due to the lack of `json.RawMessage` usage. See [#16](https://github.com/centrifugal/gocent/pull/16).
+
 # v3.1.0
 
 * Add `Client.Subscribe` method to dynamically subscribe user to a channel (using server-side subscriptions).
