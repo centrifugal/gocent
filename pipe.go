@@ -50,8 +50,8 @@ func (p *Pipe) AddPublish(channel string, data []byte, opts ...PublishOption) er
 }
 
 type broadcastRequest struct {
-	Channels []string `json:"channels"`
-	Data     []byte   `json:"data"`
+	Channels []string        `json:"channels"`
+	Data     json.RawMessage `json:"data"`
 	PublishOptions
 }
 
