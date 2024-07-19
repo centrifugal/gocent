@@ -21,12 +21,12 @@ var (
 
 // ErrStatusCode can be returned in case request to server resulted in wrong status code.
 type ErrStatusCode struct {
-	Code     int
-	Response []byte
+	Code int
+	Body []byte
 }
 
 func (e ErrStatusCode) Error() string {
-	return fmt.Sprintf("wrong status code: %d, response: %s", e.Code, string(e.Response))
+	return fmt.Sprintf("wrong status code: %d, body: %s", e.Code, string(e.Body))
 }
 
 // Config of client.
