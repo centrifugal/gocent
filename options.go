@@ -155,14 +155,14 @@ func WithDisconnect(disconnect *Disconnect) DisconnectOption {
 	}
 }
 
-// WithDisconnectClient allows to set Client.
+// WithDisconnectClient allows to set DisconnectOptions.ClientID.
 func WithDisconnectClient(clientID string) DisconnectOption {
 	return func(opts *DisconnectOptions) {
 		opts.ClientID = clientID
 	}
 }
 
-// WithDisconnectClientWhitelist allows to set ClientWhitelist.
+// WithDisconnectClientWhitelist allows to set DisconnectOptions.ClientWhitelist.
 func WithDisconnectClientWhitelist(whitelist []string) DisconnectOption {
 	return func(opts *DisconnectOptions) {
 		opts.ClientWhitelist = whitelist
@@ -219,7 +219,7 @@ func WithSince(sp *StreamPosition) HistoryOption {
 	}
 }
 
-// WithSince allows to set HistoryOptions.Since option.
+// WithReverse allows to set HistoryOptions.Reverse option.
 func WithReverse(reverse bool) HistoryOption {
 	return func(opts *HistoryOptions) {
 		opts.Reverse = reverse
@@ -235,7 +235,7 @@ type ChannelsOptions struct {
 // ChannelsOption is a type to represent various Channels call options.
 type ChannelsOption func(options *ChannelsOptions)
 
-// WithLimit allows to set HistoryOptions.Limit.
+// WithPattern allows to set ChannelsOptions.Pattern.
 func WithPattern(pattern string) ChannelsOption {
 	return func(opts *ChannelsOptions) {
 		opts.Pattern = pattern
