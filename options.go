@@ -2,8 +2,15 @@ package gocent
 
 import "encoding/json"
 
+// Doc: https://centrifugal.dev/docs/server/server_api#broadcastrequest
 type PublishOptions struct {
-	SkipHistory bool `json:"skip_history,omitempty"`
+	SkipHistory     bool              `json:"skip_history,omitempty"`
+	Tags            map[string]string `json:"tags,omitempty"`
+	B64data         string            `json:"b64data,omitempty"`
+	IdempotencyKey  string            `json:"idempotency_key,omitempty"`
+	Delta           bool              `json:"delta,omitempty"`
+	Version         int               `json:"version,omitempty"`
+	VersionEpoch    string            `json:"version_epoch,omitempty"`
 }
 
 // PublishOption is a type to represent various Publish options.
@@ -13,6 +20,58 @@ type PublishOption func(*PublishOptions)
 func WithSkipHistory(skip bool) PublishOption {
 	return func(opts *PublishOptions) {
 		opts.SkipHistory = skip
+	}
+}
+
+// WithTags allows to set all Tags at once.
+func WithTags(tags map[string]string) PublishOption {
+	return func(opts *PublishOptions) {
+		opts.Tags = tags
+	}
+}
+
+// WithTags allows to set Tags field.
+func WithTag(key string, value string) PublishOption {
+	return func(opts *PublishOptions) {
+		if opts.Tags == nil {
+			opts.Tags = make(map[string]string)
+		}
+		opts.Tags[key] = value
+	}
+}
+
+// WithB64data allows to set B64data field - custom binary data encoded in base64.
+func WithB64data(data string) PublishOption {
+	return func(opts *PublishOptions) {
+		opts.B64data = data
+	}
+}
+
+// WithIdempotencyKey allows to set idempotency key to drop duplicate publications upon retries.
+func WithIdempotencyKey(key string) PublishOption {
+	return func(opts *PublishOptions) {
+		opts.IdempotencyKey = key
+	}
+}
+
+// WithDelta tells Centrifugo to construct delta update if possible when broadcasting message to subscribers.
+func WithDelta(delta bool) PublishOption {
+	return func(opts *PublishOptions) {
+		opts.Delta = delta
+	}
+}
+
+// WithVersion sets the version of real-time document being sent.
+func WithVersion(version int) PublishOption {
+	return func(opts *PublishOptions) {
+		opts.Version = version
+	}
+}
+
+// WithVersionEpoch sets the epoch of the version.
+func WithVersionEpoch(epoch string) PublishOption {
+	return func(opts *PublishOptions) {
+		opts.VersionEpoch = epoch
 	}
 }
 
