@@ -25,7 +25,14 @@ func (p *Pipe) add(cmd Command) error {
 	return nil
 }
 
-type publishRequest struct {
+func (p *Pipe) addMany(commands []Command) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.commands = append(p.commands, commands...)
+	return nil
+}
+
+type PublishRequest struct {
 	Channel string          `json:"channel"`
 	Data    json.RawMessage `json:"data"`
 	PublishOptions
@@ -40,13 +47,26 @@ func (p *Pipe) AddPublish(channel string, data []byte, opts ...PublishOption) er
 	}
 	cmd := Command{
 		Method: "publish",
-		Params: publishRequest{
+		Params: PublishRequest{
 			Channel:        channel,
 			Data:           data,
 			PublishOptions: *options,
 		},
 	}
 	return p.add(cmd)
+}
+
+// AddPublishRequests adds publish commands to client command buffer but not actually
+// sends request to server until Pipe will be explicitly sent.
+func (p *Pipe) AddPublishRequests(requests []PublishRequest) error {
+	var commands []Command
+	for _, request := range requests {
+		commands = append(commands, Command{
+			Method: "publish",
+			Params: request,
+		})
+	}
+	return p.addMany(commands)
 }
 
 type broadcastRequest struct {
