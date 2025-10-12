@@ -4,13 +4,13 @@ import "encoding/json"
 
 // Doc: https://centrifugal.dev/docs/server/server_api#broadcastrequest
 type PublishOptions struct {
-	SkipHistory     bool              `json:"skip_history,omitempty"`
-	Tags            map[string]string `json:"tags,omitempty"`
-	B64data         string            `json:"b64data,omitempty"`
-	IdempotencyKey  string            `json:"idempotency_key,omitempty"`
-	Delta           bool              `json:"delta,omitempty"`
-	Version         int               `json:"version,omitempty"`
-	VersionEpoch    string            `json:"version_epoch,omitempty"`
+	SkipHistory    bool              `json:"skip_history,omitempty"`
+	Tags           map[string]string `json:"tags,omitempty"`
+	B64data        string            `json:"b64data,omitempty"`
+	IdempotencyKey string            `json:"idempotency_key,omitempty"`
+	Delta          bool              `json:"delta,omitempty"`
+	Version        uint64            `json:"version,omitempty"`
+	VersionEpoch   string            `json:"version_epoch,omitempty"`
 }
 
 // PublishOption is a type to represent various Publish options.
@@ -27,16 +27,6 @@ func WithSkipHistory(skip bool) PublishOption {
 func WithTags(tags map[string]string) PublishOption {
 	return func(opts *PublishOptions) {
 		opts.Tags = tags
-	}
-}
-
-// WithTags allows to set Tags field.
-func WithTag(key string, value string) PublishOption {
-	return func(opts *PublishOptions) {
-		if opts.Tags == nil {
-			opts.Tags = make(map[string]string)
-		}
-		opts.Tags[key] = value
 	}
 }
 
@@ -62,7 +52,7 @@ func WithDelta(delta bool) PublishOption {
 }
 
 // WithVersion sets the version of real-time document being sent.
-func WithVersion(version int) PublishOption {
+func WithVersion(version uint64) PublishOption {
 	return func(opts *PublishOptions) {
 		opts.Version = version
 	}
