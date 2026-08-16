@@ -19,6 +19,12 @@ var (
 	ErrPipeEmpty = errors.New("no commands in pipe")
 )
 
+// maxErrorBodyBytes caps how much of a non-200 response body we buffer into
+// ErrStatusCode. Without this, a misbehaving proxy/server can force unbounded
+// memory growth (and an unbounded log line via ErrStatusCode.Error()) on every
+// failed API call.
+const maxErrorBodyBytes = 1 << 20 // 1MB
+
 // ErrStatusCode can be returned in case request to server resulted in wrong status code.
 type ErrStatusCode struct {
 	Code int
@@ -408,7 +414,7 @@ func (c *Client) send(ctx context.Context, commands []Command) ([]Reply, error) 
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return nil, ErrStatusCode{resp.StatusCode, respBody}
 	}
 
