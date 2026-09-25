@@ -1,2 +1,6 @@
+# LF everywhere, on every OS: Go source is LF, and TestGeneratedIsCurrent
+# compares api_gen.go byte for byte with what the generator writes.
+* text=auto eol=lf
+
 # Generated code: collapsed in diffs, excluded from language statistics.
 api_gen.go linguist-generated=true
