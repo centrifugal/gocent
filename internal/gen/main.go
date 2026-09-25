@@ -214,6 +214,9 @@ type writer struct {
 var (
 	reBackticked = regexp.MustCompile("`([a-z0-9_]+)`")
 	reSnake      = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b|\bb64[a-z]+\b`)
+	// reOption matches what follows a configuration option's name, such as
+	// "join_leave channel option": that name is Centrifugo's, not a field's.
+	reOption = regexp.MustCompile(`^\s+(?:channel\s+)?option\b`)
 )
 
 // goDoc rewrites the proto names a comment mentions into Go ones, so that
@@ -221,6 +224,8 @@ var (
 // opening with the documented field's own name has that name rewritten even
 // when it is a single word ("version, when set, ..."); elsewhere only names
 // which cannot be ordinary words are - backticked ones, and snake_case ones.
+// A name followed by "option" is a configuration option's, and is kept.
+// line may span several lines of a comment.
 func (w *writer) goDoc(line, protoName, goIdent string) string {
 	if protoName != "" && strings.HasPrefix(line, protoName) {
 		rest := line[len(protoName):]
@@ -234,12 +239,20 @@ func (w *writer) goDoc(line, protoName, goIdent string) string {
 		}
 		return m
 	})
-	return reSnake.ReplaceAllStringFunc(line, func(m string) string {
-		if g, ok := w.goNames[m]; ok {
-			return g
+	var b strings.Builder
+	last := 0
+	for _, loc := range reSnake.FindAllStringIndex(line, -1) {
+		name := line[loc[0]:loc[1]]
+		g, ok := w.goNames[name]
+		if !ok || reOption.MatchString(line[loc[1]:]) {
+			continue
 		}
-		return m
-	})
+		b.WriteString(line[last:loc[0]])
+		b.WriteString(g)
+		last = loc[1]
+	}
+	b.WriteString(line[last:])
+	return b.String()
 }
 
 func isIdentByte(c byte) bool {
@@ -259,12 +272,10 @@ func (w *writer) p(layout string, args ...any) { fmt.Fprintf(&w.Buffer, layout+"
 // doc writes a comment block, renaming the proto identifier it opens with to
 // the Go one, so "user_id is ..." documents UserID as "UserID is ...".
 func (w *writer) doc(indent string, lines []string, protoName, goIdent string) {
-	for i, l := range lines {
-		if i == 0 {
-			l = w.goDoc(l, protoName, goIdent)
-		} else {
-			l = w.goDoc(l, "", "")
-		}
+	// Rewritten as one text, so that a name is seen with what follows it on
+	// the next line.
+	joined := w.goDoc(strings.Join(lines, "\n"), protoName, goIdent)
+	for l := range strings.SplitSeq(joined, "\n") {
 		if l == "" {
 			w.p("%s//", indent)
 			continue

@@ -93,3 +93,22 @@ func TestGeneratedIsCurrent(t *testing.T) {
 		t.Fatal("api_gen.go is stale: run `make generate`")
 	}
 }
+
+func TestGoDoc(t *testing.T) {
+	w := &writer{goNames: map[string]string{"join_leave": "JoinLeave", "user_id": "UserID"}}
+	cases := []struct{ in, want string }{
+		// The field's own name, and a snake_case field name elsewhere.
+		{"join_leave is set with user_id.", "JoinLeave is set with UserID."},
+		// A configuration option keeps its name, also across a line break.
+		{"join_leave overrides the join_leave channel option.", "JoinLeave overrides the join_leave channel option."},
+		{"join_leave overrides the join_leave channel\noption.", "JoinLeave overrides the join_leave channel\noption."},
+		{"see the join_leave option", "see the join_leave option"},
+		// "options" is not "option": a field of that name is still a field.
+		{"the join_leave options", "the JoinLeave options"},
+	}
+	for _, tc := range cases {
+		if got := w.goDoc(tc.in, "join_leave", "JoinLeave"); got != tc.want {
+			t.Errorf("goDoc(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

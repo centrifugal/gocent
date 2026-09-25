@@ -195,16 +195,16 @@ type SubscribeOptionOverride struct {
 	// Presence overrides the presence channel option.
 	Presence *BoolValue `json:"presence,omitzero"`
 
-	// JoinLeave overrides the JoinLeave channel option.
+	// JoinLeave overrides the join_leave channel option.
 	JoinLeave *BoolValue `json:"join_leave,omitzero"`
 
-	// ForceRecovery overrides the ForceRecovery channel option.
+	// ForceRecovery overrides the force_recovery channel option.
 	ForceRecovery *BoolValue `json:"force_recovery,omitzero"`
 
-	// ForcePositioning overrides the ForcePositioning channel option.
+	// ForcePositioning overrides the force_positioning channel option.
 	ForcePositioning *BoolValue `json:"force_positioning,omitzero"`
 
-	// ForcePushJoinLeave overrides the ForcePushJoinLeave channel
+	// ForcePushJoinLeave overrides the force_push_join_leave channel
 	// option.
 	ForcePushJoinLeave *BoolValue `json:"force_push_join_leave,omitzero"`
 }
