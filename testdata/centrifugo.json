@@ -1,0 +1,12 @@
+{
+  "http_server": {"port": 8100},
+  "http_api": {"key": "api_key"},
+  "log": {"level": "error"},
+  "channel": {
+    "without_namespace": {
+      "history_size": 1000,
+      "history_ttl": "300s",
+      "presence": true
+    }
+  }
+}

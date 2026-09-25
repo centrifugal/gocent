@@ -1,37 +1,87 @@
-name: build
+name: CI
+
 on: [push, pull_request]
+
+permissions:
+  contents: read
+
+# Every job runs Makefile targets, so what passes locally passes here.
+#
+# Each job skips a pull request from this repository's own branches, which the
+# push already ran.
+#
+# setup-go runs with `cache: false`: its cache is keyed on go.sum, and this
+# module has no dependencies and so no go.sum.
+
 jobs:
-  golangci:
-    name: Lint
-    runs-on: ubuntu-latest
-    # Prevent duplicate builds on internal PRs.
+  test:
+    name: test (${{ matrix.os }})
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v3
-        with:
-          go-version: '1.20.x'
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: v1.52.2
-          args: --timeout 3m0s
-  build:
-    name: Test with Go ${{ matrix.go-version }}
-    runs-on: ubuntu-latest
-    # Prevent duplicate builds on internal PRs.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        go-version: ["oldstable", "stable"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    # The Makefile recipes are POSIX sh, so Windows runs them under Git Bash.
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Install Go stable version
-        uses: actions/setup-go@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version: stable
+          cache: false
+      - name: Install make
+        if: runner.os == 'Windows'
+        run: choco install make --no-progress -y
+      - run: make build
+      - run: make test-race
 
-      - name: Checkout code
-        uses: actions/checkout@v2
+  check:
+    name: check (lint, generated code, coverage, vulnerabilities)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+      - run: make check
 
-      - name: Test
-        run: go test -v -race
+  integration:
+    name: integration (Centrifugo)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    # The same setup as testdata/centrifugo.json, through Centrifugo's
+    # environment variables.
+    services:
+      centrifugo:
+        image: centrifugo/centrifugo:v6
+        ports:
+          - 8100:8000
+        env:
+          CENTRIFUGO_HTTP_API_KEY: api_key
+          CENTRIFUGO_CHANNEL_WITHOUT_NAMESPACE_HISTORY_SIZE: "1000"
+          CENTRIFUGO_CHANNEL_WITHOUT_NAMESPACE_HISTORY_TTL: 300s
+          CENTRIFUGO_CHANNEL_WITHOUT_NAMESPACE_PRESENCE: "true"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+      - run: make test-integration
+
+  fuzz:
+    name: fuzz
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+      - run: make fuzz FUZZTIME=1m

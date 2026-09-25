@@ -1,0 +1,69 @@
+version: "2"
+
+# gocent is a leaf dependency of applications talking to Centrifugo, so the set
+# below leans towards correctness, HTTP hygiene and security, and away from
+# style opinions.
+linters:
+  default: none
+  enable:
+    - bidichk        # bidirectional unicode in source, a supply-chain trick
+    - bodyclose      # every response body closed, or connections leak
+    - contextcheck
+    - copyloopvar
+    - errcheck
+    - errorlint      # error comparison and wrapping done correctly
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - noctx          # every request carries a context
+    - predeclared
+    - revive
+    - staticcheck
+    - unconvert
+    - unused
+    - usestdlibvars
+    - wastedassign
+
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # structs are laid out for reading, not for padding
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - unnamedResult
+        # Request structs are passed by value on purpose: callers write them
+        # as literals, and a value cannot be changed under a call in flight.
+        - hugeParam
+    revive:
+      rules:
+        - name: exported
+        - name: var-naming
+        - name: indent-error-flow
+        - name: errorf
+        - name: context-as-argument
+        - name: range-val-in-closure
+
+  exclusions:
+    rules:
+      # Tests put credentials into URLs to check New refuses them.
+      - path: _test\.go
+        text: "G101"
+        linters:
+          - gosec
+      # The generator reads a path go generate gives it.
+      - path: internal/gen
+        text: "G304"
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
