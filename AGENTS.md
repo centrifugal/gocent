@@ -17,13 +17,18 @@ passes; if you find yourself about to break one, stop and say so instead.
    `internal/apiproto/api.proto`, the source of truth for the API; its comments
    become the Go documentation. `TestGeneratedIsCurrent` and
    `make generate-check` fail when the two disagree.
-3. **A call returns a result or an error - with one exception, stated
-   everywhere it applies.** `Client.Broadcast` and `Batch.Send` return an error
-   together with a complete result when one or more of their parts failed
-   (`*BroadcastError`, `*BatchError`). Their `Unwrap() []error` exposes every
-   part's error, so `errors.Is` reaches through. They are returned when all
-   parts failed too - the error is typed by the shape of the reply, not by
-   how many parts succeeded. Any other error means nothing was done.
+3. **A call returns an error unless it did everything asked.** The plain
+   `if err != nil { return err }` must always be correct code. Otherwise a
+   call returns a result or an error - except for the parts of a broadcast or
+   batch, which each always have an outcome: `BroadcastResult.Channels` holds
+   one entry per requested channel and every command has its `Pending`,
+   whatever the error. When the request failed as a whole, each part's error
+   is that error. When Centrifugo carried it out and one or more parts failed,
+   up to all, the error is a `*BroadcastError` or `*BatchError`; their
+   `Unwrap() []error` exposes every failed part's error, so `errors.Is`
+   reaches through. Any other error means the request failed as a whole: no
+   part got a reply - which, after a timeout or a network error, does not
+   mean Centrifugo did nothing.
 4. **Errors follow Centrifugo's model.** A Centrifugo error is an `*Error`;
    `errors.Is` matches it against the exported values by `Code` only, never by
    message. Centrifugo adds codes over time: nothing may switch exhaustively
@@ -35,11 +40,16 @@ passes; if you find yourself about to break one, stop and say so instead.
      There are no timers.
    - At the cap, calls queue first in, first out, and go out together when a
      request finishes. Requests in flight never exceed `MaxInFlight`.
-   - Every call gets exactly its own reply. A broadcast inside a batch returns
-     what a direct broadcast returns, `*BroadcastError` included.
+   - Every call gets exactly its own reply - its own command's result or error,
+     or the error of the batch request which carried it. A broadcast inside a
+     batch returns what a direct broadcast returns, `*BroadcastError` included.
+     A batch request failing as a whole fails every call in it, by design: no
+     call is retried alone, since only some failures prove nothing ran.
    - A caller whose context ends while queued leaves without its command being
-     sent. A batch runs on its own goroutine with its own timeout, never a
-     caller's context.
+     sent. A call's command is encoded before it queues, and the batch sends
+     those bytes: once a call returns - even while its batch is still on its
+     way - nothing reads the caller's request. A batch runs on its own
+     goroutine with `RequestTimeout`, never a caller's context or deadline.
 6. **`New` catches configuration mistakes.** Anything wrong with a `Config` that
    can be seen without a request is an error from `New` wrapping
    `ErrInvalidConfig`, naming the field and the fix.
@@ -107,12 +117,9 @@ docs here - these are the places a reader goes wrong.
   it is not. In a
   batch the same call fails with `ErrNotFound` (code 104) instead. The doc
   comment of every PRO-only method says "Centrifugo PRO only."
-- **`IsPartial` does not mean something succeeded.** A `*BroadcastError` or
-  `*BatchError` is returned when all parts failed too. `len(Failed) < Total`
-  tells whether any part succeeded.
-- **Handle a batch's failures once.** Check `Send` for a whole failure
-  (`err != nil && !IsPartial(err)`), then read each `Pending`. `BatchError.Failed`
-  lists the same failures again, for a summary.
+- **An error from `Broadcast` or `Batch.Send` does not mean nothing was
+  done.** `*BroadcastError` and `*BatchError` say which parts succeeded. A
+  broadcast retried with the same `IdempotencyKey` is not published twice.
 - **Credentials are not required by `New`.** No `APIKey` or `BearerTokenFunc`
   is valid - mutual TLS, a proxy, `http_api.insecure` - so a key which failed
   to load shows as `ErrUnauthorized` on the first call, not at `New`.
@@ -122,7 +129,15 @@ docs here - these are the places a reader goes wrong.
 ## Things that look wrong but are deliberate
 
 - **Request structs are passed by value.** Callers write them as literals, and
-  a value cannot change under a call in flight. `hugeParam` is disabled for it.
+  the struct cannot change under a call in flight. Its slices and maps
+  (`Channels`, `Data`, `Tags`) are still the caller's, not copied - copying
+  thousands of channels per broadcast would cost the hot path - so the docs
+  ask callers not to modify them while a call or batch uses them.
+  `hugeParam` is disabled for it.
+- **Batch options are given to `NewBatch`, not `Send`.** They change what the
+  commands mean together - whether they take effect in order - so they are
+  fixed before the first command is added, and `Send(ctx)` has the shape of
+  every other call.
 - **`APIMethod`, not `Method`.** It says what the name is - the API method -
   and matches the other SDKs (`api_method` in the Python one).
 - **`rpc` is not offered**, though `api.proto` has it: it calls server API

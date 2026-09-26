@@ -79,33 +79,66 @@ ten seconds by default.
 ## Broadcast and batch
 
 `Broadcast` publishes the same data into many channels in one request, and a
-`Batch` sends many commands at once. Their parts succeed or fail on their own,
-and the rule for both is the same: **when one or more parts failed, the method
-returns an error together with the complete result** - every part's outcome,
-its result or its own error. Checking `err` is always enough to notice a
-failure; any other error means the request failed as a whole and nothing was
-done.
+`Batch` sends many commands at once. Like every call, they return an error
+unless they did everything asked:
 
 ```go
-res, err := client.Broadcast(ctx, gocent.BroadcastRequest{
-	Channels: []string{"user:1", "user:2"},
-	Data:     jsontext.Value(`{"text":"hello"}`),
+_, err := client.Broadcast(ctx, gocent.BroadcastRequest{
+	Channels:       []string{"user:1", "user:2"},
+	Data:           jsontext.Value(`{"text":"hello"}`),
+	IdempotencyKey: messageID,
 })
-if err != nil && !gocent.IsPartial(err) {
-	return err // nothing was published
+if err != nil {
+	return err // retrying with the same IdempotencyKey is safe
 }
-// res.Channels holds every channel's outcome. When any failed,
-// errors.As(err, &partial) gives a *gocent.BroadcastError listing them.
 ```
 
 ```go
-b := client.NewBatch()
-pub := b.Publish(gocent.PublishRequest{Channel: "news", Data: data})
-stats := b.PresenceStats(gocent.PresenceStatsRequest{Channel: "news"})
-err := b.Send(ctx, gocent.BatchOptions{})
-// nil: all succeeded. *gocent.BatchError: some failed. Anything else: no replies.
-res, err := pub.Result()
+b := client.NewBatch(gocent.BatchOptions{})
+for _, ev := range events {
+	b.Publish(gocent.PublishRequest{Channel: ev.Channel, Data: ev.Data})
+}
+if err := b.Send(ctx); err != nil {
+	return err
+}
 ```
+
+Their parts succeed or fail on their own. When Centrifugo carried out the
+request and some parts failed - up to all - the error says which: a
+`*gocent.BroadcastError` or a `*gocent.BatchError`. `errors.Is` sees through
+both: `errors.Is(err, gocent.ErrUnknownChannel)` is true when any part failed
+that way. Any other error means the request failed as a whole: no part got a
+reply. After a timeout or a network error Centrifugo may still have carried it
+out, so retry with the same `IdempotencyKey`.
+
+Every part always has an outcome, whatever the error: `res.Channels` holds one
+entry per requested channel, and every command of a batch has its `Pending`.
+When the request failed as a whole, each part's error is that error. So a
+caller which accepts some failed channels checks `err` first, then reads each:
+
+```go
+res, err := client.Broadcast(ctx, req)
+var be *gocent.BroadcastError
+if err != nil && !errors.As(err, &be) {
+	return err // no channel got a reply
+}
+for _, ch := range res.Channels {
+	if ch.Err != nil {
+		log.Printf("not published into %s: %v", ch.Channel, ch.Err)
+		continue
+	}
+	log.Printf("%s: offset %d", ch.Channel, ch.Result.Offset)
+}
+```
+
+A broadcast inside a batch returns what a direct broadcast returns, and one
+which failed in any channel counts as a failed command.
+
+`BatchOptions`, given to `NewBatch`, say how Centrifugo runs the batch: the
+zero value runs the commands one by one, in order; `Parallel` runs them
+concurrently. A batch keeps its commands' requests as given until it is sent -
+their slices, such as `Channels` and `Data`, are shared with the caller, so do
+not modify them before `Send` returns.
 
 ## Automatic batching
 
@@ -123,8 +156,15 @@ client, err := gocent.New(gocent.Config{
 While fewer than `MaxInFlight` requests are in flight, every call is sent at
 once, alone. Once that many are, further calls wait for one of them to finish -
 not for a timer - and then go out together as one batch. The busier the client,
-the larger the batches. Every call still returns exactly its own result or
+the larger the batches. Every call still gets its own command's result or
 error.
+
+Calls sharing a batch share its request, though: when the batch request itself
+fails - the network, the credentials, a body too large for Centrifugo or a
+proxy - every call in it fails with that error. Keep payloads well within the
+body limit, or send large ones from a client without `AutoBatch`. A batch
+request is bounded by `RequestTimeout`, not by the deadlines of the calls in
+it.
 
 A smaller `MaxInFlight` batches more: a value above the concurrency your load
 needs leaves nearly every call sent alone. 8 suits most applications.
@@ -226,12 +266,9 @@ mistake in the request is Centrifugo's to report, in its logs.
   `APIEndpoint` is wrong - if other methods work, `APIEndpoint` is fine. In a
   batch the same call fails with `gocent.ErrNotFound`. PRO-only methods say so
   in their docs.
-- **`IsPartial(err)` does not mean something succeeded.** A broadcast or batch
-  whose every part failed returns the same error type; `len(Failed) < Total`
-  tells whether any part succeeded.
-- **Handle a batch's failures once:** check `Send` for a whole failure, then
-  read each `Pending`. `BatchError.Failed` repeats the same failures, for a
-  summary.
+- **An error from `Broadcast` or `Batch.Send` does not mean nothing was
+  done.** A `*gocent.BroadcastError` or `*gocent.BatchError` says which parts
+  succeeded. Retry a broadcast with the same `IdempotencyKey`.
 - **`New` does not require credentials**, since mutual TLS or a proxy may
   authenticate instead. An API key which failed to load shows as
   `gocent.ErrUnauthorized` on the first call.

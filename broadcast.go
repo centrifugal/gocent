@@ -10,39 +10,55 @@ import (
 // the way to send one message to many channels: Centrifugo does the work of
 // all the publications at once.
 //
-// Each channel succeeds or fails on its own. When one or more channels failed
-// - any number of them, up to all - the error is a [*BroadcastError] listing
-// them, and the result still holds every channel's outcome, in the order of
-// req.Channels. Checking err is enough to notice a failure. Any other error
-// means the broadcast failed as a whole: nothing was published, and the
-// result is empty.
+// Channels succeed or fail on their own, and the result always holds one
+// entry per channel of req.Channels, in their order: the publication, or the
+// channel's error. When the broadcast failed as a whole - the network, the
+// credentials, Centrifugo refusing the request - every channel's error is that
+// error.
+//
+// Like every call, Broadcast returns an error unless it did everything asked:
+// err is nil only when the data was published into every channel. When
+// Centrifugo carried out the broadcast and one or more channels failed - up
+// to all of them - err is a [*BroadcastError]. Any other error means the
+// broadcast failed as a whole: no channel got a reply. After a timeout or a
+// network error Centrifugo may still have published it.
+//
+// Most callers need no more than err != nil. A broadcast retried with the same
+// IdempotencyKey is not published again into the channels which already have
+// it, so retrying the whole broadcast is safe. To go on despite some failed
+// channels:
 //
 //	res, err := client.Broadcast(ctx, req)
-//	var partial *gocent.BroadcastError
-//	switch {
-//	case errors.As(err, &partial):
-//		// partial.Failed lists the failed channels; res has every channel's outcome.
-//	case err != nil:
-//		return err
+//	var be *gocent.BroadcastError
+//	if err != nil && !errors.As(err, &be) {
+//		return err // no channel got a reply
+//	}
+//	for _, ch := range res.Channels {
+//		if ch.Err != nil {
+//			log.Printf("not published into %s: %v", ch.Channel, ch.Err)
+//		}
 //	}
 func (c *Client) Broadcast(ctx context.Context, req BroadcastRequest) (BroadcastResult, error) {
 	w, err := invoke(ctx, c, &req, func(r *reply) *broadcastWire { return r.Broadcast })
 	if err != nil {
-		return BroadcastResult{}, err
+		return failedBroadcast(req.Channels, err), err
 	}
 	return w.result(req.Channels)
 }
 
 // Broadcast adds a broadcast command to the batch. Its outcome, read with
 // [Pending.Result] once the batch is sent, is what [Client.Broadcast] would
-// have returned, including a [*BroadcastError] when any channel failed.
+// have returned: every channel's outcome, and a [*BroadcastError] when any
+// channel failed.
 func (b *Batch) Broadcast(req BroadcastRequest) *Pending[BroadcastResult] {
 	channels := req.Channels
 	get := func(r *reply) (BroadcastResult, error) { return deref(r.Broadcast).result(channels) }
 	// A broadcast which failed in any channel failed as a command too, so
 	// Send counts it in its BatchError.
 	check := func(r *reply) error { _, err := get(r); return err }
-	return addChecked(b, &req, get, check)
+	p := addChecked(b, &req, get, check)
+	p.fail = func(err error) BroadcastResult { return failedBroadcast(channels, err) }
+	return p
 }
 
 // BroadcastResult is the outcome of a broadcast: one entry per channel, in the
@@ -58,14 +74,15 @@ type ChannelResult struct {
 	// Result is the publication's position in the channel's history. It is
 	// zero when the channel keeps no history, and when Err is set.
 	Result PublishResult
-	// Err is nil when the publication succeeded, and an [*Error] otherwise.
+	// Err is nil when the publication succeeded. Otherwise it is the
+	// channel's [*Error], or the error of the whole broadcast when it failed
+	// as a whole.
 	Err error
 }
 
-// BroadcastError reports a broadcast which failed in one or more of its
-// channels, up to all of them. The [BroadcastResult] returned with it holds
-// every channel's outcome, so the channels which succeeded, if any, are there
-// too: len(Failed) < Total tells whether any did.
+// BroadcastError reports a broadcast which Centrifugo carried out and which
+// failed in one or more of its channels, up to all of them. The result
+// returned with it holds every channel's outcome.
 //
 // [errors.Is] and [errors.As] see the errors of the failed channels, so
 // errors.Is(err, ErrUnknownChannel) is true when any channel failed that way.
@@ -112,6 +129,16 @@ func (e *BroadcastError) Unwrap() []error {
 	return errs
 }
 
+// failedBroadcast is the result of a broadcast which failed as a whole: every
+// channel failed with err.
+func failedBroadcast(channels []string, err error) BroadcastResult {
+	res := BroadcastResult{Channels: make([]ChannelResult, len(channels))}
+	for i, ch := range channels {
+		res.Channels[i] = ChannelResult{Channel: ch, Err: err}
+	}
+	return res
+}
+
 // broadcastWire is a broadcast result as Centrifugo sends it: a response per
 // channel, positionally matching the request's channels.
 type broadcastWire struct {
@@ -130,7 +157,8 @@ type channelResponse struct {
 // request's: the reply does not repeat them.
 func (w broadcastWire) result(channels []string) (BroadcastResult, error) {
 	if len(w.Responses) != len(channels) {
-		return BroadcastResult{}, &DecodeError{Err: errMismatchedReplies(len(w.Responses), len(channels), "channels")}
+		err := &DecodeError{Err: errMismatchedReplies(len(w.Responses), len(channels), "channels")}
+		return failedBroadcast(channels, err), err
 	}
 	res := BroadcastResult{Channels: make([]ChannelResult, len(channels))}
 	failed := 0

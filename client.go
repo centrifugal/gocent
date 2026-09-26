@@ -79,11 +79,19 @@ type Config struct {
 // client, the larger the batches, and the fewer requests Centrifugo handles
 // for the same work.
 //
-// Every call returns exactly what it would have returned alone: its own
-// result, or its own error. Calls made one after another keep their order: a
-// call waits for its reply, so the next one can only join a later batch. The
-// calls sharing a batch were made concurrently, with no order between them,
-// and Centrifugo runs them in parallel.
+// Every call gets its own command's reply: its own result, or its own error.
+// Calls made one after another keep their order: a call waits for its reply,
+// so the next one can only join a later batch. The calls sharing a batch were
+// made concurrently, with no order between them, and Centrifugo runs them in
+// parallel.
+//
+// Calls sharing a batch share its request, though. When the batch request
+// itself fails - the network, the credentials, a body too large for
+// Centrifugo or a proxy in front of it - every call in it fails with that
+// error. Keep payloads well within the body limit, or send large ones from a
+// client without AutoBatch. A batch request is bounded by RequestTimeout, not
+// by the deadlines of the calls in it: a call with a longer deadline can still
+// fail after RequestTimeout once it went out in a batch.
 type AutoBatch struct {
 	// MaxInFlight is how many requests may be in flight at once before calls
 	// start to wait and be batched. Zero disables AutoBatch.

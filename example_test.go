@@ -55,46 +55,57 @@ func ExampleClient_Publish() {
 	}
 }
 
-// A broadcast fails or succeeds per channel. Checking err is enough to notice a
-// failure in any channel; the result holds every channel's outcome.
+// A broadcast returns an error unless the data was published into every
+// channel. Most callers need nothing more: retried with the same
+// IdempotencyKey, the broadcast is not published twice into any channel.
 func ExampleClient_Broadcast() {
+	var client *gocent.Client // created once with gocent.New
+
+	_, err := client.Broadcast(context.Background(), gocent.BroadcastRequest{
+		Channels:       []string{"user:1", "user:2", "user:3"},
+		Data:           jsontext.Value(`{"text":"hello"}`),
+		IdempotencyKey: "message-42",
+	})
+	if err != nil {
+		log.Fatal(err) // retry the same request later
+	}
+}
+
+// The result holds every channel's outcome whatever the error, so a caller
+// which accepts some failed channels checks err first, then reads each one.
+func ExampleBroadcastError() {
 	var client *gocent.Client // created once with gocent.New
 
 	res, err := client.Broadcast(context.Background(), gocent.BroadcastRequest{
 		Channels: []string{"user:1", "user:2", "user:3"},
 		Data:     jsontext.Value(`{"text":"hello"}`),
 	})
-	var partial *gocent.BroadcastError
-	switch {
-	case errors.As(err, &partial):
-		for _, failed := range partial.Failed {
-			log.Printf("not published into %s: %v", failed.Channel, failed.Err)
-		}
-	case err != nil:
-		log.Fatal(err) // nothing was published
+	var be *gocent.BroadcastError
+	if err != nil && !errors.As(err, &be) {
+		log.Fatal(err) // no channel got a reply
 	}
 	for _, ch := range res.Channels {
-		if ch.Err == nil {
-			log.Printf("%s: offset %d", ch.Channel, ch.Result.Offset)
+		if ch.Err != nil {
+			log.Printf("not published into %s: %v", ch.Channel, ch.Err)
+			continue
 		}
+		log.Printf("%s: offset %d", ch.Channel, ch.Result.Offset)
 	}
 }
 
-// A batch sends many commands in one request. Each command's outcome is read
-// from the Pending its method returned.
+// A batch sends many commands in one request, and Send returns an error
+// unless every command succeeded. Each command's own outcome is read from the
+// Pending its method returned.
 func ExampleBatch() {
 	var client *gocent.Client // created once with gocent.New
 
-	b := client.NewBatch()
+	b := client.NewBatch(gocent.BatchOptions{})
 	pub := b.Publish(gocent.PublishRequest{Channel: "news", Data: jsontext.Value(`{}`)})
 	stats := b.PresenceStats(gocent.PresenceStatsRequest{Channel: "news"})
 
-	err := b.Send(context.Background(), gocent.BatchOptions{})
-	var partial *gocent.BatchError
-	if err != nil && !errors.As(err, &partial) {
-		log.Fatal(err) // no command got a reply
+	if err := b.Send(context.Background()); err != nil {
+		log.Print(err) // gocent: batch: 1 of 2 commands failed: ...
 	}
-
 	if res, err := pub.Result(); err == nil {
 		log.Printf("published at offset %d", res.Offset)
 	}

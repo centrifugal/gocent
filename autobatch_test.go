@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -169,14 +170,74 @@ func TestAutoBatchBroadcastPartialFailure(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range 6 {
 		wg.Go(func() {
-			_, err := c.Broadcast(t.Context(), gocent.BroadcastRequest{
+			res, err := c.Broadcast(t.Context(), gocent.BroadcastRequest{
 				Channels: []string{"ok" + strconv.Itoa(i), "bad" + strconv.Itoa(i)}, Data: data,
 			})
-			var partial *gocent.BroadcastError
-			if !errors.As(err, &partial) || partial.Failed[0].Channel != "bad"+strconv.Itoa(i) {
+			var be *gocent.BroadcastError
+			if !errors.As(err, &be) || len(be.Failed) != 1 || be.Failed[0].Channel != "bad"+strconv.Itoa(i) {
 				t.Errorf("broadcast %d: %v", i, err)
+			}
+			if len(res.Channels) != 2 || res.Channels[0].Err != nil || res.Channels[1].Err == nil {
+				t.Errorf("broadcast %d: result %+v", i, res.Channels)
 			}
 		})
 	}
 	wg.Wait()
+}
+
+// A caller whose context ends after its call went into a batch returns at
+// once, while the batch is still on its way. The request it made must be sent
+// as it was when the call was made, however the caller reuses its memory
+// after returning.
+func TestAutoBatchCallerMemoryIsNotReadAfterReturn(t *testing.T) {
+	f := newFake(t)
+	f.delay = 30 * time.Millisecond
+	var calls atomic.Int32
+	c := newClient(t, f, autoBatch(gocent.AutoBatch{MaxInFlight: 1}), func(cfg *gocent.Config) {
+		cfg.APIEndpoint = ""
+		cfg.APIEndpointFunc = func(context.Context) (string, error) {
+			if calls.Add(1) > 1 {
+				// The batch: hold it back between being taken and being
+				// encoded, well past the caller's deadline.
+				time.Sleep(60 * time.Millisecond)
+			}
+			return f.addr(), nil
+		}
+	})
+
+	first := make(chan error, 1)
+	go func() {
+		_, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "first", Data: data})
+		first <- err
+	}()
+	time.Sleep(10 * time.Millisecond) // the first call holds the only slot
+
+	channels := []string{"user:1", "user:2"}
+	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Millisecond)
+	defer cancel()
+	_, err := c.Broadcast(ctx, gocent.BroadcastRequest{Channels: channels, Data: data})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Broadcast: %v, want the deadline to end it while batched", err)
+	}
+	channels[0] = "reused" // the caller's memory is its own again
+
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		for _, r := range f.recorded() {
+			if r.Path != "/api/batch" {
+				continue
+			}
+			if !strings.Contains(string(r.Body), `"user:1"`) || strings.Contains(string(r.Body), "reused") {
+				t.Fatalf("batch sent %s, want the channels as they were when the call was made", r.Body)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the batch was never sent")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

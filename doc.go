@@ -59,21 +59,29 @@
 //
 // # Broadcast and batch
 //
-// Two methods do many things in one request, and each of those things can
-// fail on its own. [Client.Broadcast] publishes the same data into many
-// channels; a [Batch] sends many commands at once. For both, the rule is the
-// same: when one or more parts failed - up to all of them - the method
-// returns an error, a [*BroadcastError] or a [*BatchError], together with the
-// complete result. Checking err is always enough to notice a failure, and the
-// result holds every part's outcome: its result, or its own error. Any other
-// error means the request failed as a whole and nothing was done. [IsPartial]
-// tells the two apart:
+// A call returns an error unless it did everything asked, and
+// [Client.Broadcast] and [Batch.Send] are no exception - though they do many
+// things in one request, and each of those can fail on its own. When
+// Centrifugo carried out the request and one or more parts failed, up to
+// all, the error is a [*BroadcastError] or a [*BatchError] listing them. Any
+// other error means the request failed as a whole: no part got a reply. After
+// a timeout or a network error Centrifugo may still have carried it out, so
+// retry with the same IdempotencyKey.
+//
+// Every part always has an outcome, whatever the error: a broadcast's result
+// holds one entry per channel, and every command of a batch its [Pending].
+// When the request failed as a whole, each part's error is that error.
+//
+// Most callers need no more than err != nil: a broadcast retried with the
+// same IdempotencyKey is not published twice into any channel. To go on
+// despite some failed parts, check err first, then read each part:
 //
 //	res, err := client.Broadcast(ctx, req)
-//	if err != nil && !gocent.IsPartial(err) {
-//		return err // nothing was published
+//	var be *gocent.BroadcastError
+//	if err != nil && !errors.As(err, &be) {
+//		return err // no channel got a reply
 //	}
-//	for _, ch := range res.Channels { ... } // every channel's outcome
+//	for _, ch := range res.Channels { ... } // ch.Err is set for a failed channel
 //
 // # Automatic batching
 //

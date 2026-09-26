@@ -129,7 +129,7 @@ func TestEveryMethodReachesItsEndpoint(t *testing.T) {
 		clientMethods++
 	}
 
-	b := c.NewBatch()
+	b := c.NewBatch(gocent.BatchOptions{})
 	var want []string
 	var pendings []reflect.Value
 	bv := reflect.ValueOf(b)
@@ -153,7 +153,7 @@ func TestEveryMethodReachesItsEndpoint(t *testing.T) {
 		}
 		pendings = append(pendings, m.Call(args)[0])
 	}
-	if err := b.Send(t.Context(), gocent.BatchOptions{}); err != nil {
+	if err := b.Send(t.Context()); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	for _, p := range pendings {

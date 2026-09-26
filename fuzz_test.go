@@ -51,21 +51,30 @@ func FuzzReplies(f *testing.F) {
 		_, _ = c.Publish(ctx, gocent.PublishRequest{Channel: "a", Data: data})
 
 		res, err := c.Broadcast(ctx, gocent.BroadcastRequest{Channels: []string{"a", "b"}, Data: data})
-		var partial *gocent.BroadcastError
+		// Every channel always has an outcome, whatever the error.
+		if len(res.Channels) != 2 || res.Channels[0].Channel != "a" || res.Channels[1].Channel != "b" {
+			t.Fatalf("broadcast result %+v for channels a, b", res.Channels)
+		}
+		var be *gocent.BroadcastError
 		switch {
-		case err == nil, errors.As(err, &partial):
-			// A result is only ever returned whole: one entry per channel.
-			if len(res.Channels) != 2 {
-				t.Fatalf("broadcast result with %d channels for 2", len(res.Channels))
+		case err == nil:
+			if res.Channels[0].Err != nil || res.Channels[1].Err != nil {
+				t.Fatalf("no error, yet a channel failed: %+v", res.Channels)
 			}
-		case len(res.Channels) != 0:
-			t.Fatalf("broadcast failed as a whole (%v) yet returned results", err)
+		case errors.As(err, &be):
+			if be.Total != 2 || len(be.Failed) == 0 {
+				t.Fatalf("broadcast error %+v for 2 channels", be)
+			}
+		default:
+			if !errors.Is(res.Channels[0].Err, err) || !errors.Is(res.Channels[1].Err, err) {
+				t.Fatalf("broadcast failed as a whole (%v), yet a channel has another outcome: %+v", err, res.Channels)
+			}
 		}
 
-		b := c.NewBatch()
+		b := c.NewBatch(gocent.BatchOptions{})
 		pub := b.Publish(gocent.PublishRequest{Channel: "a", Data: data})
 		bc := b.Broadcast(gocent.BroadcastRequest{Channels: []string{"a"}, Data: data})
-		_ = b.Send(ctx, gocent.BatchOptions{})
+		_ = b.Send(ctx)
 		_, _ = pub.Result()
 		_, _ = bc.Result()
 	})

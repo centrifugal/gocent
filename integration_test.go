@@ -88,9 +88,12 @@ func TestIntegrationBroadcast(t *testing.T) {
 		Channels: []string{a, "unknown:x", b},
 		Data:     jsontext.Value(`{"text":"hello"}`),
 	})
-	var partial *gocent.BroadcastError
-	if !errors.As(err, &partial) || len(partial.Failed) != 1 || partial.Failed[0].Channel != "unknown:x" {
+	var be *gocent.BroadcastError
+	if !errors.As(err, &be) {
 		t.Fatalf("Broadcast: %v", err)
+	}
+	if len(be.Failed) != 1 || be.Failed[0].Channel != "unknown:x" {
+		t.Fatalf("failed channels %+v", be.Failed)
 	}
 	if !errors.Is(err, gocent.ErrUnknownChannel) {
 		t.Errorf("errors.Is does not see the channel error: %v", err)
@@ -106,14 +109,14 @@ func TestIntegrationBroadcast(t *testing.T) {
 func TestIntegrationBatch(t *testing.T) {
 	c := realClient(t, gocent.AutoBatch{})
 	ch := uniqueChannel(t)
-	b := c.NewBatch()
+	b := c.NewBatch(gocent.BatchOptions{})
 	pub := b.Publish(gocent.PublishRequest{Channel: ch, Data: jsontext.Value(`{}`)})
 	bad := b.Publish(gocent.PublishRequest{Channel: "unknown:x", Data: jsontext.Value(`{}`)})
 	bc := b.Broadcast(gocent.BroadcastRequest{Channels: []string{ch}, Data: jsontext.Value(`{}`)})
 	stats := b.PresenceStats(gocent.PresenceStatsRequest{Channel: ch})
 	hist := b.History(gocent.HistoryRequest{Channel: ch, Limit: -1})
 
-	err := b.Send(t.Context(), gocent.BatchOptions{})
+	err := b.Send(t.Context())
 	var batchErr *gocent.BatchError
 	if !errors.As(err, &batchErr) || len(batchErr.Failed) != 1 || batchErr.Failed[0].Index != 1 {
 		t.Fatalf("Send: %v", err)

@@ -324,10 +324,10 @@ func TestInvalidRequestsAreNotSent(t *testing.T) {
 		t.Errorf("publish with B64Data: %v", err)
 	}
 
-	b := c.NewBatch()
+	b := c.NewBatch(gocent.BatchOptions{})
 	pending := b.Publish(gocent.PublishRequest{Channel: "news", Data: data})
 	b.Publish(gocent.PublishRequest{Channel: "news", Data: jsontext.Value(`{`)})
-	err := b.Send(t.Context(), gocent.BatchOptions{})
+	err := b.Send(t.Context())
 	if !errors.Is(err, gocent.ErrInvalidRequest) || !strings.Contains(err.Error(), "batch command #1") {
 		t.Fatalf("batch with an invalid command: %v", err)
 	}
@@ -336,15 +336,6 @@ func TestInvalidRequestsAreNotSent(t *testing.T) {
 	}
 	if got := len(f.recorded()); got != 1 {
 		t.Errorf("%d requests sent, want only the B64Data publish", got)
-	}
-}
-
-func TestIsPartial(t *testing.T) {
-	if gocent.IsPartial(nil) || gocent.IsPartial(gocent.ErrUnknownChannel) {
-		t.Error("IsPartial true for a non-partial error")
-	}
-	if !gocent.IsPartial(&gocent.BroadcastError{}) || !gocent.IsPartial(&gocent.BatchError{}) {
-		t.Error("IsPartial false for a partial error")
 	}
 }
 

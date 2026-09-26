@@ -2,6 +2,8 @@ package gocent
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"sync"
 )
@@ -23,7 +25,11 @@ type batcher struct {
 
 // queued is a call waiting to be sent in a batch.
 type queued struct {
-	command command
+	// command is the call's command, encoded by the caller before it
+	// queued. The batch sends these bytes, so it never reads the caller's
+	// request - which the caller may reuse once its call returns, even while
+	// the batch is still on its way.
+	command jsontext.Value
 	// done is closed once reply or err is set. Until then the fields below
 	// belong to the batcher; afterwards, to the caller.
 	done  chan struct{}
@@ -39,22 +45,36 @@ type queued struct {
 // the next batch otherwise.
 func batched[W any](ctx context.Context, b *batcher, req request, get func(*reply) *W) (W, error) {
 	var zero W
+	var encoded jsontext.Value
 	b.mu.Lock()
-	b.dropGone()
-	if b.inFlight < b.maxInFlight && len(b.queue) == 0 {
-		b.inFlight++
+	for {
+		b.dropGone()
+		if b.inFlight < b.maxInFlight && len(b.queue) == 0 {
+			b.inFlight++
+			b.mu.Unlock()
+			res, err := send(ctx, b.client, req, func(r *response[W]) (W, error) {
+				if r.Error != nil {
+					return zero, r.Error
+				}
+				return deref(r.Result), nil
+			})
+			b.release() //nolint:contextcheck // a batch serves several callers, so it is not bound to this one's context
+			return res, err
+		}
+		if encoded != nil {
+			break
+		}
+		// The call will queue: encode its command first, outside the lock,
+		// then look again - a slot may have freed meanwhile, and a call
+		// must never queue while one is free, or nothing would send it.
 		b.mu.Unlock()
-		res, err := send(ctx, b.client, req, func(r *response[W]) (W, error) {
-			if r.Error != nil {
-				return zero, r.Error
-			}
-			return deref(r.Result), nil
-		})
-		b.release() //nolint:contextcheck // a batch serves several callers, so it is not bound to this one's context
-		return res, err
+		var err error
+		if encoded, err = encodeCommand(req); err != nil {
+			return zero, err
+		}
+		b.mu.Lock()
 	}
-	q := &queued{done: make(chan struct{})}
-	req.addTo(&q.command)
+	q := &queued{command: encoded, done: make(chan struct{})}
 	b.queue = append(b.queue, q)
 	b.mu.Unlock()
 
@@ -81,6 +101,17 @@ func batched[W any](ctx context.Context, b *batcher, req request, get func(*repl
 		return zero, q.reply.Error
 	}
 	return deref(get(&q.reply)), nil
+}
+
+// encodeCommand encodes req as a batch command.
+func encodeCommand(req request) (jsontext.Value, error) {
+	var cmd command
+	req.addTo(&cmd)
+	encoded, err := json.Marshal(&cmd)
+	if err != nil {
+		return nil, fmt.Errorf("gocent: encoding %s request: %w", req.APIMethod(), err)
+	}
+	return encoded, nil
 }
 
 // release hands the slot of a finished request to the calls waiting, if any,
@@ -136,7 +167,7 @@ func (b *batcher) flush(items []*queued) {
 	if len(items) == 0 {
 		return
 	}
-	commands := make([]command, len(items))
+	commands := make([]jsontext.Value, len(items))
 	for i, q := range items {
 		commands[i] = q.command
 	}
@@ -150,7 +181,7 @@ func (b *batcher) flush(items []*queued) {
 	// orders them against each other, and running them in parallel lets
 	// Centrifugo pipeline their broker commands, as it does for separate
 	// requests, instead of waiting for each in turn.
-	replies, err := b.client.sendBatch(ctx, commands, BatchOptions{Parallel: true, GroupPublications: b.client.group})
+	replies, err := sendBatch(ctx, b.client, commands, BatchOptions{Parallel: true, GroupPublications: b.client.group})
 	for i, q := range items {
 		if err != nil {
 			q.err = err

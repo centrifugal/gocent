@@ -12,18 +12,23 @@ import (
 // one with [Client.NewBatch], add commands with its methods - one per API
 // method, such as [Batch.Publish] - then call [Batch.Send]:
 //
-//	b := client.NewBatch()
+//	b := client.NewBatch(gocent.BatchOptions{})
 //	pub := b.Publish(gocent.PublishRequest{Channel: "news", Data: data})
 //	stats := b.PresenceStats(gocent.PresenceStatsRequest{Channel: "news"})
-//	if err := b.Send(ctx, gocent.BatchOptions{}); err != nil {
-//		// See Send for what the error tells you.
+//	if err := b.Send(ctx); err != nil {
+//		return err // not every command succeeded
 //	}
-//	res, err := pub.Result()
+//	res, err := pub.Result() // this command's own outcome
 //
 // Each method returns a [Pending] holding that command's outcome once the
 // batch is sent. A Batch is sent once, and is not safe for concurrent use.
+//
+// A command keeps its request as given until the batch is sent: the request
+// struct is copied, but its slices and maps - Channels, Data, Tags - are
+// shared with the caller. Do not modify them until Send returns.
 type Batch struct {
 	client   *Client
+	opts     BatchOptions
 	commands []command
 	methods  []string
 	// checks holds, for commands which can fail in part - a broadcast - how
@@ -36,7 +41,9 @@ type Batch struct {
 	sent    bool
 }
 
-// BatchOptions controls how Centrifugo runs a batch.
+// BatchOptions controls how Centrifugo runs a batch. They are set when the
+// batch is created, since they change what its commands mean together: in
+// what order they take effect.
 type BatchOptions struct {
 	// Parallel lets Centrifugo run the commands concurrently. It is faster
 	// for many independent commands, but the commands no longer take effect
@@ -58,9 +65,10 @@ var ErrBatchNotSent = errors.New("gocent: batch not sent yet")
 // ErrBatchSent is returned by [Batch.Send] for a batch already sent.
 var ErrBatchSent = errors.New("gocent: batch already sent")
 
-// NewBatch returns an empty [Batch] sent by c.
-func (c *Client) NewBatch() *Batch {
-	return &Batch{client: c}
+// NewBatch returns an empty [Batch] sent by c and run as opts say.
+// BatchOptions{} runs the commands one by one, in the order they were added.
+func (c *Client) NewBatch(opts BatchOptions) *Batch {
+	return &Batch{client: c, opts: opts}
 }
 
 // Len returns the number of commands in the batch.
@@ -68,15 +76,23 @@ func (b *Batch) Len() int { return len(b.commands) }
 
 // Send sends the batch and waits for Centrifugo's reply to every command.
 //
-//   - nil means every command succeeded.
-//   - A [*BatchError] means one or more commands failed, up to all of them;
-//     every [Pending] holds its own command's outcome, success or failure.
-//   - Any other error means no reply came back - the request failed as a
-//     whole - and every Pending returns that same error.
+// Like every call, Send returns an error unless every command succeeded:
 //
-// Sending an empty batch does nothing and returns nil. A batch is sent once;
-// sending it again returns [ErrBatchSent].
-func (b *Batch) Send(ctx context.Context, opts BatchOptions) error {
+//   - nil means every command succeeded.
+//   - A [*BatchError] means one or more commands failed, up to all of them.
+//     Every command got its own reply: each [Pending] holds its outcome,
+//     success or failure, and the error lists the failed ones.
+//   - Any other error means the batch failed as a whole: no command got a
+//     reply, and every Pending returns that same error.
+//
+// A command the client can tell is invalid - see [ErrInvalidRequest] - fails
+// the whole batch before anything is sent, and every Pending returns that
+// error.
+//
+// Sending an empty batch does nothing and returns nil. A batch is sent once,
+// whatever Send returns - fix a batch by building it again. Sending it again
+// returns [ErrBatchSent].
+func (b *Batch) Send(ctx context.Context) error {
 	if b.sent {
 		return ErrBatchSent
 	}
@@ -93,7 +109,7 @@ func (b *Batch) Send(ctx context.Context, opts BatchOptions) error {
 			return b.err
 		}
 	}
-	replies, err := b.client.sendBatch(ctx, b.commands, opts)
+	replies, err := sendBatch(ctx, b.client, b.commands, b.opts)
 	if err != nil {
 		b.err = err
 		return err
@@ -129,25 +145,37 @@ type Pending[T any] struct {
 	batch *Batch
 	index int
 	get   func(*reply) (T, error)
+	// fail, when set, gives the result returned with an error for the
+	// command as a whole: a broadcast has an outcome for every channel even
+	// then.
+	fail func(error) T
 }
 
 // Result returns the command's result, or its error: an [*Error] from
 // Centrifugo for this command, the error that failed the whole batch, or
-// [ErrBatchNotSent].
+// [ErrBatchNotSent]. A broadcast's result holds every channel's outcome
+// whatever the error, as [Client.Broadcast] does.
 func (p *Pending[T]) Result() (T, error) {
-	var zero T
 	b := p.batch
 	switch {
 	case !b.sent:
-		return zero, ErrBatchNotSent
+		return p.failed(ErrBatchNotSent)
 	case b.err != nil:
-		return zero, b.err
+		return p.failed(b.err)
 	}
 	r := &b.replies[p.index]
 	if r.Error != nil {
-		return zero, r.Error
+		return p.failed(r.Error)
 	}
 	return p.get(r)
+}
+
+func (p *Pending[T]) failed(err error) (T, error) {
+	if p.fail == nil {
+		var zero T
+		return zero, err
+	}
+	return p.fail(err), err
 }
 
 func add[T any](b *Batch, req request, get func(*reply) (T, error)) *Pending[T] {
@@ -169,8 +197,7 @@ func addChecked[T any](b *Batch, req request, get func(*reply) (T, error), check
 
 // BatchError reports a batch in which one or more commands failed, up to all
 // of them. Every command got its own reply: each one's outcome, success or
-// failure, is available from its [Pending], and len(Failed) < Total tells
-// whether any command succeeded.
+// failure, is available from its [Pending].
 //
 // [errors.Is] and [errors.As] see the errors of the failed commands.
 type BatchError struct {
@@ -186,8 +213,9 @@ type CommandError struct {
 	Index int
 	// Method is the command's API method, such as "publish".
 	Method string
-	// Err is an [*Error], or a [*BroadcastError] for a broadcast which
-	// failed in one or more of its channels.
+	// Err is the error the command's [Pending] returns: an [*Error], or a
+	// [*BroadcastError] for a broadcast which failed in one or more of its
+	// channels.
 	Err error
 }
 
@@ -229,10 +257,12 @@ func (e *BatchError) Unwrap() []error {
 	return errs
 }
 
-type batchRequest struct {
-	Commands          []command `json:"commands"`
-	Parallel          bool      `json:"parallel,omitzero"`
-	GroupPublications bool      `json:"group_publications,omitzero"`
+// batchRequest is a batch as Centrifugo takes it. C is a command: a command
+// struct for a [Batch], or one already encoded for an automatic batch.
+type batchRequest[C any] struct {
+	Commands          []C  `json:"commands"`
+	Parallel          bool `json:"parallel,omitzero"`
+	GroupPublications bool `json:"group_publications,omitzero"`
 }
 
 type batchResponse struct {
@@ -241,8 +271,8 @@ type batchResponse struct {
 
 // sendBatch sends commands to the batch endpoint, and returns a reply for
 // each, in order.
-func (c *Client) sendBatch(ctx context.Context, commands []command, opts BatchOptions) ([]reply, error) {
-	req := batchRequest{Commands: commands, Parallel: opts.Parallel, GroupPublications: opts.GroupPublications}
+func sendBatch[C any](ctx context.Context, c *Client, commands []C, opts BatchOptions) ([]reply, error) {
+	req := batchRequest[C]{Commands: commands, Parallel: opts.Parallel, GroupPublications: opts.GroupPublications}
 	var resp batchResponse
 	if err := c.post(ctx, "batch", &req, &resp); err != nil {
 		return nil, err

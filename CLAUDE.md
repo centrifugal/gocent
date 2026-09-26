@@ -9,9 +9,9 @@ lost:
 
 - **Never edit `api_gen.go`.** Change `api.proto` or `internal/gen`, then run
   `make generate`.
-- **Broadcast and batch return an error together with a complete result** when
-  one or more of their parts failed - up to all of them. Every other call
-  returns one or the other.
+- **Every call returns an error unless it did everything asked.** The parts of
+  a broadcast or batch always have an outcome each, whatever the error; when
+  some failed, the error is a `*BroadcastError` or `*BatchError`.
 - **Automatic batching never delays a call below `MaxInFlight`** and never
   gives a caller a reply that is not its own.
 

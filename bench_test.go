@@ -78,11 +78,11 @@ func BenchmarkBatch100(b *testing.B) {
 	c := fixedReply(b, `{"replies":[`+strings.Join(replies, ",")+`]}`)
 	b.ReportAllocs()
 	for b.Loop() {
-		batch := c.NewBatch()
+		batch := c.NewBatch(gocent.BatchOptions{})
 		for i := range 100 {
 			batch.Publish(gocent.PublishRequest{Channel: "ch" + strconv.Itoa(i), Data: data})
 		}
-		if err := batch.Send(b.Context(), gocent.BatchOptions{}); err != nil {
+		if err := batch.Send(b.Context()); err != nil {
 			b.Fatal(err)
 		}
 	}

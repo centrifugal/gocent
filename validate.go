@@ -68,21 +68,3 @@ func (r *BroadcastRequest) validate() error {
 	}
 	return nil
 }
-
-// IsPartial reports whether err is a [*BroadcastError] or a [*BatchError]:
-// the broadcast or batch was carried out part by part, one or more parts
-// failed, and the result returned with err holds every part's outcome - the
-// failed ones and those which succeeded, if any. Any other error means the
-// request failed as a whole and nothing was done. It makes the usual check
-// short:
-//
-//	res, err := client.Broadcast(ctx, req)
-//	if err != nil && !gocent.IsPartial(err) {
-//		return err // nothing was done
-//	}
-//	// res holds every channel's outcome.
-func IsPartial(err error) bool {
-	var be *BroadcastError
-	var bt *BatchError
-	return errors.As(err, &be) || errors.As(err, &bt)
-}
