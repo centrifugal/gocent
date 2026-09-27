@@ -169,11 +169,8 @@ it.
 A smaller `MaxInFlight` batches more: a value above the concurrency your load
 needs leaves nearly every call sent alone. 8 suits most applications.
 
-With Centrifugo PRO, `AutoBatch.GroupPublications` also lets Centrifugo send a
-batch's publications to its broker together, saving more of Centrifugo's and
-Redis's work. The saving grows with the batches: under heavy load Redis does
-much less work, while under moderate load, with small batches, the gain is
-mostly Centrifugo's.
+Centrifugo PRO sends a batch's publications to its broker together, so larger
+batches save more of Centrifugo's and Redis's work.
 
 ## Authentication
 

@@ -110,26 +110,6 @@ func TestAutoBatchMaxBatchSize(t *testing.T) {
 	}
 }
 
-func TestAutoBatchGroupPublications(t *testing.T) {
-	f := newFake(t)
-	f.delay = 20 * time.Millisecond
-	c := newClient(t, f, autoBatch(gocent.AutoBatch{MaxInFlight: 1, GroupPublications: true}))
-	var wg sync.WaitGroup
-	for range 10 {
-		wg.Go(func() {
-			if _, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data}); err != nil {
-				t.Error(err)
-			}
-		})
-	}
-	wg.Wait()
-	for _, r := range f.recorded() {
-		if r.Path == "/api/batch" && !strings.Contains(string(r.Body), `"group_publications":true`) {
-			t.Errorf("automatic batch without group_publications: %s", r.Body)
-		}
-	}
-}
-
 func TestAutoBatchCallerLeavesQueue(t *testing.T) {
 	f := newFake(t)
 	f.delay = 200 * time.Millisecond

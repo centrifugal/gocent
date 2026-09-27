@@ -49,14 +49,6 @@ type BatchOptions struct {
 	// for many independent commands, but the commands no longer take effect
 	// in the order they were added.
 	Parallel bool
-
-	// GroupPublications asks Centrifugo PRO to send the batch's publications
-	// to its broker together. A channel's own publications keep their order,
-	// but publications into different channels may take effect in a
-	// different order, and an error for a group is reported to every
-	// publication in it. Centrifugo OSS ignores it. See
-	// [AutoBatch.GroupPublications].
-	GroupPublications bool
 }
 
 // ErrBatchNotSent is returned by [Pending.Result] before its batch is sent.
@@ -260,9 +252,8 @@ func (e *BatchError) Unwrap() []error {
 // batchRequest is a batch as Centrifugo takes it. C is a command: a command
 // struct for a [Batch], or one already encoded for an automatic batch.
 type batchRequest[C any] struct {
-	Commands          []C  `json:"commands"`
-	Parallel          bool `json:"parallel,omitzero"`
-	GroupPublications bool `json:"group_publications,omitzero"`
+	Commands []C  `json:"commands"`
+	Parallel bool `json:"parallel,omitzero"`
 }
 
 type batchResponse struct {
@@ -272,7 +263,7 @@ type batchResponse struct {
 // sendBatch sends commands to the batch endpoint, and returns a reply for
 // each, in order.
 func sendBatch[C any](ctx context.Context, c *Client, commands []C, opts BatchOptions) ([]reply, error) {
-	req := batchRequest[C]{Commands: commands, Parallel: opts.Parallel, GroupPublications: opts.GroupPublications}
+	req := batchRequest[C]{Commands: commands, Parallel: opts.Parallel}
 	var resp batchResponse
 	if err := c.post(ctx, "batch", &req, &resp); err != nil {
 		return nil, err

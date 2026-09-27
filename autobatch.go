@@ -181,7 +181,7 @@ func (b *batcher) flush(items []*queued) {
 	// orders them against each other, and running them in parallel lets
 	// Centrifugo pipeline their broker commands, as it does for separate
 	// requests, instead of waiting for each in turn.
-	replies, err := sendBatch(ctx, b.client, commands, BatchOptions{Parallel: true, GroupPublications: b.client.group})
+	replies, err := sendBatch(ctx, b.client, commands, BatchOptions{Parallel: true})
 	for i, q := range items {
 		if err != nil {
 			q.err = err

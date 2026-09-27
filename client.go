@@ -104,18 +104,6 @@ type AutoBatch struct {
 
 	// MaxBatchSize caps how many calls one batch carries. Zero means 1000.
 	MaxBatchSize int
-
-	// GroupPublications asks Centrifugo PRO to send the publications of a
-	// batch to its broker together rather than one by one, which saves
-	// Centrifugo and Redis work. The saving grows with the batches: under
-	// heavy load, when batches carry many publications, Redis does much less
-	// work; under moderate load batches are small, and the gain is mostly
-	// Centrifugo's. It changes two things: publications into
-	// different channels may take effect in a different order than they were
-	// made in, and an error for a group is reported to every publication in
-	// it. Give publications an IdempotencyKey to retry them safely.
-	// Centrifugo OSS ignores it.
-	GroupPublications bool
 }
 
 const (
@@ -158,7 +146,6 @@ type Client struct {
 	http     *http.Client
 	timeout  time.Duration
 	batcher  *batcher
-	group    bool
 }
 
 // New returns a Client for cfg, or an error wrapping [ErrInvalidConfig] that
@@ -169,7 +156,6 @@ func New(cfg Config) (*Client, error) {
 		token:    cfg.BearerTokenFunc,
 		http:     cfg.HTTPClient,
 		timeout:  cfg.RequestTimeout,
-		group:    cfg.AutoBatch.GroupPublications,
 	}
 	invalid := func(format string, args ...any) error {
 		return fmt.Errorf("%w: %s", ErrInvalidConfig, fmt.Sprintf(format, args...))
@@ -229,7 +215,7 @@ func New(cfg Config) (*Client, error) {
 		return nil, invalid("AutoBatch.MaxInFlight is negative")
 	case ab.MaxBatchSize < 0:
 		return nil, invalid("AutoBatch.MaxBatchSize is negative")
-	case ab.MaxInFlight == 0 && (ab.MaxBatchSize != 0 || ab.GroupPublications):
+	case ab.MaxInFlight == 0 && ab.MaxBatchSize != 0:
 		return nil, invalid("AutoBatch options are set but AutoBatch.MaxInFlight is zero, which disables it")
 	case ab.MaxBatchSize == 1:
 		return nil, invalid("AutoBatch.MaxBatchSize of 1 never batches; use 2 or more")

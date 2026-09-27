@@ -50,7 +50,6 @@ func TestNewRejectsMistakes(t *testing.T) {
 		{"negative timeout", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", RequestTimeout: -time.Second}, "negative"},
 		{"header sets key", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", Header: http.Header{"x-api-key": {"other"}}}, "X-API-Key"},
 		{"batch size without batching", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", AutoBatch: gocent.AutoBatch{MaxBatchSize: 10}}, "disables it"},
-		{"grouping without batching", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", AutoBatch: gocent.AutoBatch{GroupPublications: true}}, "disables it"},
 		{"batch of one", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", AutoBatch: gocent.AutoBatch{MaxInFlight: 4, MaxBatchSize: 1}}, "never batches"},
 		{"negative in flight", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", AutoBatch: gocent.AutoBatch{MaxInFlight: -1}}, "negative"},
 	}
@@ -76,7 +75,7 @@ func TestNewAcceptsValidConfigs(t *testing.T) {
 		{APIEndpoint: "https://example.com/centrifugo/api/", APIKey: "k"},
 		{APIEndpoint: "http://localhost:8000/api"}, // mutual TLS, a proxy, or http_api.insecure
 		{APIEndpoint: "http://localhost:8000/api", BearerTokenFunc: func(context.Context) (string, error) { return "t", nil }},
-		{APIEndpoint: "http://localhost:8000/api", APIKey: "k", AutoBatch: gocent.AutoBatch{MaxInFlight: 8, MaxBatchSize: 100, GroupPublications: true}},
+		{APIEndpoint: "http://localhost:8000/api", APIKey: "k", AutoBatch: gocent.AutoBatch{MaxInFlight: 8, MaxBatchSize: 100}},
 	} {
 		if _, err := gocent.New(cfg); err != nil {
 			t.Errorf("New(%+v): %v", cfg, err)

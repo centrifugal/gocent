@@ -156,13 +156,13 @@ func TestBatch(t *testing.T) {
 func TestBatchOptionsOnTheWire(t *testing.T) {
 	f := newFake(t)
 	c := newClient(t, f)
-	b := c.NewBatch(gocent.BatchOptions{Parallel: true, GroupPublications: true})
+	b := c.NewBatch(gocent.BatchOptions{Parallel: true})
 	b.Publish(gocent.PublishRequest{Channel: "news", Data: data})
 	if err := b.Send(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	body := string(f.recorded()[0].Body)
-	if !strings.Contains(body, `"parallel":true`) || !strings.Contains(body, `"group_publications":true`) {
+	if !strings.Contains(body, `"parallel":true`) {
 		t.Errorf("body %s", body)
 	}
 }
