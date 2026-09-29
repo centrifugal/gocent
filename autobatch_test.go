@@ -221,3 +221,29 @@ func TestAutoBatchCallerMemoryIsNotReadAfterReturn(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// A panic in a request sent alone - from a user's BearerTokenFunc, say - does
+// not keep its slot: later calls are still sent.
+func TestAutoBatchPanicReleasesSlot(t *testing.T) {
+	f := newFake(t)
+	f.bearer = "t"
+	var calls atomic.Int32
+	c := newClient(t, f, autoBatch(gocent.AutoBatch{MaxInFlight: 1}), func(cfg *gocent.Config) {
+		cfg.APIKey = ""
+		cfg.BearerTokenFunc = func(context.Context) (string, error) {
+			if calls.Add(1) == 1 {
+				panic("token source failed")
+			}
+			return "t", nil
+		}
+	})
+	func() {
+		defer func() { _ = recover() }()
+		_, _ = c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data})
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if _, err := c.Publish(ctx, gocent.PublishRequest{Channel: "news", Data: data}); err != nil {
+		t.Fatalf("call after a panic: %v", err)
+	}
+}

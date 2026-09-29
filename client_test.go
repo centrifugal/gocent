@@ -52,6 +52,8 @@ func TestNewRejectsMistakes(t *testing.T) {
 		{"batch size without batching", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", AutoBatch: gocent.AutoBatch{MaxBatchSize: 10}}, "disables it"},
 		{"batch of one", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", AutoBatch: gocent.AutoBatch{MaxInFlight: 4, MaxBatchSize: 1}}, "never batches"},
 		{"negative in flight", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", AutoBatch: gocent.AutoBatch{MaxInFlight: -1}}, "negative"},
+		{"header value with newline", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", Header: http.Header{"X-Tenant": {"acme\n"}}}, "line break"},
+		{"header name with space", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", Header: http.Header{"X Tenant": {"acme"}}}, "not a valid HTTP header name"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -528,6 +530,59 @@ func TestTransportErrorMode(t *testing.T) {
 	}
 }
 
+// A gateway in front of Centrifugo may answer with a JSON body shaped like a
+// Centrifugo error, with a status Centrifugo's transport error mode never
+// uses: it stays an HTTPError, and a 401 still matches ErrUnauthorized.
+func TestGatewayErrorIsNotACentrifugoError(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+	}{
+		{http.StatusServiceUnavailable, `{"code":503,"message":"no healthy upstream"}`},
+		{http.StatusBadGateway, `{"code":102,"message":"bad gateway"}`},
+		{http.StatusUnauthorized, `{"code":101,"message":"unauthorized"}`},
+		{http.StatusNotFound, `{"code":42,"message":"not a Centrifugo code"}`},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(tc.body))
+		}))
+		c, err := gocent.New(gocent.Config{APIEndpoint: srv.URL + "/api", APIKey: "k"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data})
+		var httpErr *gocent.HTTPError
+		if !errors.As(err, &httpErr) || httpErr.StatusCode != tc.status {
+			t.Errorf("%d %s: got %v, want an HTTPError", tc.status, tc.body, err)
+		}
+		if tc.status == http.StatusUnauthorized && !errors.Is(err, gocent.ErrUnauthorized) {
+			t.Errorf("401 %s: %v does not match ErrUnauthorized", tc.body, err)
+		}
+		srv.Close()
+	}
+}
+
+// A Centrifugo error longer than the diagnostic excerpt of a body is still
+// read whole.
+func TestTransportErrorModeLongMessage(t *testing.T) {
+	message := strings.Repeat("x", 2000)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":107,"message":"` + message + `"}`))
+	}))
+	defer srv.Close()
+	c, err := gocent.New(gocent.Config{APIEndpoint: srv.URL + "/api", APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data})
+	var apiErr *gocent.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != 107 || apiErr.Message != message {
+		t.Errorf("got %v, want the whole Centrifugo error", err)
+	}
+}
+
 // A body which is not a Centrifugo error - a proxy's page, a router's 404 -
 // stays an HTTPError.
 func TestNonCentrifugoErrorBody(t *testing.T) {
@@ -546,5 +601,66 @@ func TestNonCentrifugoErrorBody(t *testing.T) {
 			t.Errorf("body %q: got %v, want an HTTPError", body, err)
 		}
 		srv.Close()
+	}
+}
+
+// A User-Agent in Config.Header replaces gocent's own.
+func TestUserAgentFromHeader(t *testing.T) {
+	f := newFake(t)
+	c := newClient(t, f, func(cfg *gocent.Config) { cfg.Header = http.Header{"User-Agent": {"myapp/1.2"}} })
+	if _, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	if ua := f.recorded()[0].Header.Get("User-Agent"); ua != "myapp/1.2" {
+		t.Errorf("User-Agent %q, want the one from Config.Header", ua)
+	}
+}
+
+// A context ending while the reply's body is read is reported as the
+// context's error, not as a reply which is not Centrifugo's.
+func TestContextEndsWhileReadingReply(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"result":`))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	c, err := gocent.New(gocent.Config{APIEndpoint: srv.URL + "/api", APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	_, err = c.Publish(ctx, gocent.PublishRequest{Channel: "news", Data: data})
+	var decErr *gocent.DecodeError
+	if !errors.Is(err, context.Canceled) || errors.As(err, &decErr) {
+		t.Errorf("error %v, want the context's error and no DecodeError", err)
+	}
+}
+
+// A payload which is not valid JSON makes a request which cannot be encoded:
+// it is not sent, and the error wraps ErrInvalidRequest - for every request,
+// not only those whose rules the client checks.
+func TestUnencodableRequest(t *testing.T) {
+	f := newFake(t)
+	c := newClient(t, f)
+	bad := jsontext.Value(`{`)
+	_, err := c.Subscribe(t.Context(), gocent.SubscribeRequest{User: "u", Channel: "news", Data: bad})
+	if !errors.Is(err, gocent.ErrInvalidRequest) || !strings.HasPrefix(err.Error(), "gocent: invalid subscribe request: cannot be encoded") {
+		t.Errorf("Subscribe: %v", err)
+	}
+
+	b := c.NewBatch(gocent.BatchOptions{})
+	b.Publish(gocent.PublishRequest{Channel: "news", Data: data})
+	sub := b.Subscribe(gocent.SubscribeRequest{User: "u", Channel: "news", Data: bad})
+	err = b.Send(t.Context())
+	if !errors.Is(err, gocent.ErrInvalidRequest) || !strings.HasPrefix(err.Error(), "batch command #1: gocent: invalid subscribe request") {
+		t.Errorf("Send: %v", err)
+	}
+	if _, subErr := sub.Result(); !errors.Is(subErr, gocent.ErrInvalidRequest) {
+		t.Errorf("Result: %v", subErr)
+	}
+	if n := len(f.recorded()); n != 0 {
+		t.Errorf("%d requests sent", n)
 	}
 }

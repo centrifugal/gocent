@@ -202,8 +202,12 @@ func TestBatchPartialFailure(t *testing.T) {
 	if _, badErr := bad.Result(); !errors.Is(badErr, gocent.ErrUnknownChannel) {
 		t.Errorf("failed command: %v", badErr)
 	}
-	// The broadcast's Pending returns what a direct broadcast would.
+	// The broadcast's Pending returns what a direct broadcast would - the
+	// very error the BatchError holds.
 	res, err := bc.Result()
+	if err != batchErr.Failed[1].Err { //nolint:errorlint // the same error, not a matching one
+		t.Errorf("Pending error %p, BatchError holds %p", err, batchErr.Failed[1].Err)
+	}
 	if !errors.As(err, &be) || len(res.Channels) != 2 || res.Channels[0].Err != nil || res.Channels[1].Err == nil {
 		t.Errorf("broadcast in batch: %+v, %v", res, err)
 	}

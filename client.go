@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -61,7 +60,8 @@ type Config struct {
 
 	// Header holds extra headers sent with every request, for a proxy in
 	// front of Centrifugo for example. It may not set X-API-Key,
-	// Authorization or Content-Type.
+	// Authorization or Content-Type. A User-Agent set here replaces
+	// gocent's own.
 	Header http.Header
 
 	// AutoBatch sends calls made concurrently in batches. See [AutoBatch].
@@ -114,7 +114,10 @@ const (
 	// error, then drained and discarded up to maxDrainBytes so the connection
 	// can be reused.
 	maxErrorBodyBytes = 512
-	maxDrainBytes     = 64 << 10
+	// A Centrifugo error in the body of an HTTP error status is read up to
+	// this many bytes: its message can be longer than the diagnostic excerpt.
+	maxAPIErrorBytes = 4 << 10
+	maxDrainBytes    = 64 << 10
 )
 
 // DefaultHTTPClient returns the HTTP client a [Client] uses when
@@ -191,10 +194,20 @@ func New(cfg Config) (*Client, error) {
 		case "Content-Type":
 			return nil, invalid("Header may not set Content-Type")
 		}
+		if !validHeaderName(k) {
+			return nil, invalid("Header name %q is not a valid HTTP header name", k)
+		}
+		for _, value := range v {
+			if !validHeaderValue(value) {
+				return nil, invalid("Header %s has a value with a line break or another control character", http.CanonicalHeaderKey(k))
+			}
+		}
 		c.header[http.CanonicalHeaderKey(k)] = append([]string(nil), v...)
 	}
 	c.header.Set("Content-Type", "application/json")
-	c.header.Set("User-Agent", "gocent/v4")
+	if c.header.Get("User-Agent") == "" {
+		c.header.Set("User-Agent", "gocent/v4")
+	}
 	if cfg.APIKey != "" {
 		c.header.Set("X-API-Key", cfg.APIKey)
 	}
@@ -296,12 +309,6 @@ func send[W any](ctx context.Context, c *Client, req request, done func(*respons
 	return done(&resp)
 }
 
-var bufPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
-
-// maxPooledBuffer keeps a single huge request from pinning its buffer in the
-// pool for good.
-const maxPooledBuffer = 1 << 20
-
 // post sends body to the method's endpoint and decodes the reply into out.
 func (c *Client) post(ctx context.Context, method string, body, out any) error {
 	if _, ok := ctx.Deadline(); !ok {
@@ -331,24 +338,29 @@ func (c *Client) post(ctx context.Context, method string, body, out any) error {
 		auth = "Bearer " + token
 	}
 
-	buf := bufPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer func() {
-		if buf.Cap() <= maxPooledBuffer {
-			bufPool.Put(buf)
-		}
-	}()
-	if err := json.MarshalWrite(buf, body); err != nil {
-		return fmt.Errorf("gocent: encoding %s request: %w", method, err)
+	// The body is not pooled: the transport may go on reading it after Do
+	// returns - when the server replies before reading it all, or to retry
+	// the request - so it must stay untouched for as long as the request
+	// lives, which only the garbage collector knows.
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return encodingError(method, err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/"+method, bytes.NewReader(buf.Bytes()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/"+method, bytes.NewReader(encoded))
 	if err != nil {
 		return fmt.Errorf("gocent: %w", err)
 	}
-	req.Header = c.header.Clone()
-	if auth != "" {
-		req.Header.Set("Authorization", auth)
+	// The headers never change after New, and neither the client nor the
+	// transport modifies a request's headers - except a cookie jar, which
+	// adds to them - so they are shared unless something is added.
+	if auth == "" && c.http.Jar == nil {
+		req.Header = c.header
+	} else {
+		req.Header = c.header.Clone()
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -359,18 +371,17 @@ func (c *Client) post(ctx context.Context, method string, body, out any) error {
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
-		// With http_api.error_mode "transport", or the X-Centrifugo-Error-Mode
-		// header, Centrifugo replies to a failed call with an HTTP status and
-		// the error alone as the body. It is the same error as in a 200 reply.
-		var apiErr Error
-		if json.Unmarshal(b, &apiErr) == nil && apiErr.Code != 0 {
-			return &apiErr
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxAPIErrorBytes))
+		if apiErr := transportModeError(resp.StatusCode, b); apiErr != nil {
+			return apiErr
+		}
+		if len(b) > maxErrorBodyBytes {
+			b = b[:maxErrorBodyBytes]
 		}
 		return &HTTPError{StatusCode: resp.StatusCode, Body: bytes.TrimSpace(b)}
 	}
 	if err := json.UnmarshalRead(resp.Body, out); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
+		if ctxErr := ctx.Err(); ctxErr != nil {
 			// The body stopped arriving because the context ended.
 			return fmt.Errorf("gocent: %s: %w", method, ctxErr)
 		}
@@ -380,6 +391,65 @@ func (c *Client) post(ctx context.Context, method string, body, out any) error {
 		return &DecodeError{Err: err}
 	}
 	return nil
+}
+
+// transportModeError returns the Centrifugo error in the body of a reply with
+// an HTTP error status, or nil if it holds none.
+//
+// With http_api.error_mode "transport", or the X-Centrifugo-Error-Mode header,
+// Centrifugo replies to a failed call with an HTTP status and the error alone
+// as the body - the same error as in a 200 reply. Only the statuses Centrifugo
+// maps its errors to are taken for one: a proxy or gateway in front of it may
+// answer with a JSON body of the same shape - a 503 with {"code":503}, say -
+// which is an HTTPError all the same. Any code from 100 up is kept, known or
+// not: Centrifugo adds codes over time.
+func transportModeError(status int, body []byte) *Error {
+	switch status {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict,
+		http.StatusRequestedRangeNotSatisfiable, http.StatusInternalServerError:
+	default:
+		return nil
+	}
+	var apiErr Error
+	if json.Unmarshal(body, &apiErr) == nil && apiErr.Code >= minErrorCode {
+		return &apiErr
+	}
+	return nil
+}
+
+// minErrorCode is the lowest code of a Centrifugo error.
+const minErrorCode = 100
+
+// encodingError reports a request which cannot be encoded: a jsontext.Value
+// which is not valid JSON, or a string which is not valid UTF-8.
+func encodingError(method string, err error) error {
+	return &requestError{method: method, problem: "cannot be encoded", err: err}
+}
+
+// validHeaderName reports whether name is a valid HTTP header name: one or
+// more token characters.
+func validHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := range len(name) {
+		c := name[i]
+		if c <= ' ' || c >= 0x7f || strings.IndexByte(`"(),/:;<=>?@[\]{}`, c) >= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// validHeaderValue reports whether value holds no control characters other
+// than tab - a line break in particular.
+func validHeaderValue(value string) bool {
+	for i := range len(value) {
+		if c := value[i]; (c < ' ' && c != '\t') || c == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // transportError wraps an error from sending a request or reading its reply.

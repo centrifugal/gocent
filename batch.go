@@ -2,6 +2,7 @@ package gocent
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strconv"
@@ -103,6 +104,11 @@ func (b *Batch) Send(ctx context.Context) error {
 	}
 	replies, err := sendBatch(ctx, b.client, b.commands, b.opts)
 	if err != nil {
+		if errors.Is(err, ErrInvalidRequest) {
+			// A command which cannot be encoded - a payload which is not
+			// valid JSON - failed the batch's encoding: name it.
+			err = b.unencodable(err)
+		}
 		b.err = err
 		return err
 	}
@@ -129,6 +135,17 @@ func (b *Batch) Send(ctx context.Context) error {
 		return be
 	}
 	return nil
+}
+
+// unencodable finds the command which failed the batch's encoding, and
+// returns its error naming it - or err, if no single command fails alone.
+func (b *Batch) unencodable(err error) error {
+	for i := range b.commands {
+		if _, cmdErr := json.Marshal(&b.commands[i]); cmdErr != nil {
+			return fmt.Errorf("batch command #%d: %w", i, encodingError(b.methods[i], cmdErr))
+		}
+	}
+	return err
 }
 
 // Pending is the outcome of one command of a [Batch], available once the
@@ -212,16 +229,40 @@ type CommandError struct {
 }
 
 func (e *BatchError) Error() string {
+	return failuresMessage("batch", "commands", len(e.Failed), e.Total, func(b *strings.Builder, i int) error {
+		f := e.Failed[i]
+		b.WriteString("#")
+		b.WriteString(strconv.Itoa(f.Index))
+		b.WriteString(" ")
+		b.WriteString(f.Method)
+		return f.Err
+	})
+}
+
+// Unwrap returns the error of every failed command.
+func (e *BatchError) Unwrap() []error {
+	return failureErrors(e.Failed, func(f CommandError) error { return f.Err })
+}
+
+// failuresMessage is the message of an error listing the failed parts of a
+// request - "gocent: batch: 2 of 3 commands failed: ...". It names at most
+// maxErrorItems of them; label writes the name of the i-th and returns its
+// error.
+func failuresMessage(op, parts string, failed, total int, label func(b *strings.Builder, i int) error) string {
 	var b strings.Builder
-	b.WriteString("gocent: batch: ")
-	b.WriteString(strconv.Itoa(len(e.Failed)))
+	b.WriteString("gocent: ")
+	b.WriteString(op)
+	b.WriteString(": ")
+	b.WriteString(strconv.Itoa(failed))
 	b.WriteString(" of ")
-	b.WriteString(strconv.Itoa(e.Total))
-	b.WriteString(" commands failed")
-	for i, f := range e.Failed {
+	b.WriteString(strconv.Itoa(total))
+	b.WriteString(" ")
+	b.WriteString(parts)
+	b.WriteString(" failed")
+	for i := range failed {
 		if i == maxErrorItems {
 			b.WriteString("; and ")
-			b.WriteString(strconv.Itoa(len(e.Failed) - i))
+			b.WriteString(strconv.Itoa(failed - i))
 			b.WriteString(" more")
 			break
 		}
@@ -230,21 +271,18 @@ func (e *BatchError) Error() string {
 		} else {
 			b.WriteString("; ")
 		}
-		b.WriteString("#")
-		b.WriteString(strconv.Itoa(f.Index))
-		b.WriteString(" ")
-		b.WriteString(f.Method)
+		err := label(&b, i)
 		b.WriteString(": ")
-		b.WriteString(strings.TrimPrefix(f.Err.Error(), "gocent: "))
+		b.WriteString(strings.TrimPrefix(err.Error(), "gocent: "))
 	}
 	return b.String()
 }
 
-// Unwrap returns the error of every failed command.
-func (e *BatchError) Unwrap() []error {
-	errs := make([]error, len(e.Failed))
-	for i, f := range e.Failed {
-		errs[i] = f.Err
+// failureErrors returns the error of every failed part.
+func failureErrors[T any](failed []T, errOf func(T) error) []error {
+	errs := make([]error, len(failed))
+	for i, f := range failed {
+		errs[i] = errOf(f)
 	}
 	return errs
 }

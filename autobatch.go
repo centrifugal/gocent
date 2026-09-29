@@ -52,14 +52,7 @@ func batched[W any](ctx context.Context, b *batcher, req request, get func(*repl
 		if b.inFlight < b.maxInFlight && len(b.queue) == 0 {
 			b.inFlight++
 			b.mu.Unlock()
-			res, err := send(ctx, b.client, req, func(r *response[W]) (W, error) {
-				if r.Error != nil {
-					return zero, r.Error
-				}
-				return deref(r.Result), nil
-			})
-			b.release() //nolint:contextcheck // a batch serves several callers, so it is not bound to this one's context
-			return res, err
+			return sendAlone[W](ctx, b, req)
 		}
 		if encoded != nil {
 			break
@@ -103,13 +96,27 @@ func batched[W any](ctx context.Context, b *batcher, req request, get func(*repl
 	return deref(get(&q.reply)), nil
 }
 
+// sendAlone sends req as a call of its own in a slot the caller took, and
+// frees the slot afterwards - deferred, so that a panic in the request, in a
+// user's BearerTokenFunc or transport, say, does not keep it.
+func sendAlone[W any](ctx context.Context, b *batcher, req request) (W, error) {
+	defer b.release() //nolint:contextcheck // a batch serves several callers, so it is not bound to this one's context
+	return send(ctx, b.client, req, func(r *response[W]) (W, error) {
+		if r.Error != nil {
+			var zero W
+			return zero, r.Error
+		}
+		return deref(r.Result), nil
+	})
+}
+
 // encodeCommand encodes req as a batch command.
 func encodeCommand(req request) (jsontext.Value, error) {
 	var cmd command
 	req.addTo(&cmd)
 	encoded, err := json.Marshal(&cmd)
 	if err != nil {
-		return nil, fmt.Errorf("gocent: encoding %s request: %w", req.APIMethod(), err)
+		return nil, encodingError(req.APIMethod(), err)
 	}
 	return encoded, nil
 }

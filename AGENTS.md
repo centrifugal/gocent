@@ -59,12 +59,15 @@ passes; if you find yourself about to break one, stop and say so instead.
    or a caller's `http.Client` - the error matches
    `errors.Is(err, context.DeadlineExceeded)`.
 8. **HTTP hygiene.** Every response body is closed and drained up to a bound,
-   so connections are reused. `http.DefaultClient` is never used.
-9. **Invalid requests are never sent.** `jsontext.Value` payloads are checked,
-   and publish and broadcast check the rules every Centrifugo shares (a
-   channel, some data) before sending; the error wraps `ErrInvalidRequest`. A
-   batch with an invalid command sends nothing. Rules which differ between
-   Centrifugo versions or setups stay the server's to check.
+   so connections are reused. `http.DefaultClient` is never used. A request's
+   body is never reused: the transport may read it after `Do` returns.
+9. **Invalid requests are never sent.** Every request is encoded before
+   sending, and one which cannot be - a `jsontext.Value` which is not valid
+   JSON, a string which is not UTF-8 - fails with an error wrapping
+   `ErrInvalidRequest`. Publish and broadcast also check the few rules every
+   Centrifugo shares (a channel, some data). A batch with an invalid command
+   sends nothing, and its error names the command. Every other rule stays the
+   server's to check: the client does not copy them.
 
 ## Running things
 
@@ -128,6 +131,13 @@ docs here - these are the places a reader goes wrong.
 
 ## Things that look wrong but are deliberate
 
+- **Request bodies are not pooled.** An `http.RoundTripper` may keep reading
+  a request's body after `Do` returns - when the server answers early, or to
+  retry - so a pooled buffer could be reused under a request still being
+  written. One allocation per request is the price.
+- **Request headers are shared, not cloned,** unless a bearer token is added
+  or the `http.Client` has a cookie jar, which adds cookies to them. Neither
+  `net/http` nor a transport honouring its contract modifies them otherwise.
 - **Request structs are passed by value.** Callers write them as literals, and
   the struct cannot change under a call in flight. Its slices and maps
   (`Channels`, `Data`, `Tags`) are still the caller's, not copied - copying

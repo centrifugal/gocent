@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // Broadcast publishes the same data into many channels in one request. It is
@@ -52,7 +53,19 @@ func (c *Client) Broadcast(ctx context.Context, req BroadcastRequest) (Broadcast
 // channel failed.
 func (b *Batch) Broadcast(req BroadcastRequest) *Pending[BroadcastResult] {
 	channels := req.Channels
-	get := func(r *reply) (BroadcastResult, error) { return deref(r.Broadcast).result(channels) }
+	// The outcome is built once, on first use - by Send's check or by
+	// Pending.Result - and shared: a broadcast into many channels is costly
+	// to build, and Send's BatchError then holds the very *BroadcastError
+	// which Pending.Result returns.
+	var (
+		once sync.Once
+		res  BroadcastResult
+		err  error
+	)
+	get := func(r *reply) (BroadcastResult, error) {
+		once.Do(func() { res, err = deref(r.Broadcast).result(channels) })
+		return res, err
+	}
 	// A broadcast which failed in any channel failed as a command too, so
 	// Send counts it in its BatchError.
 	check := func(r *reply) error { _, err := get(r); return err }
@@ -95,38 +108,15 @@ type BroadcastError struct {
 }
 
 func (e *BroadcastError) Error() string {
-	var b strings.Builder
-	b.WriteString("gocent: broadcast: ")
-	b.WriteString(strconv.Itoa(len(e.Failed)))
-	b.WriteString(" of ")
-	b.WriteString(strconv.Itoa(e.Total))
-	b.WriteString(" channels failed")
-	for i, f := range e.Failed {
-		if i == maxErrorItems {
-			b.WriteString("; and ")
-			b.WriteString(strconv.Itoa(len(e.Failed) - i))
-			b.WriteString(" more")
-			break
-		}
-		if i == 0 {
-			b.WriteString(": ")
-		} else {
-			b.WriteString("; ")
-		}
-		b.WriteString(f.Channel)
-		b.WriteString(": ")
-		b.WriteString(strings.TrimPrefix(f.Err.Error(), "gocent: "))
-	}
-	return b.String()
+	return failuresMessage("broadcast", "channels", len(e.Failed), e.Total, func(b *strings.Builder, i int) error {
+		b.WriteString(e.Failed[i].Channel)
+		return e.Failed[i].Err
+	})
 }
 
 // Unwrap returns the error of every failed channel.
 func (e *BroadcastError) Unwrap() []error {
-	errs := make([]error, len(e.Failed))
-	for i, f := range e.Failed {
-		errs[i] = f.Err
-	}
-	return errs
+	return failureErrors(e.Failed, func(f ChannelResult) error { return f.Err })
 }
 
 // failedBroadcast is the result of a broadcast which failed as a whole: every

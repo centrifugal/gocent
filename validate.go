@@ -6,8 +6,9 @@ import (
 )
 
 // ErrInvalidRequest is wrapped by the error for a request the client can tell
-// is wrong without sending it: a publication without a channel or data, or
-// data which is not valid JSON. Such a request is never sent.
+// is wrong without sending it: one which cannot be encoded - a payload which
+// is not valid JSON, in any request - or a publication without a channel or
+// data. Such a request is never sent.
 //
 // Only rules which hold for every Centrifugo are checked here; everything
 // else Centrifugo checks itself, and reports as [ErrBadRequest].
@@ -24,13 +25,24 @@ func invalidRequest(method, problem string) error {
 
 type requestError struct {
 	method, problem string
+	// err is what found the problem, if anything did: the JSON encoder.
+	err error
 }
 
 func (e *requestError) Error() string {
-	return "gocent: invalid " + e.method + " request: " + e.problem
+	msg := "gocent: invalid " + e.method + " request: " + e.problem
+	if e.err != nil {
+		msg += ": " + e.err.Error()
+	}
+	return msg
 }
 
-func (e *requestError) Unwrap() error { return ErrInvalidRequest }
+func (e *requestError) Unwrap() []error {
+	if e.err == nil {
+		return []error{ErrInvalidRequest}
+	}
+	return []error{ErrInvalidRequest, e.err}
+}
 
 // validateRequest validates req if it has rules to check.
 func validateRequest(req request) error {
