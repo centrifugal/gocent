@@ -49,6 +49,12 @@ type BatchOptions struct {
 	// Parallel lets Centrifugo run the commands concurrently. It is faster
 	// for many independent commands, but the commands no longer take effect
 	// in the order they were added.
+	//
+	// Without it, the commands run one by one, in the order they were added.
+	// Centrifugo PRO sends a batch's publications to its broker together,
+	// though: each channel's publications take effect in order, but
+	// publications into different channels may not, unless the namespace sets
+	// publication_grouping_disabled.
 	Parallel bool
 }
 
@@ -59,7 +65,8 @@ var ErrBatchNotSent = errors.New("gocent: batch not sent yet")
 var ErrBatchSent = errors.New("gocent: batch already sent")
 
 // NewBatch returns an empty [Batch] sent by c and run as opts say.
-// BatchOptions{} runs the commands one by one, in the order they were added.
+// BatchOptions{} runs the commands one by one, in the order they were added
+// (see [BatchOptions.Parallel] for publications with Centrifugo PRO).
 func (c *Client) NewBatch(opts BatchOptions) *Batch {
 	return &Batch{client: c, opts: opts}
 }

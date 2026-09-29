@@ -136,9 +136,12 @@ which failed in any channel counts as a failed command.
 
 `BatchOptions`, given to `NewBatch`, say how Centrifugo runs the batch: the
 zero value runs the commands one by one, in order; `Parallel` runs them
-concurrently. A batch keeps its commands' requests as given until it is sent -
-their slices, such as `Channels` and `Data`, are shared with the caller, so do
-not modify them before `Send` returns.
+concurrently. Centrifugo PRO sends a batch's publications to its broker
+together: each channel's publications take effect in order, but publications
+into different channels may not, unless the namespace sets
+`publication_grouping_disabled`. A batch keeps its commands' requests as given
+until it is sent - their slices, such as `Channels` and `Data`, are shared with
+the caller, so do not modify them before `Send` returns.
 
 ## Automatic batching
 
