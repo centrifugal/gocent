@@ -57,6 +57,32 @@
 // However a request times out, errors.Is(err, context.DeadlineExceeded) is
 // true.
 //
+// # Retrying
+//
+// [Retryable] reports whether retrying a call may succeed: the error came
+// from a temporary condition - a broker being unavailable, a rate limit, the
+// network - not from the request. Newer Centrifugo versions mark such errors
+// themselves ([Error.Temporary]). Back off between attempts and bound their
+// number; see the example of [Retryable] for a broadcast which drops the
+// channels that can never succeed.
+//
+// A temporary error does not mean nothing was done: after a timeout, and
+// even with an internal error, the publication may have happened. So a
+// publication is safe to retry only with an IdempotencyKey:
+//
+//   - Give each publication or broadcast its own key, and reuse it only to
+//     retry that same one. A broadcast needs one key, not one per channel.
+//   - Centrifugo remembers a key per channel, for five minutes by default. A
+//     retry within that time is answered with the first attempt's result and
+//     not published again. So is a different publication into the same
+//     channel under the same key: a key derived from, say, an order ID must
+//     also name the event - "order-42-paid", not "order-42".
+//
+// To retry a failed batch, build it again with the same keys, leaving out the
+// commands which failed for good, and send it: the publications which
+// happened are not repeated. See the batch example of [Retryable]. A command without a key
+// is repeated, and so is a read, which is harmless.
+//
 // # Broadcast and batch
 //
 // A call returns an error unless it did everything asked, and

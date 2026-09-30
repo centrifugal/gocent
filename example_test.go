@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/centrifugal/gocent/v4"
 )
@@ -148,4 +149,94 @@ func ExamplePublishRequest_APIMethod() {
 	// An outbox row, or the "method" and "payload" of a Kafka message.
 	fmt.Println(req.APIMethod(), string(payload))
 	// Output: publish {"channel":"news","data":{"text":"hello"}}
+}
+
+// A broadcast retried until every channel got the publication, dropping the
+// channels which can never succeed. The IdempotencyKey keeps a channel from
+// getting the publication twice when a retry repeats it.
+func ExampleRetryable() {
+	client, err := gocent.New(gocent.Config{
+		APIEndpoint: "http://localhost:8000/api",
+		APIKey:      os.Getenv("CENTRIFUGO_API_KEY"),
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	req := gocent.BroadcastRequest{
+		Channels:       []string{"news", "sport", "weather"},
+		Data:           jsontext.Value(`{"text":"hello"}`),
+		IdempotencyKey: "message-42",
+	}
+	for attempt := 1; ; attempt++ {
+		_, err := client.Broadcast(context.Background(), req)
+		if err == nil {
+			return
+		}
+		if !gocent.Retryable(err) || attempt == 3 {
+			log.Fatal(err)
+		}
+		var be *gocent.BroadcastError
+		if errors.As(err, &be) {
+			// Retry only the channels which failed for a temporary reason.
+			req.Channels = nil
+			for _, f := range be.Failed {
+				if gocent.Retryable(f.Err) {
+					req.Channels = append(req.Channels, f.Channel)
+				} else {
+					log.Printf("not published into %s: %v", f.Channel, f.Err)
+				}
+			}
+		}
+		time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+	}
+}
+
+// A batch is retried by building it again: a Batch is sent once. Keep the
+// requests, give every publication an IdempotencyKey, and leave out the
+// commands which failed for good. The publications which happened are not
+// repeated.
+func ExampleRetryable_batch() {
+	client, err := gocent.New(gocent.Config{
+		APIEndpoint: "http://localhost:8000/api",
+		APIKey:      os.Getenv("CENTRIFUGO_API_KEY"),
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	reqs := []gocent.PublishRequest{
+		{Channel: "orders:42", Data: jsontext.Value(`{"status":"paid"}`), IdempotencyKey: "order-42-paid"},
+		{Channel: "user:7", Data: jsontext.Value(`{"text":"payment received"}`), IdempotencyKey: "order-42-paid"},
+	}
+	for attempt := 1; ; attempt++ {
+		b := client.NewBatch(gocent.BatchOptions{})
+		for _, req := range reqs {
+			b.Publish(req)
+		}
+		err := b.Send(context.Background())
+		if err == nil {
+			return
+		}
+		if !gocent.Retryable(err) || attempt == 3 {
+			log.Fatal(err)
+		}
+		var batchErr *gocent.BatchError
+		if errors.As(err, &batchErr) {
+			// Resending every command is safe with keys, but a command which
+			// failed for good would fail on every attempt: leave it out.
+			keep := reqs[:0:0]
+			failed := map[int]error{}
+			for _, f := range batchErr.Failed {
+				failed[f.Index] = f.Err
+			}
+			for i, req := range reqs {
+				if err, ok := failed[i]; ok && !gocent.Retryable(err) {
+					log.Printf("not published into %s: %v", req.Channel, err)
+					continue
+				}
+				keep = append(keep, req)
+			}
+			reqs = keep
+		}
+		time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+	}
 }

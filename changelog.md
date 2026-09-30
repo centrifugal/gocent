@@ -24,6 +24,12 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   command, each returning a `Pending` holding that command's typed result.
 * **Automatic batching.** `Config.AutoBatch` sends concurrent calls together
   once `MaxInFlight` requests are in flight, with no delay otherwise.
+* **Retries.** `gocent.Retryable(err)` tells whether retrying a call may
+  succeed. It follows `Error.Temporary`, which Centrifugo sets on errors from a
+  temporary condition, such as the new `ErrTooManyRequests`, and treats
+  network failures, timeouts and HTTP 429 or 5xx as retryable too. A
+  retryable error does not mean nothing was done: retry publications with
+  the same `IdempotencyKey`.
 * **Bearer token authentication.** `Config.BearerTokenFunc` sends a token
   with every request as `Authorization: Bearer`, for Centrifugo PRO's JWKS
   authentication of the API.
@@ -52,7 +58,7 @@ Change the import path to `github.com/centrifugal/gocent/v4`, then:
 | `WithSubscribeClient`, `WithUnsubscribeClient`, `WithDisconnectClient` | `Client` field |
 | `WithDisconnect`, `WithDisconnectClientWhitelist` | `Disconnect`, `Whitelist` fields |
 | `WithRecoverSince(&pos)`, `WithSince(&pos)` | `RecoverSince: pos`, `Since: pos` - a value, not a pointer |
-| `WithPresence(true)`, `WithJoinLeave(true)`, `WithPosition(true)`, `WithRecover(true)` | `Override: gocent.SubscribeOptionOverride{Presence: &gocent.BoolValue{Value: true}}`, with the fields `Presence`, `JoinLeave`, `ForcePositioning`, `ForceRecovery` - Centrifugo takes these only as overrides of the channel's options |
+| `WithPresence(true)`, `WithJoinLeave(true)`, `WithPosition(true)`, `WithRecover(true)` | `Override: gocent.SubscribeOptionOverride{Presence: gocent.Bool(true)}`, with the fields `Presence`, `JoinLeave`, `ForcePositioning`, `ForceRecovery` - Centrifugo takes these only as overrides of the channel's options |
 | `data []byte`, `json.RawMessage` in subscribe options | `jsontext.Value` - convert with `jsontext.Value(b)`; it must be valid JSON |
 | `p := c.Pipe()`, `err := p.AddPublish(...)`, `replies, err := c.SendPipe(ctx, p)` | `b := c.NewBatch(gocent.BatchOptions{})`, `pub := b.Publish(...)`, `err := b.Send(ctx)`, `res, err := pub.Result()` |
 | `p.Reset()` to reuse a pipe | a new `NewBatch`: a batch is sent once |
@@ -125,8 +131,11 @@ default:
 }
 ```
 
-* `errors.Is(err, gocent.ErrUnknownChannel)` is true when any channel failed
-  that way, through the `*BroadcastError`.
+* `errors.Is(err, ...)` answers for the broadcast as a whole: it does not look
+  into a `*BroadcastError`, so one unknown channel of many does not make
+  `errors.Is(err, gocent.ErrUnknownChannel)` true. Each channel's error is in
+  `be.Failed`: `errors.Is(f.Err, gocent.ErrUnknownChannel)`. The same holds
+  for a `*BatchError` and its commands.
 * After a timeout or a network error Centrifugo may still have published. Set
   `IdempotencyKey` to retry the whole broadcast safely: channels which already
   have the publication do not get it again.
@@ -172,7 +181,7 @@ Corner cases:
 
 * **An invalid command fails the whole batch before sending.** A publication
   with data which is not valid JSON makes `Send` return an error wrapping
-  `gocent.ErrInvalidRequest` and naming the command (`batch command #1: ...`).
+  `gocent.ErrInvalidRequest` and naming the command (`gocent: batch command #1: ...`).
   Nothing is sent, and every `Pending` returns that error.
 * **A broadcast in a batch** behaves as `Client.Broadcast`: its `Pending`
   holds every channel's outcome with a `*BroadcastError`, and a broadcast
@@ -181,6 +190,11 @@ Corner cases:
 * **A batch is sent once.** `Send` again returns `gocent.ErrBatchSent`, and
   adding a command to a sent batch panics: to retry, build a new batch.
   `Result` before `Send` returns `gocent.ErrBatchNotSent`.
+* **Retry a failed batch as a whole**: build it again with the same
+  `IdempotencyKey`s, leaving out the commands which failed for good
+  (`gocent.Retryable` is false for their error). Publications which happened
+  are not repeated, even one reported as failed. Without a key a publication
+  is repeated.
 * **An empty batch** sends nothing, and `Send` returns nil - v3 returned
   `ErrPipeEmpty`.
 

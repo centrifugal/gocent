@@ -95,8 +95,8 @@ func TestIntegrationBroadcast(t *testing.T) {
 	if len(be.Failed) != 1 || be.Failed[0].Channel != "unknown:x" {
 		t.Fatalf("failed channels %+v", be.Failed)
 	}
-	if !errors.Is(err, gocent.ErrUnknownChannel) {
-		t.Errorf("errors.Is does not see the channel error: %v", err)
+	if !errors.Is(be.Failed[0].Err, gocent.ErrUnknownChannel) {
+		t.Errorf("channel error: %v", be.Failed[0].Err)
 	}
 	if res.Channels[0].Channel != a || res.Channels[0].Err != nil || res.Channels[0].Result.Offset != 1 {
 		t.Errorf("channel a: %+v", res.Channels[0])

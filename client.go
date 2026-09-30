@@ -89,9 +89,9 @@ type Config struct {
 // itself fails - the network, the credentials, a body too large for
 // Centrifugo or a proxy in front of it - every call in it fails with that
 // error. Keep payloads well within the body limit, or send large ones from a
-// client without AutoBatch. A batch request is bounded by RequestTimeout, not
-// by the deadlines of the calls in it: a call with a longer deadline can still
-// fail after RequestTimeout once it went out in a batch.
+// client without AutoBatch. Each call keeps its own deadline in a batch: the
+// batch request lasts until the latest deadline of the calls in it, and a
+// call without one gets RequestTimeout, as when sent alone.
 type AutoBatch struct {
 	// MaxInFlight is how many requests may be in flight at once before calls
 	// start to wait and be batched. Zero disables AutoBatch.
@@ -247,7 +247,13 @@ func New(cfg Config) (*Client, error) {
 func checkAddr(addr string) (string, error) {
 	u, err := url.Parse(addr)
 	if err != nil {
-		return "", err
+		// Not the *url.Error itself: that is what a failed HTTP request
+		// returns too, and Retryable takes it for the network's.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		return "", fmt.Errorf("%q is not a valid URL: %w", addr, err)
 	}
 	switch {
 	case u.Scheme != "http" && u.Scheme != "https":
@@ -406,7 +412,8 @@ func (c *Client) post(ctx context.Context, method string, body, out any) error {
 func transportModeError(status int, body []byte) *Error {
 	switch status {
 	case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict,
-		http.StatusRequestedRangeNotSatisfiable, http.StatusInternalServerError:
+		http.StatusRequestedRangeNotSatisfiable, http.StatusTooManyRequests,
+		http.StatusInternalServerError:
 	default:
 		return nil
 	}

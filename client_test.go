@@ -290,6 +290,11 @@ func TestErrorMessages(t *testing.T) {
 			{Index: 0, Method: "publish", Err: gocent.ErrUnknownChannel},
 			{Index: 2, Method: "history", Err: gocent.ErrNotAvailable},
 		}}, "gocent: batch: 2 of 3 commands failed: #0 publish: unknown channel (code 102); #2 history: not available (code 108)"},
+		{&gocent.BatchError{Total: 1, Failed: []gocent.CommandError{
+			{Index: 0, Method: "broadcast", Err: &gocent.BroadcastError{Total: 2, Failed: []gocent.ChannelResult{
+				{Channel: "a", Err: gocent.ErrUnknownChannel},
+			}}},
+		}}, "gocent: batch: 1 of 1 commands failed: #0 broadcast: 1 of 2 channels failed: a: unknown channel (code 102)"},
 	} {
 		if got := tc.err.Error(); got != tc.want {
 			t.Errorf("%T message\n got %q\nwant %q", tc.err, got, tc.want)
@@ -508,6 +513,7 @@ func TestTransportErrorMode(t *testing.T) {
 	}{
 		{http.StatusNotFound, `{"code":102,"message":"unknown channel"}`, gocent.ErrUnknownChannel},
 		{http.StatusBadRequest, `{"code":107,"message":"bad request"}`, gocent.ErrBadRequest},
+		{http.StatusTooManyRequests, `{"code":111,"message":"too many requests","temporary":true}`, gocent.ErrTooManyRequests},
 		// A code gocent has no value for.
 		{http.StatusInternalServerError, `{"code":4001,"message":"custom"}`, &gocent.Error{Code: 4001}},
 	}
@@ -525,6 +531,8 @@ func TestTransportErrorMode(t *testing.T) {
 		var apiErr *gocent.Error
 		if !errors.As(err, &apiErr) || !errors.Is(err, tc.want) {
 			t.Errorf("%d %s: got %v, want %v", tc.status, tc.body, err, tc.want)
+		} else if apiErr.Temporary != tc.want.Temporary {
+			t.Errorf("%d %s: Temporary %v, want %v", tc.status, tc.body, apiErr.Temporary, tc.want.Temporary)
 		}
 		srv.Close()
 	}
@@ -541,6 +549,9 @@ func TestGatewayErrorIsNotACentrifugoError(t *testing.T) {
 		{http.StatusServiceUnavailable, `{"code":503,"message":"no healthy upstream"}`},
 		{http.StatusBadGateway, `{"code":102,"message":"bad gateway"}`},
 		{http.StatusUnauthorized, `{"code":101,"message":"unauthorized"}`},
+		// A rate limit in front of the API, such as Centrifugo PRO's
+		// authentication throttling: plain text, not a Centrifugo error.
+		{http.StatusTooManyRequests, "Too Many Requests"},
 		{http.StatusNotFound, `{"code":42,"message":"not a Centrifugo code"}`},
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -654,7 +665,7 @@ func TestUnencodableRequest(t *testing.T) {
 	b.Publish(gocent.PublishRequest{Channel: "news", Data: data})
 	sub := b.Subscribe(gocent.SubscribeRequest{User: "u", Channel: "news", Data: bad})
 	err = b.Send(t.Context())
-	if !errors.Is(err, gocent.ErrInvalidRequest) || !strings.HasPrefix(err.Error(), "batch command #1: gocent: invalid subscribe request") {
+	if !errors.Is(err, gocent.ErrInvalidRequest) || !strings.HasPrefix(err.Error(), "gocent: batch command #1: invalid subscribe request") {
 		t.Errorf("Send: %v", err)
 	}
 	if _, subErr := sub.Result(); !errors.Is(subErr, gocent.ErrInvalidRequest) {

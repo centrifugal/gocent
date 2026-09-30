@@ -43,12 +43,14 @@ func TestBroadcastPartialFailure(t *testing.T) {
 	if be.Total != 4 || len(be.Failed) != 2 || be.Failed[0].Channel != "bad:1" || be.Failed[1].Channel != "full:1" {
 		t.Fatalf("broadcast error %+v", be)
 	}
-	// errors.Is sees each failed channel's error.
-	if !errors.Is(err, gocent.ErrUnknownChannel) || !errors.Is(err, gocent.ErrNotAvailable) {
-		t.Error("errors.Is does not see the channel errors")
+	// errors.Is answers for the broadcast as a whole: one channel of four
+	// failing does not make the broadcast an unknown channel error.
+	if errors.Is(err, gocent.ErrUnknownChannel) || errors.Is(err, gocent.ErrNotAvailable) {
+		t.Error("errors.Is looked into the failed channels")
 	}
-	if errors.Is(err, gocent.ErrBadRequest) {
-		t.Error("errors.Is matched a code no channel failed with")
+	// Each channel's own error is in Failed.
+	if !errors.Is(be.Failed[0].Err, gocent.ErrUnknownChannel) || !errors.Is(be.Failed[1].Err, gocent.ErrNotAvailable) {
+		t.Errorf("channel errors %v, %v", be.Failed[0].Err, be.Failed[1].Err)
 	}
 	want := "gocent: broadcast: 2 of 4 channels failed: bad:1: unknown channel (code 102); full:1: not available (code 108)"
 	if err.Error() != want {
@@ -186,14 +188,18 @@ func TestBatchPartialFailure(t *testing.T) {
 	if f0 := batchErr.Failed[0]; f0.Index != 1 || f0.Method != "publish" || !errors.Is(f0.Err, gocent.ErrUnknownChannel) {
 		t.Errorf("first failure %+v", f0)
 	}
-	// The broadcast failed in one channel, so it failed as a command, and
-	// errors.Is sees through both levels.
+	// The broadcast failed in one channel, so it failed as a command. errors.Is
+	// answers for the batch as a whole and does not look into the parts; the
+	// channel's error is in the broadcast's own Failed.
 	var be *gocent.BroadcastError
 	if f1 := batchErr.Failed[1]; f1.Index != 2 || !errors.As(f1.Err, &be) {
 		t.Errorf("second failure %+v", f1)
 	}
-	if !errors.Is(err, gocent.ErrNotAvailable) {
-		t.Error("errors.Is does not reach the broadcast's channel error")
+	if errors.Is(err, gocent.ErrNotAvailable) || errors.Is(err, gocent.ErrUnknownChannel) {
+		t.Error("errors.Is looked into the failed commands")
+	}
+	if be == nil || len(be.Failed) != 1 || !errors.Is(be.Failed[0].Err, gocent.ErrNotAvailable) {
+		t.Errorf("broadcast's channel error: %+v", be)
 	}
 
 	if _, okErr := ok.Result(); okErr != nil {

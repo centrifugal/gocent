@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -105,7 +104,7 @@ func (b *Batch) Send(ctx context.Context) error {
 	// sent, and the error names the command.
 	for i, err := range b.invalid {
 		if err != nil {
-			b.err = fmt.Errorf("batch command #%d: %w", i, err)
+			b.err = &commandInvalidError{index: i, err: err}
 			return b.err
 		}
 	}
@@ -149,11 +148,25 @@ func (b *Batch) Send(ctx context.Context) error {
 func (b *Batch) unencodable(err error) error {
 	for i := range b.commands {
 		if _, cmdErr := json.Marshal(&b.commands[i]); cmdErr != nil {
-			return fmt.Errorf("batch command #%d: %w", i, encodingError(b.methods[i], cmdErr))
+			return &commandInvalidError{index: i, err: encodingError(b.methods[i], cmdErr)}
 		}
 	}
 	return err
 }
+
+// commandInvalidError is the error of a batch not sent because one of its
+// commands is invalid: "gocent: batch command #1: invalid publish request:
+// ...". It wraps the command's error, so [ErrInvalidRequest] matches it.
+type commandInvalidError struct {
+	index int
+	err   error
+}
+
+func (e *commandInvalidError) Error() string {
+	return "gocent: batch command #" + strconv.Itoa(e.index) + ": " + strings.TrimPrefix(e.err.Error(), "gocent: ")
+}
+
+func (e *commandInvalidError) Unwrap() error { return e.err }
 
 // Pending is the outcome of one command of a [Batch], available once the
 // batch is sent.
@@ -215,7 +228,9 @@ func addChecked[T any](b *Batch, req request, get func(*reply) (T, error), check
 // of them. Every command got its own reply: each one's outcome, success or
 // failure, is available from its [Pending].
 //
-// [errors.Is] and [errors.As] see the errors of the failed commands.
+// It does not unwrap to the commands' errors: errors.Is(err, ErrUnknownChannel)
+// is not true because one command of many failed that way. Look at each
+// command's error in Failed, or at its [Pending].
 type BatchError struct {
 	// Failed lists the failed commands in the order they were added.
 	Failed []CommandError
@@ -236,26 +251,22 @@ type CommandError struct {
 }
 
 func (e *BatchError) Error() string {
-	return failuresMessage("batch", "commands", len(e.Failed), e.Total, func(b *strings.Builder, i int) error {
+	return failuresMessage("batch", "commands", len(e.Failed), e.Total, func(b *strings.Builder, i int) (string, error) {
 		f := e.Failed[i]
 		b.WriteString("#")
 		b.WriteString(strconv.Itoa(f.Index))
 		b.WriteString(" ")
 		b.WriteString(f.Method)
-		return f.Err
+		return f.Method, f.Err
 	})
-}
-
-// Unwrap returns the error of every failed command.
-func (e *BatchError) Unwrap() []error {
-	return failureErrors(e.Failed, func(f CommandError) error { return f.Err })
 }
 
 // failuresMessage is the message of an error listing the failed parts of a
 // request - "gocent: batch: 2 of 3 commands failed: ...". It names at most
 // maxErrorItems of them; label writes the name of the i-th and returns its
-// error.
-func failuresMessage(op, parts string, failed, total int, label func(b *strings.Builder, i int) error) string {
+// error, and the prefix its message may repeat - "broadcast" for a broadcast
+// in a batch, whose message starts with "broadcast: ".
+func failuresMessage(op, parts string, failed, total int, label func(b *strings.Builder, i int) (string, error)) string {
 	var b strings.Builder
 	b.WriteString("gocent: ")
 	b.WriteString(op)
@@ -278,20 +289,15 @@ func failuresMessage(op, parts string, failed, total int, label func(b *strings.
 		} else {
 			b.WriteString("; ")
 		}
-		err := label(&b, i)
+		repeated, err := label(&b, i)
+		msg := strings.TrimPrefix(err.Error(), "gocent: ")
+		if repeated != "" {
+			msg = strings.TrimPrefix(msg, repeated+": ")
+		}
 		b.WriteString(": ")
-		b.WriteString(strings.TrimPrefix(err.Error(), "gocent: "))
+		b.WriteString(msg)
 	}
 	return b.String()
-}
-
-// failureErrors returns the error of every failed part.
-func failureErrors[T any](failed []T, errOf func(T) error) []error {
-	errs := make([]error, len(failed))
-	for i, f := range failed {
-		errs[i] = errOf(f)
-	}
-	return errs
 }
 
 // batchRequest is a batch as Centrifugo takes it. C is a command: a command

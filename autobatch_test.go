@@ -143,6 +143,56 @@ func TestAutoBatchCallerLeavesQueue(t *testing.T) {
 	}
 }
 
+// A call keeps its own deadline in a batch: a longer one than RequestTimeout
+// is not cut short, and a call without one still times out after
+// RequestTimeout.
+func TestAutoBatchKeepsCallDeadlines(t *testing.T) {
+	f := newFake(t)
+	f.delay = 300 * time.Millisecond
+	c := newClient(t, f, autoBatch(gocent.AutoBatch{MaxInFlight: 1}), func(cfg *gocent.Config) {
+		cfg.RequestTimeout = 100 * time.Millisecond
+	})
+	long := func() context.Context {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		t.Cleanup(cancel)
+		return ctx
+	}
+
+	// Occupy the only slot.
+	first := make(chan error, 1)
+	go func() {
+		_, err := c.Publish(long(), gocent.PublishRequest{Channel: "first", Data: data})
+		first <- err
+	}()
+	time.Sleep(20 * time.Millisecond)
+
+	batched := make(chan error, 1)
+	go func() {
+		_, err := c.Publish(long(), gocent.PublishRequest{Channel: "batched", Data: data})
+		batched <- err
+	}()
+	time.Sleep(20 * time.Millisecond)
+	_, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "no-deadline", Data: data})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("call without a deadline: error %v, want DeadlineExceeded", err)
+	}
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-batched; err != nil {
+		t.Fatalf("call with a longer deadline than RequestTimeout: %v", err)
+	}
+	var sentInBatch bool
+	for _, r := range f.recorded() {
+		if strings.HasSuffix(r.Path, "/batch") && strings.Contains(string(r.Body), "batched") {
+			sentInBatch = true
+		}
+	}
+	if !sentInBatch {
+		t.Error("the call was not sent in a batch")
+	}
+}
+
 func TestAutoBatchBroadcastPartialFailure(t *testing.T) {
 	f := newFake(t)
 	f.delay = 20 * time.Millisecond

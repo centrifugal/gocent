@@ -29,6 +29,13 @@ type Error struct {
 	Code uint32 `json:"code"`
 	// Message describes the error for people.
 	Message string `json:"message,omitzero"`
+	// Temporary is set by Centrifugo when the same request may succeed if
+	// retried later: the error came from a temporary condition, such as a
+	// broker being unavailable or a rate limit, not from the request. It does
+	// not mean nothing was done: a publication may have happened, so retry it
+	// with the same IdempotencyKey. Centrifugo versions before the field
+	// existed never set it; [Retryable] takes that into account.
+	Temporary bool `json:"temporary,omitzero"`
 }
 
 func (e *Error) Error() string {
@@ -56,11 +63,12 @@ func (e *Error) Is(target error) bool {
 // Errors Centrifugo returns, matched by code with [errors.Is]. See [Error] for
 // why this list is not exhaustive.
 var (
-	ErrInternal              = &Error{Code: 100, Message: "internal server error"}
+	ErrInternal              = &Error{Code: 100, Message: "internal server error", Temporary: true}
 	ErrUnknownChannel        = &Error{Code: 102, Message: "unknown channel"}
 	ErrNotFound              = &Error{Code: 104, Message: "not found"}
 	ErrBadRequest            = &Error{Code: 107, Message: "bad request"}
 	ErrNotAvailable          = &Error{Code: 108, Message: "not available"}
+	ErrTooManyRequests       = &Error{Code: 111, Message: "too many requests", Temporary: true}
 	ErrUnrecoverablePosition = &Error{Code: 112, Message: "unrecoverable position"}
 	ErrConflict              = &Error{Code: 113, Message: "conflict"}
 )

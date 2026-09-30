@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // batcher implements [AutoBatch]. It counts requests in flight; below the cap
@@ -35,6 +36,9 @@ type queued struct {
 	done  chan struct{}
 	reply reply
 	err   error
+	// deadline is the caller's: the batch carrying the call lasts until
+	// the latest deadline of its calls.
+	deadline time.Time
 	// taken is set, under the batcher's lock, once the call is in a batch;
 	// gone once its caller gave up waiting before that.
 	taken bool
@@ -45,6 +49,15 @@ type queued struct {
 // the next batch otherwise.
 func batched[W any](ctx context.Context, b *batcher, req request, get func(*reply) *W) (W, error) {
 	var zero W
+	// A call without a deadline gets RequestTimeout from now, as one sent
+	// alone does, so that sharing a batch with a call with a longer deadline
+	// does not make it wait longer.
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, b.client.timeout)
+		defer cancel()
+	}
+	deadline, _ := ctx.Deadline()
 	var encoded jsontext.Value
 	b.mu.Lock()
 	for {
@@ -67,7 +80,7 @@ func batched[W any](ctx context.Context, b *batcher, req request, get func(*repl
 		}
 		b.mu.Lock()
 	}
-	q := &queued{command: encoded, done: make(chan struct{})}
+	q := &queued{command: encoded, done: make(chan struct{}), deadline: deadline}
 	b.queue = append(b.queue, q)
 	b.mu.Unlock()
 
@@ -179,8 +192,17 @@ func (b *batcher) flush(items []*queued) {
 		commands[i] = q.command
 	}
 	// The batch serves several callers, so no one caller's context may end
-	// it; the request timeout bounds it instead.
-	ctx, cancel := context.WithTimeout(context.Background(), b.client.timeout)
+	// it. It lasts until the latest of their deadlines, so each call keeps
+	// its own: a caller with an earlier one stops waiting on its own
+	// context. Never less than the request timeout from now, as before a
+	// batch lasted.
+	deadline := time.Now().Add(b.client.timeout)
+	for _, q := range items {
+		if q.deadline.After(deadline) {
+			deadline = q.deadline
+		}
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	// Parallel: the commands of an automatic batch come from calls made
 	// concurrently - a goroutine waits for one call before making the next,

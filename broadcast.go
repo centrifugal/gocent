@@ -97,8 +97,13 @@ type ChannelResult struct {
 // failed in one or more of its channels, up to all of them. The result
 // returned with it holds every channel's outcome.
 //
-// [errors.Is] and [errors.As] see the errors of the failed channels, so
-// errors.Is(err, ErrUnknownChannel) is true when any channel failed that way.
+// It does not unwrap to the channels' errors: errors.Is(err,
+// ErrUnknownChannel) is not true because one channel of many failed that way.
+// Look at each channel's error in Failed instead:
+//
+//	for _, f := range be.Failed {
+//		if errors.Is(f.Err, gocent.ErrUnknownChannel) { ... }
+//	}
 type BroadcastError struct {
 	// Failed lists the channels which failed, with their errors, in the order
 	// of the request.
@@ -108,15 +113,10 @@ type BroadcastError struct {
 }
 
 func (e *BroadcastError) Error() string {
-	return failuresMessage("broadcast", "channels", len(e.Failed), e.Total, func(b *strings.Builder, i int) error {
+	return failuresMessage("broadcast", "channels", len(e.Failed), e.Total, func(b *strings.Builder, i int) (string, error) {
 		b.WriteString(e.Failed[i].Channel)
-		return e.Failed[i].Err
+		return "", e.Failed[i].Err
 	})
-}
-
-// Unwrap returns the error of every failed channel.
-func (e *BroadcastError) Unwrap() []error {
-	return failureErrors(e.Failed, func(f ChannelResult) error { return f.Err })
 }
 
 // failedBroadcast is the result of a broadcast which failed as a whole: every

@@ -73,6 +73,28 @@ Create the `Client` once and share it: it is safe for concurrent use.
 Centrifugo adds error codes over time. An unknown code is still an
 `*gocent.Error`: match the codes you handle and treat the rest by their class.
 
+`gocent.Retryable(err)` tells whether retrying may succeed: the error came
+from a temporary condition - a broker being unavailable, a rate limit, the
+network - not from the request. Newer Centrifugo versions mark such errors
+themselves (`Error.Temporary`). Back off between attempts and bound their
+number.
+
+A temporary error does not mean nothing was done: after a timeout, and even
+with an internal error, the publication may have happened. Retry a
+publication only with an `IdempotencyKey`, so that it is not published twice:
+
+- Give each publication or broadcast its own key, and reuse it only to retry
+  that same one. A broadcast needs one key, not one per channel.
+- Centrifugo remembers a key per channel, for five minutes by default. A
+  retry within that time gets the first attempt's result and is not
+  published again. So is a *different* publication into the same channel
+  under the same key: a key derived from an order ID must also name the
+  event - `order-42-paid`, not `order-42`.
+- To retry a failed batch, build it again with the same keys, leaving out the
+  commands which failed for good: the publications which happened are not
+  repeated. A command without a key
+  is.
+
 A call whose context has no deadline times out after `Config.RequestTimeout`,
 ten seconds by default.
 
@@ -165,9 +187,9 @@ error.
 Calls sharing a batch share its request, though: when the batch request itself
 fails - the network, the credentials, a body too large for Centrifugo or a
 proxy - every call in it fails with that error. Keep payloads well within the
-body limit, or send large ones from a client without `AutoBatch`. A batch
-request is bounded by `RequestTimeout`, not by the deadlines of the calls in
-it.
+body limit, or send large ones from a client without `AutoBatch`. Each call
+keeps its own deadline: a batch request lasts until the latest deadline of the
+calls in it, and a call without one gets `RequestTimeout`.
 
 A smaller `MaxInFlight` batches more: a value above the concurrency your load
 needs leaves nearly every call sent alone. 8 suits most applications.
