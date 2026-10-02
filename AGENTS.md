@@ -24,17 +24,24 @@ passes; if you find yourself about to break one, stop and say so instead.
    one entry per requested channel and every command has its `Pending`,
    whatever the error. When the request failed as a whole, each part's error
    is that error. When Centrifugo carried it out and one or more parts failed,
-   up to all, the error is a `*BroadcastError` or `*BatchError`; their
-   `Unwrap() []error` exposes every failed part's error, so `errors.Is`
-   reaches through. Any other error means the request failed as a whole: no
-   part got a reply - which, after a timeout or a network error, does not
-   mean Centrifugo did nothing.
+   up to all, the error is a `*BroadcastError` or `*BatchError`. They do not
+   unwrap: `errors.Is` answers for the call as a whole, so one unknown channel
+   among many does not make `errors.Is(err, ErrUnknownChannel)` true; each
+   part's error is in `Failed`. Any other error means the request failed as a
+   whole: no part got a reply - which, after a timeout or a network error,
+   does not mean Centrifugo did nothing.
 4. **Errors follow Centrifugo's model.** A Centrifugo error is an `*Error`;
    `errors.Is` matches it against the exported values by `Code` only, never by
    message. Centrifugo adds codes over time: nothing may switch exhaustively
    over codes or treat an unknown code as anything but an `*Error`. The error
    is the same in either of Centrifugo's error modes: in a 200 reply, or - with
-   `http_api.error_mode: transport` - as the body of an HTTP error status.
+   `http_api.error_mode: transport` - as the body of an HTTP error status. A
+   body whose code is itself an HTTP error status (400-599) is a gateway's,
+   not Centrifugo's, and stays an `*HTTPError`.
+   `Retryable` judges every error: `Error.Temporary` (and code 100 from
+   servers which do not set it), network failures, timeouts, HTTP 429 and
+   5xx. A temporary error does not mean nothing was done - the docs say to
+   retry publications with the same `IdempotencyKey`.
 5. **Automatic batching never delays a call and never mixes up replies.**
    - Below `MaxInFlight` a call is sent at once, alone, from its own goroutine.
      There are no timers.
@@ -49,7 +56,11 @@ passes; if you find yourself about to break one, stop and say so instead.
      sent. A call's command is encoded before it queues, and the batch sends
      those bytes: once a call returns - even while its batch is still on its
      way - nothing reads the caller's request. A batch runs on its own
-     goroutine with `RequestTimeout`, never a caller's context or deadline.
+     goroutine, never on a caller's context: it lasts until the latest
+     deadline of its calls (`RequestTimeout` for a call without one), so each
+     call keeps its own deadline. The values of the callers' contexts do not
+     reach it. A reply which arrives as a caller's context ends is returned,
+     not a timeout.
 6. **`New` catches configuration mistakes.** Anything wrong with a `Config` that
    can be seen without a request is an error from `New` wrapping
    `ErrInvalidConfig`, naming the field and the fix.
@@ -61,11 +72,17 @@ passes; if you find yourself about to break one, stop and say so instead.
 8. **HTTP hygiene.** Every response body is closed and drained up to a bound,
    so connections are reused. `http.DefaultClient` is never used. A request's
    body is never reused: the transport may read it after `Do` returns.
+   Redirects are never followed - Centrifugo's API does not redirect, and
+   following one would send the API key wherever it points - unless the
+   caller's `http.Client` has its own `CheckRedirect`. Header values which
+   net/http would refuse at send time (control characters in the API key or
+   a token) are refused before, so they do not look like network failures.
 9. **Invalid requests are never sent.** Every request is encoded before
    sending, and one which cannot be - a `jsontext.Value` which is not valid
    JSON, a string which is not UTF-8 - fails with an error wrapping
    `ErrInvalidRequest`. Publish and broadcast also check the few rules every
-   Centrifugo shares (a channel, some data). A batch with an invalid command
+   Centrifugo shares (a channel, some data, no key repeated in an object of
+   the data). Replies are decoded as strictly as requests are encoded. A batch with an invalid command
    sends nothing, and its error names the command. Every other rule stays the
    server's to check: the client does not copy them.
 
@@ -91,11 +108,18 @@ centrifugo -c testdata/centrifugo.json   # listens on :8100
 make test-integration
 ```
 
+The integration tests cover every method of Centrifugo OSS. CI runs them
+against the `centrifugo/centrifugo:v6` image, configured through environment
+variables in `.github/workflows/ci.yml`: a setting added to
+`testdata/centrifugo.json` must be added there too.
+
 ## Updating to a new Centrifugo API
 
 1. Copy `internal/apiproto/api.proto` from Centrifugo over `api.proto`.
 2. `make generate`. A new command appears as a `Client` method, a `Batch`
-   method and a request type with `APIMethod`, with no hand-written code.
+   method and a request type with `APIMethod`, with no hand-written code. A
+   command whose comment in `Command` says "Centrifugo PRO only" is marked so
+   in `methodNames`, which the 404 hint uses.
 3. `make check`. `TestEveryMethodReachesItsEndpoint` checks every method,
    new ones included, reaches its endpoint and batch command.
 
@@ -115,9 +139,8 @@ For an agent writing code against gocent, and for anyone changing messages or
 docs here - these are the places a reader goes wrong.
 
 - **A 404 from a method Centrifugo PRO only has means the server is OSS, not
-  that APIEndpoint is wrong.** The `*HTTPError` hint asks whether APIEndpoint
-  is the API base URL, because that is the usual cause; if other methods work,
-  it is not. In a
+  that APIEndpoint is wrong.** The `*HTTPError` says so for such a method; for
+  any other method its hint asks whether APIEndpoint is the API base URL. In a
   batch the same call fails with `ErrNotFound` (code 104) instead. The doc
   comment of every PRO-only method says "Centrifugo PRO only."
 - **An error from `Broadcast` or `Batch.Send` does not mean nothing was
@@ -135,9 +158,10 @@ docs here - these are the places a reader goes wrong.
   a request's body after `Do` returns - when the server answers early, or to
   retry - so a pooled buffer could be reused under a request still being
   written. One allocation per request is the price.
-- **Request headers are shared, not cloned,** unless a bearer token is added
-  or the `http.Client` has a cookie jar, which adds cookies to them. Neither
-  `net/http` nor a transport honouring its contract modifies them otherwise.
+- **Request headers are cloned for every request,** though `net/http` and a
+  transport honouring the RoundTripper contract never modify them: a
+  transport which does - setting a tracing header, say - would otherwise write
+  one map from many goroutines, which is a crash, not an error.
 - **Request structs are passed by value.** Callers write them as literals, and
   the struct cannot change under a call in flight. Its slices and maps
   (`Channels`, `Data`, `Tags`) are still the caller's, not copied - copying
