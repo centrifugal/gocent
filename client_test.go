@@ -805,3 +805,23 @@ func TestPublishRepeatedKey(t *testing.T) {
 		t.Errorf("%d requests sent", n)
 	}
 }
+
+// A 404 for a Centrifugo PRO method says the server is likely OSS, not that
+// APIEndpoint is wrong: other methods work through the same address.
+func TestNotFoundForProMethod(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	c, err := gocent.New(gocent.Config{APIEndpoint: srv.URL + "/api", APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Connections(t.Context(), gocent.ConnectionsRequest{User: "u"})
+	var httpErr *gocent.HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusNotFound || !strings.Contains(err.Error(), "connections is a Centrifugo PRO method") {
+		t.Errorf("PRO method: got %v", err)
+	}
+	_, err = c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data})
+	if !strings.Contains(err.Error(), "is APIEndpoint the API base URL") {
+		t.Errorf("OSS method: got %v", err)
+	}
+}

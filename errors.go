@@ -80,6 +80,10 @@ type HTTPError struct {
 	StatusCode int
 	// Body holds the start of the response body, for diagnostics.
 	Body []byte
+
+	// proMethod names the method of the request when only Centrifugo PRO
+	// has it: a 404 for it most likely means the server is Centrifugo OSS.
+	proMethod string
 }
 
 func (e *HTTPError) Error() string {
@@ -91,6 +95,8 @@ func (e *HTTPError) Error() string {
 		// Centrifugo's API never redirects: something in front of it does,
 		// which gocent does not follow - see Config.HTTPClient.
 		b.WriteString(" (a redirect, which gocent does not follow: check APIEndpoint, http or https say)")
+	case e.StatusCode == http.StatusNotFound && e.proMethod != "":
+		b.WriteString(" (" + e.proMethod + " is a Centrifugo PRO method: if other methods work, the server is Centrifugo OSS)")
 	case e.StatusCode == http.StatusNotFound:
 		// The usual cause: APIEndpoint lacks the API prefix, so every method is
 		// looked for where Centrifugo has none.

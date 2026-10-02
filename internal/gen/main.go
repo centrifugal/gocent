@@ -170,6 +170,9 @@ type command struct {
 	goName  string // "PresenceStats"
 	request *message
 	result  string // result message name
+	// proOnly is set for a command its comment in Command says only
+	// Centrifugo PRO has.
+	proOnly bool
 }
 
 func commands(s *schema) ([]command, error) {
@@ -199,6 +202,7 @@ func commands(s *schema) ([]command, error) {
 			goName:  strings.TrimSuffix(f.typ, "Request"),
 			request: req,
 			result:  res,
+			proOnly: strings.Contains(strings.Join(f.doc, " "), "Centrifugo PRO only"),
 		})
 	}
 	return out, nil
@@ -355,11 +359,12 @@ func generate(s *schema) ([]byte, error) {
 
 	w.p("")
 	w.p("// methodNames holds every API method, batch included, so that New can")
-	w.p("// refuse an APIEndpoint which already ends with one.")
-	w.p("var methodNames = map[string]struct{}{")
-	w.p("\t\"batch\": {},")
+	w.p("// refuse an APIEndpoint which already ends with one. A method is true")
+	w.p("// when only Centrifugo PRO has it.")
+	w.p("var methodNames = map[string]bool{")
+	w.p("\t\"batch\": false,")
 	for _, c := range cmds {
-		w.p("\t%q: {},", c.method)
+		w.p("\t%q: %t,", c.method, c.proOnly)
 	}
 	w.p("}")
 

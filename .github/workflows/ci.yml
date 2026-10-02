@@ -66,6 +66,13 @@ jobs:
           CENTRIFUGO_CHANNEL_WITHOUT_NAMESPACE_HISTORY_SIZE: "1000"
           CENTRIFUGO_CHANNEL_WITHOUT_NAMESPACE_HISTORY_TTL: 300s
           CENTRIFUGO_CHANNEL_WITHOUT_NAMESPACE_PRESENCE: "true"
+          CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY: client_secret
+          CENTRIFUGO_UNI_HTTP_STREAM_ENABLED: "true"
+          CENTRIFUGO_SHARED_POLL_HMAC_SECRET_KEY: shared_poll_secret
+          CENTRIFUGO_CHANNEL_PROXY_SHARED_POLL_REFRESH_ENDPOINT: http://localhost:3000/shared_poll_refresh
+          CENTRIFUGO_CHANNEL_NAMESPACES: >-
+            [{"name":"map","subscription_type":"map","map":{"mode":"recoverable","key_ttl":"60s","stream_size":100,"stream_ttl":"300s","meta_ttl":"600s"}},
+            {"name":"poll","subscription_type":"shared_poll","shared_poll":{"mode":"versioned","publish_enabled":true}}]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

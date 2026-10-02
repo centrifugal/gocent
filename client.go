@@ -419,7 +419,11 @@ func (c *Client) post(ctx context.Context, method string, body, out any) error {
 		if len(b) > maxErrorBodyBytes {
 			b = b[:maxErrorBodyBytes]
 		}
-		return &HTTPError{StatusCode: resp.StatusCode, Body: bytes.TrimSpace(b)}
+		httpErr := &HTTPError{StatusCode: resp.StatusCode, Body: bytes.TrimSpace(b)}
+		if methodNames[method] {
+			httpErr.proMethod = method
+		}
+		return httpErr
 	}
 	if err := json.UnmarshalRead(resp.Body, out); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
