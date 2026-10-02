@@ -11,7 +11,18 @@ including those of Centrifugo PRO. For a real-time client over WebSocket, see
 go get github.com/centrifugal/gocent/v4
 ```
 
-Requires Go 1.27, works with Centrifugo v6, and has no dependencies.
+No dependencies.
+
+| | Version |
+|---|---|
+| Go | 1.27 or newer |
+| Centrifugo | v6, any release |
+| Map and shared poll methods | Centrifugo v6.8.0 or newer |
+| `Error.Temporary`, `ErrTooManyRequests`, refused requests reported as such rather than as internal errors | Centrifugo v6.9.8 or newer (planned) |
+| Methods marked "Centrifugo PRO only" | Centrifugo PRO v6 |
+
+With an older Centrifugo, `Retryable` still works: it treats the internal
+error, code 100, as temporary when the server does not mark errors.
 
 ## Example
 
@@ -184,13 +195,31 @@ is called for every request, so return a cached token, as an
 Rejected credentials make every call fail with an `*HTTPError` matching
 `gocent.ErrUnauthorized`.
 
+## Tracing
+
+Tracing and metrics come from the HTTP client's transport. With OpenTelemetry:
+
+```go
+hc := gocent.DefaultHTTPClient()
+hc.Transport = otelhttp.NewTransport(hc.Transport)
+client, err := gocent.New(gocent.Config{APIEndpoint: endpoint, APIKey: key, HTTPClient: hc})
+```
+
+Each call is a span in its caller's trace, and Centrifugo continues the trace
+when its OpenTelemetry API tracing is on. A call sent in an automatic batch is
+the exception: the batch request belongs to no single caller, so it starts a
+trace of its own. See the
+[package docs](https://pkg.go.dev/github.com/centrifugal/gocent/v4#hdr-Tracing_and_metrics).
+
 ## More
 
 - [Package docs](https://pkg.go.dev/github.com/centrifugal/gocent/v4): everything
   above in more detail, plus writing commands for Centrifugo's async consumers.
 - A 404 from a Centrifugo PRO method means the server is Centrifugo OSS; the
   error says so.
-- [Upgrading from v3](changelog.md#v400).
+- Upgrading from v3: [MIGRATING.md](MIGRATING.md) has complete programs before
+  and after, and the [changelog](changelog.md#migrating-from-v3) maps every
+  call.
 - Development: see [AGENTS.md](AGENTS.md); `make check` runs everything CI does.
 
 MIT license.

@@ -116,6 +116,36 @@
 // CPU - under load, with no change to the code making the calls and no delay
 // when the client is not busy.
 //
+// # Tracing and metrics
+//
+// gocent has no hooks of its own: every request goes through the
+// [http.Client] in Config.HTTPClient, so tracing and metrics come from its
+// transport. With OpenTelemetry, wrap the transport of the default client:
+//
+//	hc := gocent.DefaultHTTPClient()
+//	hc.Transport = otelhttp.NewTransport(hc.Transport) // go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp
+//	client, err := gocent.New(gocent.Config{
+//		APIEndpoint: "http://localhost:8000/api",
+//		APIKey:      key,
+//		HTTPClient:  hc,
+//	})
+//
+// Each call is then a client span, a child of the span in its context, with
+// the HTTP client metrics otelhttp records. The transport also sends the
+// trace context to Centrifugo: with opentelemetry.enabled and
+// opentelemetry.api in Centrifugo's configuration, its spans for the request
+// join the same trace.
+//
+// A call sent in an automatic batch is the exception. The batch request
+// carries the commands of several callers, so it does not run on any
+// caller's context: its span starts a trace of its own, not linked to the
+// spans of the calls it carries. Leave AutoBatch off where every call must
+// show in its caller's trace.
+//
+// A transport of your own works the same way. It must not modify the
+// request it is given - net/http's RoundTripper contract - but clone it
+// first, as otelhttp does.
+//
 // # Async consumers
 //
 // Instead of calling Centrifugo, an application can leave a command for its

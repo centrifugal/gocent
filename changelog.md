@@ -45,6 +45,9 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
 
 ### Migrating from v3
 
+[MIGRATING.md](MIGRATING.md) has complete programs for publishing,
+broadcasting and batching, as written with v3 and with v4.
+
 Change the import path to `github.com/centrifugal/gocent/v4`, then:
 
 | v3 | v4 |
