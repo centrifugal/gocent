@@ -189,7 +189,10 @@ fails - the network, the credentials, a body too large for Centrifugo or a
 proxy - every call in it fails with that error. Keep payloads well within the
 body limit, or send large ones from a client without `AutoBatch`. Each call
 keeps its own deadline: a batch request lasts until the latest deadline of the
-calls in it, and a call without one gets `RequestTimeout`.
+calls in it, and a call without one gets `RequestTimeout`. The values of a
+caller's context do not reach a batch request, though: `BearerTokenFunc`,
+`APIEndpointFunc` and an HTTP transport which reads them, for tracing say, do
+not see them.
 
 A smaller `MaxInFlight` batches more: a value above the concurrency your load
 needs leaves nearly every call sent alone. 8 suits most applications.

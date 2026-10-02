@@ -26,7 +26,8 @@ type Config struct {
 	// APIEndpointFunc returns the base URL for each request, for when
 	// Centrifugo's address is discovered rather than fixed. It must be safe
 	// for concurrent use. Exactly one of APIEndpoint and APIEndpointFunc must
-	// be set.
+	// be set. With AutoBatch, a batch request is not any one caller's: its
+	// context has no values of the callers' contexts.
 	APIEndpointFunc func(ctx context.Context) (string, error)
 
 	// APIKey is sent with every request in the X-API-Key header. Leave it
@@ -42,11 +43,21 @@ type Config struct {
 	// concurrent use. An error from it fails the call before anything is
 	// sent, and the error wraps it. It may not be set together with APIKey:
 	// Centrifugo PRO judges a request with a bearer token by the token alone.
+	// With AutoBatch, a batch request is not any one caller's: its context
+	// has no values of the callers' contexts, so a token must not depend on
+	// them.
 	BearerTokenFunc func(ctx context.Context) (string, error)
 
 	// HTTPClient sends the requests. When nil, [DefaultHTTPClient] is used,
 	// with a connection pool sized for concurrent use. http.DefaultClient is
 	// never used: it keeps few connections to a host.
+	//
+	// Redirects are not followed: Centrifugo's API never redirects, so one
+	// means APIEndpoint is wrong - http where a proxy wants https, say - and
+	// following it would send the API key to wherever it points, and turn a
+	// publication into a GET without a body. The redirect is returned as an
+	// [HTTPError]. A client with a CheckRedirect of its own is left to it;
+	// otherwise New uses a copy of the client which refuses redirects.
 	//
 	// However a request times out - its context's deadline, RequestTimeout,
 	// or a timeout of this client's own, such as http.Client.Timeout - the
@@ -61,7 +72,8 @@ type Config struct {
 	// Header holds extra headers sent with every request, for a proxy in
 	// front of Centrifugo for example. It may not set X-API-Key,
 	// Authorization or Content-Type. A User-Agent set here replaces
-	// gocent's own.
+	// gocent's own, and a Host is sent as the request's host instead of the
+	// one of APIEndpoint.
 	Header http.Header
 
 	// AutoBatch sends calls made concurrently in batches. See [AutoBatch].
@@ -91,7 +103,10 @@ type Config struct {
 // error. Keep payloads well within the body limit, or send large ones from a
 // client without AutoBatch. Each call keeps its own deadline in a batch: the
 // batch request lasts until the latest deadline of the calls in it, and a
-// call without one gets RequestTimeout, as when sent alone.
+// call without one gets RequestTimeout, as when sent alone. The values of a
+// caller's context do not reach a batch request, though: not the
+// BearerTokenFunc or APIEndpointFunc, and not an HTTP transport which reads
+// them, for tracing say.
 type AutoBatch struct {
 	// MaxInFlight is how many requests may be in flight at once before calls
 	// start to wait and be batched. Zero disables AutoBatch.
@@ -128,6 +143,7 @@ const (
 // returns a new client with its own connection pool.
 func DefaultHTTPClient() *http.Client {
 	return &http.Client{
+		CheckRedirect: refuseRedirect,
 		Transport: &http.Transport{
 			Proxy:               http.ProxyFromEnvironment,
 			DialContext:         (&net.Dialer{KeepAlive: 30 * time.Second}).DialContext,
@@ -139,6 +155,12 @@ func DefaultHTTPClient() *http.Client {
 	}
 }
 
+// refuseRedirect makes an http.Client return a redirect as the response
+// instead of following it: see Config.HTTPClient.
+func refuseRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
 // Client calls Centrifugo's HTTP server API. It is safe for concurrent use,
 // and meant to be created once and shared.
 type Client struct {
@@ -146,6 +168,7 @@ type Client struct {
 	addrFunc func(context.Context) (string, error)
 	token    func(context.Context) (string, error)
 	header   http.Header
+	host     string
 	http     *http.Client
 	timeout  time.Duration
 	batcher  *batcher
@@ -180,8 +203,8 @@ func New(cfg Config) (*Client, error) {
 	switch {
 	case cfg.APIKey != "" && cfg.BearerTokenFunc != nil:
 		return nil, invalid("set APIKey or BearerTokenFunc, not both: a request with a bearer token is judged by the token alone")
-	case strings.ContainsAny(cfg.APIKey, "\r\n"):
-		return nil, invalid("APIKey contains a line break")
+	case !validHeaderValue(cfg.APIKey):
+		return nil, invalid("APIKey contains a line break or another control character")
 	}
 
 	c.header = make(http.Header, len(cfg.Header)+3)
@@ -202,6 +225,14 @@ func New(cfg Config) (*Client, error) {
 				return nil, invalid("Header %s has a value with a line break or another control character", http.CanonicalHeaderKey(k))
 			}
 		}
+		if http.CanonicalHeaderKey(k) == "Host" {
+			// net/http sends a request's Host field, never a Host header.
+			if len(v) != 1 || v[0] == "" {
+				return nil, invalid("Header Host must have exactly one non-empty value")
+			}
+			c.host = v[0]
+			continue
+		}
 		c.header[http.CanonicalHeaderKey(k)] = append([]string(nil), v...)
 	}
 	c.header.Set("Content-Type", "application/json")
@@ -218,8 +249,13 @@ func New(cfg Config) (*Client, error) {
 	case c.timeout == 0:
 		c.timeout = defaultRequestTimeout
 	}
-	if c.http == nil {
+	switch {
+	case c.http == nil:
 		c.http = DefaultHTTPClient()
+	case c.http.CheckRedirect == nil:
+		hc := *c.http
+		hc.CheckRedirect = refuseRedirect
+		c.http = &hc
 	}
 
 	ab := cfg.AutoBatch
@@ -338,8 +374,8 @@ func (c *Client) post(ctx context.Context, method string, body, out any) error {
 		if err != nil {
 			return fmt.Errorf("gocent: bearer token: %w", err)
 		}
-		if token == "" || strings.ContainsAny(token, "\r\n") {
-			return errors.New("gocent: bearer token: BearerTokenFunc returned an empty token or one with a line break")
+		if token == "" || !validHeaderValue(token) {
+			return errors.New("gocent: bearer token: BearerTokenFunc returned an empty token or one with a line break or another control character")
 		}
 		auth = "Bearer " + token
 	}
@@ -357,16 +393,15 @@ func (c *Client) post(ctx context.Context, method string, body, out any) error {
 	if err != nil {
 		return fmt.Errorf("gocent: %w", err)
 	}
-	// The headers never change after New, and neither the client nor the
-	// transport modifies a request's headers - except a cookie jar, which
-	// adds to them - so they are shared unless something is added.
-	if auth == "" && c.http.Jar == nil {
-		req.Header = c.header
-	} else {
-		req.Header = c.header.Clone()
-		if auth != "" {
-			req.Header.Set("Authorization", auth)
-		}
+	// Each request has headers of its own: a cookie jar adds to them, and so
+	// may an HTTP transport of the caller's - against the RoundTripper
+	// contract, but a shared map written concurrently is a crash.
+	req.Header = c.header.Clone()
+	if auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+	if c.host != "" {
+		req.Host = c.host
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -408,7 +443,10 @@ func (c *Client) post(ctx context.Context, method string, body, out any) error {
 // maps its errors to are taken for one: a proxy or gateway in front of it may
 // answer with a JSON body of the same shape - a 503 with {"code":503}, say -
 // which is an HTTPError all the same. Any code from 100 up is kept, known or
-// not: Centrifugo adds codes over time.
+// not: Centrifugo adds codes over time. Except a code which is an HTTP error
+// status, from 400 to 599 - {"code":429} from a rate limiting gateway: no
+// Centrifugo API error has such a code, so it is the gateway's, and stays an
+// HTTPError, which Retryable judges by its status.
 func transportModeError(status int, body []byte) *Error {
 	switch status {
 	case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict,
@@ -418,7 +456,7 @@ func transportModeError(status int, body []byte) *Error {
 		return nil
 	}
 	var apiErr Error
-	if json.Unmarshal(body, &apiErr) == nil && apiErr.Code >= minErrorCode {
+	if json.Unmarshal(body, &apiErr) == nil && apiErr.Code >= minErrorCode && !isHTTPErrorStatus(apiErr.Code) {
 		return &apiErr
 	}
 	return nil
@@ -426,6 +464,12 @@ func transportModeError(status int, body []byte) *Error {
 
 // minErrorCode is the lowest code of a Centrifugo error.
 const minErrorCode = 100
+
+// isHTTPErrorStatus reports whether code is an HTTP client or server error
+// status, which a gateway puts into its JSON error bodies.
+func isHTTPErrorStatus(code uint32) bool {
+	return code >= 400 && code < 600
+}
 
 // encodingError reports a request which cannot be encoded: a jsontext.Value
 // which is not valid JSON, or a string which is not valid UTF-8.

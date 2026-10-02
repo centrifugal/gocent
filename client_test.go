@@ -47,6 +47,10 @@ func TestNewRejectsMistakes(t *testing.T) {
 		{"key and token", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", BearerTokenFunc: tokenFunc}, "not both"},
 		{"header sets authorization", gocent.Config{APIEndpoint: "http://x/api", BearerTokenFunc: tokenFunc, Header: http.Header{"authorization": {"Bearer x"}}}, "use BearerTokenFunc"},
 		{"key with newline", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k\n"}, "line break"},
+		// net/http refuses the header when sending, an error Retryable would
+		// take for the network's.
+		{"key with control character", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k\x00"}, "control character"},
+		{"two hosts", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", Header: http.Header{"Host": {"a", "b"}}}, "Host"},
 		{"negative timeout", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", RequestTimeout: -time.Second}, "negative"},
 		{"header sets key", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", Header: http.Header{"x-api-key": {"other"}}}, "X-API-Key"},
 		{"batch size without batching", gocent.Config{APIEndpoint: "http://x/api", APIKey: "k", AutoBatch: gocent.AutoBatch{MaxBatchSize: 10}}, "disables it"},
@@ -427,11 +431,16 @@ func TestBearerTokenErrorSendsNothing(t *testing.T) {
 }
 
 func TestBearerTokenMalformedSendsNothing(t *testing.T) {
-	for _, token := range []string{"", "tok\r\nX-Injected: 1"} {
+	for _, token := range []string{"", "tok\r\nX-Injected: 1", "tok\x00"} {
 		f := newFake(t)
 		c := bearerClient(t, f, func(context.Context) (string, error) { return token, nil })
-		if _, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data}); err == nil {
+		_, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data})
+		if err == nil {
 			t.Errorf("token %q accepted", token)
+		}
+		// A mistake, not a network failure: retrying cannot help.
+		if gocent.Retryable(err) {
+			t.Errorf("token %q: Retryable(%v) = true", token, err)
 		}
 		if n := len(f.recorded()); n != 0 {
 			t.Errorf("token %q: %d requests sent", token, n)
@@ -553,6 +562,10 @@ func TestGatewayErrorIsNotACentrifugoError(t *testing.T) {
 		// authentication throttling: plain text, not a Centrifugo error.
 		{http.StatusTooManyRequests, "Too Many Requests"},
 		{http.StatusNotFound, `{"code":42,"message":"not a Centrifugo code"}`},
+		// The status as the code: a gateway's, though Centrifugo uses these
+		// statuses too. As an HTTPError it is retryable, as it should be.
+		{http.StatusTooManyRequests, `{"code":429,"message":"rate limited"}`},
+		{http.StatusInternalServerError, `{"code":500,"message":"upstream failed"}`},
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(tc.status)
@@ -569,6 +582,9 @@ func TestGatewayErrorIsNotACentrifugoError(t *testing.T) {
 		}
 		if tc.status == http.StatusUnauthorized && !errors.Is(err, gocent.ErrUnauthorized) {
 			t.Errorf("401 %s: %v does not match ErrUnauthorized", tc.body, err)
+		}
+		if retryable := tc.status == http.StatusTooManyRequests || tc.status >= 500; gocent.Retryable(err) != retryable {
+			t.Errorf("%d %s: Retryable %v, want %v", tc.status, tc.body, !retryable, retryable)
 		}
 		srv.Close()
 	}
@@ -613,6 +629,55 @@ func TestNonCentrifugoErrorBody(t *testing.T) {
 		}
 		srv.Close()
 	}
+}
+
+// A Host in Config.Header is sent as the request's host: net/http ignores a
+// Host header.
+func TestHostFromHeader(t *testing.T) {
+	var host atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host.Store(r.Host)
+		_, _ = w.Write([]byte(`{"result":{}}`))
+	}))
+	defer srv.Close()
+	c, err := gocent.New(gocent.Config{APIEndpoint: srv.URL + "/api", APIKey: "k", Header: http.Header{"Host": {"centrifugo.example"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Info(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := host.Load(); got != "centrifugo.example" {
+		t.Errorf("server saw host %q, want the one from Config.Header", got)
+	}
+}
+
+// headerSettingTransport sets a header on the request it is given - against
+// the RoundTripper contract, but common.
+type headerSettingTransport struct{ next http.RoundTripper }
+
+func (tr headerSettingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r.Header.Set("X-Trace-Id", "t")
+	return tr.next.RoundTrip(r)
+}
+
+// Requests do not share their headers: a transport which sets one on
+// concurrent requests does not write one map from many goroutines, which the
+// race detector, and the runtime, would catch.
+func TestTransportMayModifyHeaders(t *testing.T) {
+	f := newFake(t)
+	c := newClient(t, f, func(cfg *gocent.Config) {
+		cfg.HTTPClient = &http.Client{Transport: headerSettingTransport{next: http.DefaultTransport}}
+	})
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(func() {
+			if _, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data}); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
 }
 
 // A User-Agent in Config.Header replaces gocent's own.
@@ -670,6 +735,71 @@ func TestUnencodableRequest(t *testing.T) {
 	}
 	if _, subErr := sub.Result(); !errors.Is(subErr, gocent.ErrInvalidRequest) {
 		t.Errorf("Result: %v", subErr)
+	}
+	if n := len(f.recorded()); n != 0 {
+		t.Errorf("%d requests sent", n)
+	}
+}
+
+// A redirect is returned as an HTTPError, not followed: following it would
+// send the API key to another host - net/http drops only Authorization and
+// cookies on the way - and a 301 would turn the publication into a GET.
+func TestRedirectIsNotFollowed(t *testing.T) {
+	var reached atomic.Int64
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Add(1)
+		_, _ = w.Write([]byte(`{"result":{}}`))
+	}))
+	defer target.Close()
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/api/publish", http.StatusTemporaryRedirect)
+	}))
+	defer redirecting.Close()
+
+	own := &http.Client{Transport: http.DefaultTransport}
+	for name, hc := range map[string]*http.Client{"default client": nil, "own client": own} {
+		c, err := gocent.New(gocent.Config{APIEndpoint: redirecting.URL + "/api", APIKey: "k", HTTPClient: hc})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data})
+		var httpErr *gocent.HTTPError
+		if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusTemporaryRedirect {
+			t.Errorf("%s: got %v, want an HTTPError with status 307", name, err)
+		}
+		if gocent.Retryable(err) {
+			t.Errorf("%s: a redirect is retryable", name)
+		}
+	}
+	if n := reached.Load(); n != 0 {
+		t.Errorf("the redirect was followed %d times", n)
+	}
+	if own.CheckRedirect != nil {
+		t.Error("New changed the caller's http.Client")
+	}
+
+	// A client which says how to handle redirects is left to it.
+	follows := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return nil }}
+	c, err := gocent.New(gocent.Config{APIEndpoint: redirecting.URL + "/api", APIKey: "k", HTTPClient: follows})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data}); err != nil {
+		t.Errorf("own CheckRedirect: %v", err)
+	}
+	if reached.Load() != 1 {
+		t.Error("the client's own CheckRedirect was not used")
+	}
+}
+
+// A payload which repeats a key is not sent: subscribers' parsers would not
+// agree on its data. The error says what is wrong with it.
+func TestPublishRepeatedKey(t *testing.T) {
+	f := newFake(t)
+	c := newClient(t, f)
+	_, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: jsontext.Value(`{"a":1,"a":2}`)})
+	if !errors.Is(err, gocent.ErrInvalidRequest) || !strings.Contains(err.Error(), "repeats a key") {
+		t.Errorf("got %v, want an invalid request naming the repeated key", err)
 	}
 	if n := len(f.recorded()); n != 0 {
 		t.Errorf("%d requests sent", n)

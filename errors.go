@@ -86,12 +86,16 @@ func (e *HTTPError) Error() string {
 	var b strings.Builder
 	b.WriteString("gocent: unexpected HTTP status ")
 	b.WriteString(strconv.Itoa(e.StatusCode))
-	switch e.StatusCode {
-	case http.StatusNotFound:
+	switch {
+	case e.StatusCode >= 300 && e.StatusCode < 400:
+		// Centrifugo's API never redirects: something in front of it does,
+		// which gocent does not follow - see Config.HTTPClient.
+		b.WriteString(" (a redirect, which gocent does not follow: check APIEndpoint, http or https say)")
+	case e.StatusCode == http.StatusNotFound:
 		// The usual cause: APIEndpoint lacks the API prefix, so every method is
 		// looked for where Centrifugo has none.
 		b.WriteString(" (is APIEndpoint the API base URL, such as http://localhost:8000/api?)")
-	case http.StatusUnauthorized:
+	case e.StatusCode == http.StatusUnauthorized:
 		b.WriteString(" (check the credentials: APIKey or BearerTokenFunc)")
 	}
 	if len(e.Body) > 0 {

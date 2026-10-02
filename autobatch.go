@@ -87,18 +87,14 @@ func batched[W any](ctx context.Context, b *batcher, req request, get func(*repl
 	select {
 	case <-q.done:
 	case <-ctx.Done():
-		b.mu.Lock()
-		taken := q.taken
-		if !taken {
-			q.gone = true
+		select {
+		case <-q.done:
+			// The reply came as the context ended - select picks either
+			// then. It is the call's outcome: reporting a timeout instead
+			// would have the caller retry a publication which happened.
+		default:
+			return zero, b.abandon(q, req, ctx.Err())
 		}
-		b.mu.Unlock()
-		if taken {
-			// Already sent: the batch completes without this caller, and
-			// whether this command took effect is unknown to it.
-			return zero, fmt.Errorf("gocent: %s: %w", req.APIMethod(), ctx.Err())
-		}
-		return zero, fmt.Errorf("gocent: %s: %w before it was sent", req.APIMethod(), ctx.Err())
 	}
 	switch {
 	case q.err != nil:
@@ -107,6 +103,22 @@ func batched[W any](ctx context.Context, b *batcher, req request, get func(*repl
 		return zero, q.reply.Error
 	}
 	return deref(get(&q.reply)), nil
+}
+
+// abandon gives up waiting for q, whose caller's context ended with err.
+func (b *batcher) abandon(q *queued, req request, err error) error {
+	b.mu.Lock()
+	taken := q.taken
+	if !taken {
+		q.gone = true
+	}
+	b.mu.Unlock()
+	if taken {
+		// Already sent: the batch completes without this caller, and
+		// whether this command took effect is unknown to it.
+		return fmt.Errorf("gocent: %s: %w", req.APIMethod(), err)
+	}
+	return fmt.Errorf("gocent: %s: %w before it was sent", req.APIMethod(), err)
 }
 
 // sendAlone sends req as a call of its own in a slot the caller took, and

@@ -36,7 +36,10 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
 * **Configuration is validated.** `New` returns an error for a missing or
   malformed `APIEndpoint`, and contradictory settings.
 * **Safer defaults.** A default HTTP client with a connection pool, and a
-  per-request timeout when the context has none.
+  per-request timeout when the context has none. Redirects are not followed:
+  Centrifugo's API never redirects, and following one would send the API key
+  to wherever it points. A redirect is an `HTTPError` naming the likely
+  cause, a wrong `APIEndpoint`.
 * **Async consumers.** `APIMethod()` on every request gives the method name for
   building events from a request.
 
@@ -59,7 +62,7 @@ Change the import path to `github.com/centrifugal/gocent/v4`, then:
 | `WithDisconnect`, `WithDisconnectClientWhitelist` | `Disconnect`, `Whitelist` fields |
 | `WithRecoverSince(&pos)`, `WithSince(&pos)` | `RecoverSince: pos`, `Since: pos` - a value, not a pointer |
 | `WithPresence(true)`, `WithJoinLeave(true)`, `WithPosition(true)`, `WithRecover(true)` | `Override: gocent.SubscribeOptionOverride{Presence: gocent.Bool(true)}`, with the fields `Presence`, `JoinLeave`, `ForcePositioning`, `ForceRecovery` - Centrifugo takes these only as overrides of the channel's options |
-| `data []byte`, `json.RawMessage` in subscribe options | `jsontext.Value` - convert with `jsontext.Value(b)`; it must be valid JSON |
+| `data []byte`, `json.RawMessage` in subscribe options | `jsontext.Value` - convert with `jsontext.Value(b)`; it must be valid JSON, with no key repeated in an object, or the call fails with `gocent.ErrInvalidRequest` before anything is sent |
 | `p := c.Pipe()`, `err := p.AddPublish(...)`, `replies, err := c.SendPipe(ctx, p)` | `b := c.NewBatch(gocent.BatchOptions{})`, `pub := b.Publish(...)`, `err := b.Send(ctx)`, `res, err := pub.Result()` |
 | `p.Reset()` to reuse a pipe | a new `NewBatch`: a batch is sent once |
 | `ErrPipeEmpty` | none: sending an empty batch does nothing and returns nil |
