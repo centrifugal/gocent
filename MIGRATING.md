@@ -234,11 +234,15 @@ if err != nil {
 }
 ```
 
-treated a broadcast with failed channels as a success. The publications into
-those channels were lost without a word: a channel in a namespace removed from
-the configuration, say, or channels on a Redis shard which was down for a
-moment. Only code which looped over `res.Responses` and checked every
-`Error` saw them.
+treated a broadcast with failed channels as a success. v3 did report the
+failed channels - each entry of `res.Responses` has its `Error` - but with a
+nil error nothing pointed the caller there, and code which checked only `err`,
+as Go code usually does, never looked. Those channels did not get the
+publication - a channel in a namespace removed from the configuration, say, or
+channels on a Redis shard which was briefly down - and the caller neither
+logged nor retried it. Code which checked every `Error` in `res.Responses` was
+right; the trap was that leaving the check out was the natural way to write
+the call.
 
 **What v4 does.** The error is nil only when every channel got the
 publication. When Centrifugo ran the broadcast and some channels failed, the
