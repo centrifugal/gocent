@@ -84,7 +84,8 @@ Behaviour to check when migrating:
   failed. Code which checked each reply keeps working: `res.Channels` still
   holds every channel's outcome and every `Pending` its command's. Code which
   only checked `err` now sees failures it used to miss. See the examples
-  below.
+  below, and [MIGRATING.md](MIGRATING.md#failed-channels-are-errors-now) for
+  why, and for keeping v3's behaviour where failed channels are expected.
 * **Batches are ordered unless asked otherwise.** `BatchOptions{}` runs the
   commands one by one, in the order they were added; `Parallel: true` runs
   them concurrently. Since v6.9.7, Centrifugo PRO sends the publications of

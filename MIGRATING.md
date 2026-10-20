@@ -213,30 +213,65 @@ func main() {
 }
 ```
 
-- In v3 a broadcast which failed in some channels returned a nil error: the
-  failures were only in the reply. In v4 the error is a `*BroadcastError`
-  then, so a plain `if err != nil` no longer misses them.
+- In v3 a broadcast which failed in some channels returned a nil error. In v4
+  the error is a `*BroadcastError` then - see
+  [Failed channels are errors now](#failed-channels-are-errors-now).
 - Each entry of `res.Channels` names its channel, and has one whatever the
   error.
 - Retried with the same `IdempotencyKey`, the broadcast is not published again
   into channels which already have it.
 
+### Failed channels are errors now
+
+**The mistake v3 made easy.** In v3, `Broadcast` returned a nil error as long
+as the request reached Centrifugo, even when some channels failed: their
+errors were only in `res.Responses`. So the usual Go code
+
+```go
+_, err := c.Broadcast(ctx, channels, data)
+if err != nil {
+	return err
+}
+```
+
+treated a broadcast with failed channels as a success. The publications into
+those channels were lost without a word: a channel in a namespace removed from
+the configuration, say, or channels on a Redis shard which was down for a
+moment. Only code which looped over `res.Responses` and checked every
+`Error` saw them.
+
+**What v4 does.** The error is nil only when every channel got the
+publication. When Centrifugo ran the broadcast and some channels failed, the
+error is a `*gocent.BroadcastError` listing them, so the same `if err != nil`
+now catches them - and, for a temporary failure, can retry them. Check
+code which only looked at `err`: it reports failures it used to miss, which
+is the point.
+
+**When to keep v3's behaviour.** Code which already handled every channel on
+its own - it checked each reply, logged or counted the failed channels, and
+went on on purpose - may want a broadcast with some failed channels to stay a
+success, as in v3. For that, treat a `*BroadcastError` as success, and read
+the channels as before:
+
+```go
+res, err := c.Broadcast(ctx, req)
+var be *gocent.BroadcastError
+if err != nil && !errors.As(err, &be) {
+	return err // the request failed as a whole: no channel got a reply
+}
+for _, ch := range res.Channels {
+	if ch.Err != nil {
+		log.Printf("not published into %s: %v", ch.Channel, ch.Err)
+	}
+}
+```
+
+Do this only where failed channels are expected and handled. Elsewhere, let
+the error through.
+
 ### Broadcast checklist
 
 What else changes for code written against v3's `Broadcast`:
-
-- **To keep v3's semantics while migrating** - only a failed request is an
-  error, and failed channels are read from the result - treat a
-  `*BroadcastError` as success:
-
-  ```go
-  res, err := c.Broadcast(ctx, req)
-  var be *gocent.BroadcastError
-  if err != nil && !errors.As(err, &be) {
-  	return err // as in v3: the request failed as a whole
-  }
-  // As in v3, read each channel's outcome from res.Channels.
-  ```
 
 - **A channel's result is a value, not a pointer.** v3 set `Result` to nil for
   a failed channel; v4's is a zero value then, and `Err` tells:
