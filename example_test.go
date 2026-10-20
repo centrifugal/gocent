@@ -163,31 +163,44 @@ func ExampleRetryable() {
 		log.Fatal(err)
 	}
 	req := gocent.BroadcastRequest{
-		Channels:       []string{"news", "sport", "weather"},
-		Data:           jsontext.Value(`{"text":"hello"}`),
+		Channels: []string{"news", "sport", "weather"},
+		Data:     jsontext.Value(`{"text":"hello"}`),
+		// The same key on every attempt: a channel which got the publication
+		// in an earlier one - even one reported as failed - does not get it
+		// again.
 		IdempotencyKey: "message-42",
 	}
-	for attempt := 1; ; attempt++ {
-		_, err := client.Broadcast(context.Background(), req)
-		if err == nil {
-			return
-		}
-		if !gocent.Retryable(err) || attempt == 3 {
-			log.Fatal(err)
-		}
-		var be *gocent.BroadcastError
-		if errors.As(err, &be) {
-			// Retry only the channels which failed for a temporary reason.
-			req.Channels = nil
-			for _, f := range be.Failed {
-				if gocent.Retryable(f.Err) {
-					req.Channels = append(req.Channels, f.Channel)
-				} else {
-					log.Printf("not published into %s: %v", f.Channel, f.Err)
+	broadcast := func(ctx context.Context) error {
+		for attempt := 1; ; attempt++ {
+			_, broadcastErr := client.Broadcast(ctx, req)
+			if broadcastErr == nil || !gocent.Retryable(broadcastErr) || attempt == 3 {
+				return broadcastErr
+			}
+			var be *gocent.BroadcastError
+			if errors.As(broadcastErr, &be) {
+				// Retry only the channels which failed for a temporary
+				// reason, and report the ones which failed for good.
+				for _, f := range be.Failed {
+					if !gocent.Retryable(f.Err) {
+						log.Printf("not published into %s: %v", f.Channel, f.Err)
+					}
 				}
+				req.Channels = be.RetryableChannels()
+			}
+			// Back off, unless the context ends first.
+			select {
+			case <-time.After(time.Duration(attempt) * 100 * time.Millisecond):
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		}
-		time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+	}
+	// All the attempts together, backing off included, take at most this.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err = broadcast(ctx)
+	cancel()
+	if err != nil {
+		log.Fatal(err)
 	}
 }
 
@@ -203,40 +216,52 @@ func ExampleRetryable_batch() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// One key for the event: keys are kept per channel, so both
+	// publications can share it, and every attempt sends the same one.
 	reqs := []gocent.PublishRequest{
 		{Channel: "orders:42", Data: jsontext.Value(`{"status":"paid"}`), IdempotencyKey: "order-42-paid"},
 		{Channel: "user:7", Data: jsontext.Value(`{"text":"payment received"}`), IdempotencyKey: "order-42-paid"},
 	}
-	for attempt := 1; ; attempt++ {
-		b := client.NewBatch(gocent.BatchOptions{})
-		for _, req := range reqs {
-			b.Publish(req)
-		}
-		err := b.Send(context.Background())
-		if err == nil {
-			return
-		}
-		if !gocent.Retryable(err) || attempt == 3 {
-			log.Fatal(err)
-		}
-		var batchErr *gocent.BatchError
-		if errors.As(err, &batchErr) {
-			// Resending every command is safe with keys, but a command which
-			// failed for good would fail on every attempt: leave it out.
-			keep := reqs[:0:0]
-			failed := map[int]error{}
-			for _, f := range batchErr.Failed {
-				failed[f.Index] = f.Err
+	send := func(ctx context.Context) error {
+		for attempt := 1; ; attempt++ {
+			b := client.NewBatch(gocent.BatchOptions{})
+			for _, req := range reqs {
+				b.Publish(req)
 			}
-			for i, req := range reqs {
-				if err, ok := failed[i]; ok && !gocent.Retryable(err) {
-					log.Printf("not published into %s: %v", req.Channel, err)
-					continue
+			sendErr := b.Send(ctx)
+			if sendErr == nil || !gocent.Retryable(sendErr) || attempt == 3 {
+				return sendErr
+			}
+			var batchErr *gocent.BatchError
+			if errors.As(sendErr, &batchErr) {
+				// Resending every command is safe with keys, but a command
+				// which failed for good would fail on every attempt: leave it
+				// out.
+				failed := map[int]error{}
+				for _, f := range batchErr.Failed {
+					failed[f.Index] = f.Err
 				}
-				keep = append(keep, req)
+				keep := reqs[:0:0]
+				for i, req := range reqs {
+					if cmdErr, ok := failed[i]; ok && !gocent.Retryable(cmdErr) {
+						log.Printf("not published into %s: %v", req.Channel, cmdErr)
+						continue
+					}
+					keep = append(keep, req)
+				}
+				reqs = keep
 			}
-			reqs = keep
+			select {
+			case <-time.After(time.Duration(attempt) * 100 * time.Millisecond):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
-		time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err = send(ctx)
+	cancel()
+	if err != nil {
+		log.Fatal(err)
 	}
 }

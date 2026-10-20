@@ -130,6 +130,10 @@ func TestIntegrationBroadcastRetry(t *testing.T) {
 	if !errors.As(err, &be) {
 		t.Fatalf("Broadcast: %v", err)
 	}
+	// An unknown channel fails for good: nothing to retry.
+	if got := be.RetryableChannels(); got != nil {
+		t.Errorf("RetryableChannels() = %v, want none", got)
+	}
 	again, err := c.Broadcast(t.Context(), req)
 	if !errors.As(err, &be) {
 		t.Fatalf("retried Broadcast: %v", err)

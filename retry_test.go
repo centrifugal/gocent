@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"testing"
 	"time"
 
@@ -119,5 +120,23 @@ func TestRetryableFromClient(t *testing.T) {
 	_, err = c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data})
 	if err == nil || !gocent.Retryable(err) {
 		t.Errorf("timeout: Retryable(%v) = false", err)
+	}
+}
+
+// RetryableChannels keeps the channels a retry may still publish into, in the
+// order of the request, and leaves out those which failed for good.
+func TestRetryableChannels(t *testing.T) {
+	be := &gocent.BroadcastError{Total: 5, Failed: []gocent.ChannelResult{
+		{Channel: "a", Err: &gocent.Error{Code: 100, Temporary: true}},
+		{Channel: "b", Err: gocent.ErrUnknownChannel},
+		{Channel: "c", Err: &gocent.Error{Code: 111, Temporary: true}},
+		{Channel: "d", Err: gocent.ErrBadRequest},
+	}}
+	if got := be.RetryableChannels(); !slices.Equal(got, []string{"a", "c"}) {
+		t.Errorf("RetryableChannels() = %v, want [a c]", got)
+	}
+	permanent := &gocent.BroadcastError{Total: 1, Failed: []gocent.ChannelResult{{Channel: "b", Err: gocent.ErrUnknownChannel}}}
+	if got := permanent.RetryableChannels(); got != nil {
+		t.Errorf("only permanent failures: RetryableChannels() = %v, want nil", got)
 	}
 }

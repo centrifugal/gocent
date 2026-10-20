@@ -120,6 +120,26 @@ func (e *BroadcastError) Error() string {
 	})
 }
 
+// RetryableChannels returns the channels whose failure is retryable - see
+// [Retryable] - in the order of the request: the channels a retry of the
+// broadcast should go to. Channels which failed for good, such as an unknown
+// channel, are left out; they are in Failed with their errors. It returns nil
+// when no failure is retryable.
+//
+//	var be *gocent.BroadcastError
+//	if errors.As(err, &be) {
+//		req.Channels = be.RetryableChannels() // the same IdempotencyKey
+//	}
+func (e *BroadcastError) RetryableChannels() []string {
+	var channels []string
+	for _, f := range e.Failed {
+		if Retryable(f.Err) {
+			channels = append(channels, f.Channel)
+		}
+	}
+	return channels
+}
+
 // failedBroadcast is the result of a broadcast which failed as a whole: every
 // channel failed with err.
 func failedBroadcast(channels []string, err error) BroadcastResult {

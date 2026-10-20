@@ -81,13 +81,23 @@ internal error, the publication may have happened. So retry a publication only
 with an `IdempotencyKey`, and back off between a bounded number of attempts:
 
 ```go
-req := gocent.PublishRequest{Channel: "orders:42", Data: data, IdempotencyKey: "order-42-paid"}
+req := gocent.PublishRequest{
+	Channel: "orders:42",
+	Data:    data,
+	// The same key on every attempt: a publication which happened in an
+	// earlier attempt, even one reported as failed, is not published again.
+	IdempotencyKey: "order-42-paid",
+}
 for attempt := 1; ; attempt++ {
 	_, err := client.Publish(ctx, req)
 	if err == nil || !gocent.Retryable(err) || attempt == 3 {
 		return err
 	}
-	time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
+	select {
+	case <-time.After(time.Duration(attempt) * 200 * time.Millisecond):
+	case <-ctx.Done():
+		return ctx.Err() // cancelled, or out of time, while backing off
+	}
 }
 ```
 
@@ -157,9 +167,10 @@ for _, ch := range res.Channels {
 
 Retrying:
 
-- a **broadcast**: send it again with the same `IdempotencyKey`. To skip channels
-  which can never succeed, keep only those whose error is `Retryable` - see the
-  example of `Retryable` in the [package docs](https://pkg.go.dev/github.com/centrifugal/gocent/v4#Retryable).
+- a **broadcast**: send it again with the same `IdempotencyKey`, into the
+  channels which may still succeed - `be.RetryableChannels()` leaves out those
+  which failed for good. See the example of `Retryable` in the
+  [package docs](https://pkg.go.dev/github.com/centrifugal/gocent/v4#Retryable).
 - a **batch**: build it again with the same keys, leaving out the commands which
   failed for good. A batch is sent once, so keep your own list of its requests.
   Commands without a key are repeated.
