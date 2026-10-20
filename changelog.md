@@ -92,9 +92,14 @@ Behaviour to check when migrating:
   effect in order, but publications into different channels may not. A
   namespace with `publication_grouping_disabled` keeps the strict order.
 * **Invalid requests are not sent.** A publication or broadcast without a
-  channel or data, or with data which is not valid JSON, fails before sending
-  with an error wrapping `gocent.ErrInvalidRequest`; in a batch it fails the
-  whole batch.
+  channel or data, a broadcast with an empty channel name, or data which is
+  not valid JSON or repeats a key in an object, fails before sending with an
+  error wrapping `gocent.ErrInvalidRequest`; in a batch it fails the whole
+  batch.
+* **A failed broadcast still has every channel.** v3 returned no responses
+  when the request failed as a whole; v4 returns an entry per channel, each
+  with that error. A channel's `Result` is a value, not a pointer: check
+  `Err`, not `Result != nil`. See [MIGRATING.md](MIGRATING.md#broadcast-checklist).
 * **Timeouts.** v3's default HTTP client gave up after 1 second. v4 bounds a
   call by its context's deadline, or by `Config.RequestTimeout`, 10 seconds by
   default.

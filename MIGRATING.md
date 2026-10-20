@@ -221,6 +221,63 @@ func main() {
 - Retried with the same `IdempotencyKey`, the broadcast is not published again
   into channels which already have it.
 
+### Broadcast checklist
+
+What else changes for code written against v3's `Broadcast`:
+
+- **To keep v3's semantics while migrating** - only a failed request is an
+  error, and failed channels are read from the result - treat a
+  `*BroadcastError` as success:
+
+  ```go
+  res, err := c.Broadcast(ctx, req)
+  var be *gocent.BroadcastError
+  if err != nil && !errors.As(err, &be) {
+  	return err // as in v3: the request failed as a whole
+  }
+  // As in v3, read each channel's outcome from res.Channels.
+  ```
+
+- **A channel's result is a value, not a pointer.** v3 set `Result` to nil for
+  a failed channel; v4's is a zero value then, and `Err` tells:
+
+  ```go
+  // v3
+  if r.Error == nil {
+  	log.Println(r.Result.Offset)
+  }
+  // v4
+  if ch.Err == nil {
+  	log.Println(ch.Result.Offset)
+  }
+  ```
+
+- **A failed request still has every channel.** v3 returned no responses when
+  the request failed as a whole; v4 returns an entry per channel, each with
+  that error. Tell the two failures apart by the error - a `*BroadcastError`
+  or not - not by the number of entries.
+- **Some broadcasts are refused before sending,** with an error wrapping
+  `gocent.ErrInvalidRequest`: no channels, an empty channel name among them,
+  no data, or data which is not valid JSON or repeats a key in an object. v3
+  sent them, and Centrifugo answered with an error.
+- **Match errors by code, not by message.** `Error.Code` is a `uint32` now,
+  and messages changed: v3's `unknown channel: 102` is
+  `gocent: unknown channel (code 102)`. Use `errors.Is`:
+
+  ```go
+  // v3
+  if r.Error != nil && r.Error.Code == 102 { ... }
+  // v4
+  if errors.Is(ch.Err, gocent.ErrUnknownChannel) { ... }
+  ```
+
+- **Retries have helpers.** Instead of a retry loop of your own,
+  `gocent.Retryable(err)` says whether a retry may succeed, and
+  `be.RetryableChannels()` which channels to retry, leaving out those which
+  failed for good. Retry with the same `IdempotencyKey`. See the example of
+  `Retryable` in the
+  [package docs](https://pkg.go.dev/github.com/centrifugal/gocent/v4#Retryable).
+
 ## Pipe, now a batch
 
 v3:
