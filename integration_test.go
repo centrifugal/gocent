@@ -372,3 +372,44 @@ func TestIntegrationProMethod(t *testing.T) {
 		t.Errorf("got %v", err)
 	}
 }
+
+// requireServer skips the test against a Centrifugo older than
+// major.minor. A build from source reports version 0.0.0, and counts as new.
+func requireServer(t *testing.T, c *gocent.Client, major, minor int) {
+	t.Helper()
+	info, err := c.Info(t.Context())
+	if err != nil || len(info.Nodes) == 0 {
+		t.Fatalf("Info: %+v, %v", info, err)
+	}
+	v := strings.TrimPrefix(info.Nodes[0].Version, "v")
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 2 || v == "0.0.0" {
+		return
+	}
+	gotMajor, err1 := strconv.Atoi(parts[0])
+	gotMinor, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return
+	}
+	if gotMajor < major || gotMajor == major && gotMinor < minor {
+		t.Skipf("needs Centrifugo v%d.%d or newer, the server is %s", major, minor, info.Nodes[0].Version)
+	}
+}
+
+// Since Centrifugo v6.10.0 a request the server refuses is reported by its
+// meaning, and not as the internal error, which Retryable takes for
+// temporary: retrying it can never succeed.
+func TestIntegrationRefusedRequestIsNotRetryable(t *testing.T) {
+	c := realClient(t, gocent.AutoBatch{})
+	requireServer(t, c, 6, 10)
+	_, err := c.History(t.Context(), gocent.HistoryRequest{
+		Channel: uniqueChannel(t),
+		Limit:   1,
+		Reverse: true,
+		Since:   gocent.StreamPosition{Offset: 0, Epoch: "e"},
+	})
+	var apiErr *gocent.Error
+	if !errors.As(err, &apiErr) || !errors.Is(err, gocent.ErrBadRequest) || apiErr.Temporary || gocent.Retryable(err) {
+		t.Errorf("got %v, want a bad request which is not retryable", err)
+	}
+}
