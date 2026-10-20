@@ -27,9 +27,11 @@ type PublishRequest struct {
 	// publication and delivered to clients.
 	Tags map[string]string `json:"tags,omitzero"`
 
-	// IdempotencyKey drops duplicate publications upon retries. It acts per
-	// channel; results are cached for 5 minutes. Supported only by Memory and
-	// Redis engines.
+	// IdempotencyKey drops duplicate publications upon retries: a
+	// publication with a key already used in the channel is not published
+	// again, and the first one's result is returned. It acts per channel;
+	// results are kept for 5 minutes by default. The memory, Redis and
+	// PostgreSQL brokers keep keys; the NATS broker ignores them.
 	IdempotencyKey string `json:"idempotency_key,omitzero"`
 
 	// Delta tells Centrifugo to construct a delta update, if possible, when
@@ -77,7 +79,10 @@ type BroadcastRequest struct {
 	Tags map[string]string `json:"tags,omitzero"`
 
 	// IdempotencyKey drops duplicate publications upon retries. It acts per
-	// channel; results are cached for 5 minutes.
+	// channel: a broadcast retried with the same key is not published again
+	// into the channels which already have it. Results are kept for 5 minutes
+	// by default. The memory, Redis and PostgreSQL brokers keep keys; the
+	// NATS broker ignores them.
 	IdempotencyKey string `json:"idempotency_key,omitzero"`
 
 	// Delta tells Centrifugo to construct a delta update, if possible, when
@@ -1399,8 +1404,12 @@ type MapPublishRequest struct {
 	// Tags are key-value metadata attached to the publication.
 	Tags map[string]string `json:"tags,omitzero"`
 
-	// IdempotencyKey is a duplicate detection key for safe retries.
-	// Duplicates are suppressed in the result.
+	// IdempotencyKey drops duplicate publications upon retries: a
+	// publication with a key already used in the channel is not applied
+	// again, and its result has the first one's position, with suppressed
+	// set and SuppressReason "idempotency". It acts per channel; keys are
+	// kept for 5 minutes by default. Every map broker - memory, Redis and
+	// PostgreSQL - keeps keys.
 	IdempotencyKey string `json:"idempotency_key,omitzero"`
 
 	// Delta enables delta compression for this publication.
@@ -1448,7 +1457,10 @@ type MapRemoveRequest struct {
 	// Key is the key to remove. Required.
 	Key string `json:"key,omitzero"`
 
-	// IdempotencyKey is a duplicate detection key for safe retries.
+	// IdempotencyKey drops duplicate removals upon retries, as it does for
+	// MapPublishRequest: a removal with a key already used in the channel is
+	// not applied again, and its result is suppressed with SuppressReason
+	// "idempotency". Keys are kept for 5 minutes by default.
 	IdempotencyKey string `json:"idempotency_key,omitzero"`
 }
 
