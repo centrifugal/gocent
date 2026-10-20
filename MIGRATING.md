@@ -199,8 +199,7 @@ func main() {
 	// err is nil only when every channel got the publication. A
 	// *BroadcastError means Centrifugo ran the broadcast and some channels
 	// failed; any other error means no channel got a reply.
-	var be *gocent.BroadcastError
-	if err != nil && !errors.As(err, &be) {
+	if _, partial := errors.AsType[*gocent.BroadcastError](err); err != nil && !partial {
 		log.Fatal(err)
 	}
 	for _, ch := range res.Channels {
@@ -259,8 +258,7 @@ the channels as before:
 
 ```go
 res, err := c.Broadcast(ctx, req)
-var be *gocent.BroadcastError
-if err != nil && !errors.As(err, &be) {
+if _, partial := errors.AsType[*gocent.BroadcastError](err); err != nil && !partial {
 	return err // the request failed as a whole: no channel got a reply
 }
 for _, ch := range res.Channels {
@@ -424,8 +422,7 @@ func main() {
 	// Centrifugo ran the batch and some commands failed; any other error
 	// means no command got a reply.
 	err = b.Send(ctx)
-	var batchErr *gocent.BatchError
-	if err != nil && !errors.As(err, &batchErr) {
+	if _, partial := errors.AsType[*gocent.BatchError](err); err != nil && !partial {
 		log.Fatal(err)
 	}
 	// Each command has its own typed result, or its own error.

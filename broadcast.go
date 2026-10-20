@@ -31,8 +31,7 @@ import (
 // despite some failed channels:
 //
 //	res, err := client.Broadcast(ctx, req)
-//	var be *gocent.BroadcastError
-//	if err != nil && !errors.As(err, &be) {
+//	if _, partial := errors.AsType[*gocent.BroadcastError](err); err != nil && !partial {
 //		return err // no channel got a reply
 //	}
 //	for _, ch := range res.Channels {
@@ -126,8 +125,7 @@ func (e *BroadcastError) Error() string {
 // channel, are left out; they are in Failed with their errors. It returns nil
 // when no failure is retryable.
 //
-//	var be *gocent.BroadcastError
-//	if errors.As(err, &be) {
+//	if be, ok := errors.AsType[*gocent.BroadcastError](err); ok {
 //		req.Channels = be.RetryableChannels() // the same IdempotencyKey
 //	}
 func (e *BroadcastError) RetryableChannels() []string {

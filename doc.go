@@ -42,7 +42,7 @@
 // # Errors
 //
 // An error from a method is one of these, told apart with [errors.Is] and
-// [errors.As]:
+// [errors.AsType]:
 //
 //   - [*Error]: Centrifugo refused the request or failed to carry it out. Its
 //     Code identifies why; the known codes have values such as
@@ -110,8 +110,7 @@
 // despite some failed parts, check err first, then read each part:
 //
 //	res, err := client.Broadcast(ctx, req)
-//	var be *gocent.BroadcastError
-//	if err != nil && !errors.As(err, &be) {
+//	if _, partial := errors.AsType[*gocent.BroadcastError](err); err != nil && !partial {
 //		return err // no channel got a reply
 //	}
 //	for _, ch := range res.Channels { ... } // ch.Err is set for a failed channel

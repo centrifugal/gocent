@@ -81,8 +81,7 @@ func ExampleBroadcastError() {
 		Channels: []string{"user:1", "user:2", "user:3"},
 		Data:     jsontext.Value(`{"text":"hello"}`),
 	})
-	var be *gocent.BroadcastError
-	if err != nil && !errors.As(err, &be) {
+	if _, partial := errors.AsType[*gocent.BroadcastError](err); err != nil && !partial {
 		log.Fatal(err) // no channel got a reply
 	}
 	for _, ch := range res.Channels {
@@ -176,8 +175,7 @@ func ExampleRetryable() {
 			if broadcastErr == nil || !gocent.Retryable(broadcastErr) || attempt == 3 {
 				return broadcastErr
 			}
-			var be *gocent.BroadcastError
-			if errors.As(broadcastErr, &be) {
+			if be, ok := errors.AsType[*gocent.BroadcastError](broadcastErr); ok {
 				// Retry only the channels which failed for a temporary
 				// reason, and report the ones which failed for good.
 				for _, f := range be.Failed {
@@ -232,8 +230,7 @@ func ExampleRetryable_batch() {
 			if sendErr == nil || !gocent.Retryable(sendErr) || attempt == 3 {
 				return sendErr
 			}
-			var batchErr *gocent.BatchError
-			if errors.As(sendErr, &batchErr) {
+			if batchErr, ok := errors.AsType[*gocent.BatchError](sendErr); ok {
 				// Resending every command is safe with keys, but a command
 				// which failed for good would fail on every attempt: leave it
 				// out.

@@ -20,10 +20,9 @@ import (
 //
 // Centrifugo adds codes from time to time, so an Error may carry a code with
 // no value here. Match on the codes you handle and treat the rest by their
-// class - use [errors.As] to reach Code and Message:
+// class - use [errors.AsType] to reach Code and Message:
 //
-//	var apiErr *gocent.Error
-//	if errors.As(err, &apiErr) { log.Println(apiErr.Code, apiErr.Message) }
+//	if apiErr, ok := errors.AsType[*gocent.Error](err); ok { log.Println(apiErr.Code, apiErr.Message) }
 type Error struct {
 	// Code identifies the error. It is stable; Message is not.
 	Code uint32 `json:"code"`

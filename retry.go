@@ -42,20 +42,16 @@ func Retryable(err error) bool {
 	if err == nil {
 		return false
 	}
-	var be *BroadcastError
-	if errors.As(err, &be) {
+	if be, ok := errors.AsType[*BroadcastError](err); ok {
 		return slices.ContainsFunc(be.Failed, func(f ChannelResult) bool { return Retryable(f.Err) })
 	}
-	var batchErr *BatchError
-	if errors.As(err, &batchErr) {
+	if batchErr, ok := errors.AsType[*BatchError](err); ok {
 		return slices.ContainsFunc(batchErr.Failed, func(f CommandError) bool { return Retryable(f.Err) })
 	}
-	var apiErr *Error
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*Error](err); ok {
 		return apiErr.Temporary || apiErr.Code == ErrInternal.Code
 	}
-	var httpErr *HTTPError
-	if errors.As(err, &httpErr) {
+	if httpErr, ok := errors.AsType[*HTTPError](err); ok {
 		return httpErr.StatusCode == http.StatusTooManyRequests || httpErr.StatusCode >= http.StatusInternalServerError
 	}
 	switch {
@@ -64,13 +60,14 @@ func Retryable(err error) bool {
 	case errors.Is(err, context.DeadlineExceeded):
 		return true
 	}
-	var decodeErr *DecodeError
-	var certErr *tls.CertificateVerificationError
-	if errors.As(err, &decodeErr) || errors.As(err, &certErr) {
+	if _, ok := errors.AsType[*DecodeError](err); ok {
+		return false
+	}
+	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
 		return false
 	}
 	// Any other failure of the HTTP request itself - a refused or reset
 	// connection, a closed server - is the network's.
-	var urlErr *url.Error
-	return errors.As(err, &urlErr)
+	_, ok := errors.AsType[*url.Error](err)
+	return ok
 }

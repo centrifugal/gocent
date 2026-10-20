@@ -285,8 +285,7 @@ func checkAddr(addr string) (string, error) {
 	if err != nil {
 		// Not the *url.Error itself: that is what a failed HTTP request
 		// returns too, and Retryable takes it for the network's.
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) {
+		if urlErr, ok := errors.AsType[*url.Error](err); ok {
 			err = urlErr.Err
 		}
 		return "", fmt.Errorf("%q is not a valid URL: %w", addr, err)
@@ -519,8 +518,8 @@ func transportError(method string, err error) error {
 }
 
 func isTimeout(err error) bool {
-	var netErr net.Error
-	return errors.As(err, &netErr) && netErr.Timeout()
+	netErr, ok := errors.AsType[net.Error](err)
+	return ok && netErr.Timeout()
 }
 
 func deref[T any](p *T) T {

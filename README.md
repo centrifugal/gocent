@@ -60,10 +60,10 @@ deadline times out after `Config.RequestTimeout`, ten seconds by default.
 
 | Error | Meaning | Check |
 |---|---|---|
-| `*gocent.Error` | Centrifugo refused the request or failed to carry it out | `errors.Is(err, gocent.ErrUnknownChannel)`, or `errors.As` for `Code` |
-| `*gocent.BroadcastError`, `*gocent.BatchError` | some parts of a broadcast or batch failed - see below | `errors.As` |
+| `*gocent.Error` | Centrifugo refused the request or failed to carry it out | `errors.Is(err, gocent.ErrUnknownChannel)`, or `errors.AsType` for `Code` |
+| `*gocent.BroadcastError`, `*gocent.BatchError` | some parts of a broadcast or batch failed - see below | `errors.AsType` |
 | `*gocent.HTTPError` | the request did not reach the API method | `errors.Is(err, gocent.ErrUnauthorized)` for rejected credentials |
-| `*gocent.DecodeError` | the reply was not Centrifugo's - usually `APIEndpoint` points elsewhere | `errors.As` |
+| `*gocent.DecodeError` | the reply was not Centrifugo's - usually `APIEndpoint` points elsewhere | `errors.AsType` |
 | `gocent.ErrInvalidRequest` | the client could tell the request is wrong and did not send it | `errors.Is` |
 | network, context | as usual | `errors.Is(err, context.DeadlineExceeded)` for any timeout |
 
@@ -154,8 +154,7 @@ one - every part always has an outcome, whatever the error:
 
 ```go
 res, err := client.Broadcast(ctx, req)
-var be *gocent.BroadcastError
-if err != nil && !errors.As(err, &be) {
+if _, partial := errors.AsType[*gocent.BroadcastError](err); err != nil && !partial {
 	return err // no channel got a reply
 }
 for _, ch := range res.Channels {

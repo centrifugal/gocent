@@ -128,11 +128,11 @@ In v4 the error tells which case it is:
 
 ```go
 res, err := c.Broadcast(ctx, gocent.BroadcastRequest{Channels: []string{"a", "b"}, Data: data})
-var be *gocent.BroadcastError
+be, partial := errors.AsType[*gocent.BroadcastError](err)
 switch {
 case err == nil:
 	// Published into every channel.
-case errors.As(err, &be):
+case partial:
 	// Centrifugo ran the broadcast, and some channels failed - up to all.
 	for _, f := range be.Failed {
 		log.Printf("not published into %s: %v", f.Channel, f.Err)
@@ -177,8 +177,7 @@ pub := b.Publish(gocent.PublishRequest{Channel: "a", Data: data})
 stats := b.PresenceStats(gocent.PresenceStatsRequest{Channel: "a"})
 
 err := b.Send(ctx)
-var bErr *gocent.BatchError
-if err != nil && !errors.As(err, &bErr) {
+if _, partial := errors.AsType[*gocent.BatchError](err); err != nil && !partial {
 	return err // no command got a reply
 }
 // Each command's own outcome - also when others failed:
