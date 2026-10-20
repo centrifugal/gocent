@@ -19,3 +19,4 @@ go.work.sum
 # Note: testdata/fuzz/ is deliberately NOT ignored. Go writes failing fuzz
 # inputs there, and those belong in the repository as regression seeds.
 coverage.all.out
+api.proto.new

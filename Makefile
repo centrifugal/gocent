@@ -20,6 +20,11 @@ FUZZTIME ?= 30s
 # Statement coverage below this fails `make cover`.
 COVERAGE_MIN ?= 90
 
+# The Centrifugo release `make sync-proto` takes api.proto from: a tag, such
+# as v6.10.1. There is no default, so that nothing is synced from an
+# unreleased branch by accident.
+CENTRIFUGO_REF ?=
+
 # The Centrifugo `make test-integration` talks to. testdata/centrifugo.json
 # configures one to match.
 GOCENT_TEST_ADDR    ?= http://localhost:8100/api
@@ -56,6 +61,15 @@ vet: ## Run go vet, with and without the integration tag
 .PHONY: generate
 generate: ## Regenerate api_gen.go from api.proto
 	$(GO) generate ./...
+
+.PHONY: sync-proto
+sync-proto: ## Copy api.proto from Centrifugo at CENTRIFUGO_REF (a tag) and regenerate
+	@test -n "$(CENTRIFUGO_REF)" || { echo "set CENTRIFUGO_REF to a Centrifugo tag, e.g. make sync-proto CENTRIFUGO_REF=v6.10.1"; exit 1; }
+	@curl -fsSL https://raw.githubusercontent.com/centrifugal/centrifugo/$(CENTRIFUGO_REF)/internal/apiproto/api.proto -o api.proto.new || { rm -f api.proto.new; echo "no api.proto at Centrifugo $(CENTRIFUGO_REF)"; exit 1; }
+	@grep -q '^service CentrifugoApi' api.proto.new || { rm -f api.proto.new; echo "the file at Centrifugo $(CENTRIFUGO_REF) is not its api.proto"; exit 1; }
+	@mv api.proto.new api.proto
+	$(GO) generate ./...
+	@echo "api.proto is Centrifugo $(CENTRIFUGO_REF)'s: review git diff, then make check"
 
 .PHONY: generate-check
 generate-check: ## Fail if api_gen.go is not what api.proto generates
@@ -115,7 +129,7 @@ sec: ## Run govulncheck (gosec runs as part of make lint)
 
 .PHONY: clean
 clean: ## Remove build and coverage artefacts
-	rm -f coverage.out coverage.all.out api_gen.go.orig
+	rm -f coverage.out coverage.all.out api_gen.go.orig api.proto.new
 
 .PHONY: check
 check: fmt-check vet no-deps generate-check test-race cover lint sec ## Everything CI runs, except integration and fuzzing

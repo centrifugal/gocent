@@ -115,11 +115,14 @@ variables in `.github/workflows/ci.yml`: a setting added to
 
 ## Updating to a new Centrifugo API
 
-1. Copy `internal/apiproto/api.proto` from Centrifugo over `api.proto`.
-2. `make generate`. A new command appears as a `Client` method, a `Batch`
+1. `make sync-proto CENTRIFUGO_REF=v6.10.1` - a released tag. It copies
+   Centrifugo's `internal/apiproto/api.proto` at that tag over `api.proto` and
+   runs `make generate`. A new command appears as a `Client` method, a `Batch`
    method and a request type with `APIMethod`, with no hand-written code. A
    command whose comment in `Command` says "Centrifugo PRO only" is marked so
    in `methodNames`, which the 404 hint uses.
+2. Review `git diff`: a changed `Error` message or new error code needs
+   `errors.go` changed by hand - the `Error` type is not generated.
 3. `make check`. `TestEveryMethodReachesItsEndpoint` checks every method,
    new ones included, reaches its endpoint and batch command.
 
