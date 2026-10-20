@@ -81,6 +81,30 @@ jobs:
           cache: false
       - run: make test-integration
 
+  integration-pro:
+    name: integration (Centrifugo PRO)
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    # testdata/centrifugo-pro.compose.yml, which also runs it locally: Centrifugo
+    # PRO with Redis and PostgreSQL. GOCENT_TEST_PRO fails the PRO tests, rather
+    # than skipping them, if the server turns out not to be PRO. The tests use
+    # Centrifugo PRO in sandbox mode, without a license key. Centrifugo PRO is
+    # commercial software, under the Centrifugal Labs License Agreement
+    # (https://centrifugal.dev/license), not gocent's MIT license.
+    env:
+      GOCENT_TEST_PRO: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+      - run: docker compose -f testdata/centrifugo-pro.compose.yml up -d --wait
+      - run: make test-integration
+      - name: Centrifugo logs
+        if: failure()
+        run: docker compose -f testdata/centrifugo-pro.compose.yml logs centrifugo
+
   fuzz:
     name: fuzz
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository

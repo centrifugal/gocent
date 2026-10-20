@@ -113,6 +113,19 @@ against the `centrifugo/centrifugo:v6` image, configured through environment
 variables in `.github/workflows/ci.yml`: a setting added to
 `testdata/centrifugo.json` must be added there too.
 
+The PRO methods are covered by `pro_integration_test.go`, which skips against
+OSS. To run them, start Centrifugo PRO with what they need - Redis,
+PostgreSQL, push notifications in dry run - as CI does too. The tests use
+Centrifugo PRO in sandbox mode, without a license key. Centrifugo PRO is
+commercial software, under the [Centrifugal Labs License
+Agreement](https://centrifugal.dev/license), not gocent's MIT license.
+
+```sh
+docker compose -f testdata/centrifugo-pro.compose.yml up -d --wait
+GOCENT_TEST_PRO=1 make test-integration   # the PRO tests fail, not skip, without PRO
+docker compose -f testdata/centrifugo-pro.compose.yml down
+```
+
 ## Updating to a new Centrifugo API
 
 1. `make sync-proto CENTRIFUGO_REF=v6.10.1` - a released tag. It copies

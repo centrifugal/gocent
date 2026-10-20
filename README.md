@@ -7,6 +7,11 @@ of [Centrifugo](https://github.com/centrifugal/centrifugo): every API method,
 including those of Centrifugo PRO. For a real-time client over WebSocket, see
 [centrifuge-go](https://github.com/centrifugal/centrifuge-go).
 
+Centrifugo PRO is commercial software, under the [Centrifugal Labs License
+Agreement](https://centrifugal.dev/license) - not under gocent's MIT license.
+gocent's methods for it are MIT licensed like the rest of gocent; calling them
+needs a Centrifugo PRO server, whose use that agreement governs.
+
 ```
 go get github.com/centrifugal/gocent/v4
 ```
@@ -224,4 +229,6 @@ trace of its own. See the
   call.
 - Development: see [AGENTS.md](AGENTS.md); `make check` runs everything CI does.
 
-MIT license.
+MIT license. Centrifugo PRO, which the methods marked "Centrifugo PRO only"
+call, is commercial software under its own
+[license](https://centrifugal.dev/license).

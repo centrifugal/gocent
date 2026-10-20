@@ -34,6 +34,10 @@
 //
 // The other methods and most of the types serve Centrifugo PRO features - push
 // notifications, user status, token revocation - and map subscriptions.
+// Centrifugo PRO is commercial software, under the Centrifugal Labs License
+// Agreement (https://centrifugal.dev/license), not under gocent's MIT license:
+// these methods are MIT licensed like the rest of gocent, but the server they
+// call is governed by that agreement.
 //
 // # Errors
 //
