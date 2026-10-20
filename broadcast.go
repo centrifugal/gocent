@@ -26,8 +26,9 @@ import (
 //
 // Most callers need no more than err != nil. A broadcast retried with the same
 // IdempotencyKey is not published again into the channels which already have
-// it, so retrying the whole broadcast is safe. To go on despite some failed
-// channels:
+// it, so retrying the whole broadcast is safe - with the memory, Redis and
+// PostgreSQL brokers, which keep keys; the NATS broker ignores them. To go on
+// despite some failed channels:
 //
 //	res, err := client.Broadcast(ctx, req)
 //	var be *gocent.BroadcastError

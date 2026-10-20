@@ -114,6 +114,41 @@ func TestIntegrationBroadcast(t *testing.T) {
 	}
 }
 
+// A broadcast retried whole with the same IdempotencyKey is not published
+// again into the channels which already have it - what the docs promise for
+// the brokers which keep keys, the memory one included.
+func TestIntegrationBroadcastRetry(t *testing.T) {
+	c := realClient(t, gocent.AutoBatch{})
+	a, b := uniqueChannel(t)+"-a", uniqueChannel(t)+"-b"
+	req := gocent.BroadcastRequest{
+		Channels:       []string{a, "unknown:x", b},
+		Data:           jsontext.Value(`{"text":"hello"}`),
+		IdempotencyKey: "broadcast-retry",
+	}
+	first, err := c.Broadcast(t.Context(), req)
+	var be *gocent.BroadcastError
+	if !errors.As(err, &be) {
+		t.Fatalf("Broadcast: %v", err)
+	}
+	again, err := c.Broadcast(t.Context(), req)
+	if !errors.As(err, &be) {
+		t.Fatalf("retried Broadcast: %v", err)
+	}
+	for i, ch := range []string{a, b} {
+		got, want := again.Channels[i*2], first.Channels[i*2]
+		if got.Err != nil || got.Result != want.Result {
+			t.Errorf("retry into %s: %+v, first %+v", ch, got, want)
+		}
+		h, err := c.History(t.Context(), gocent.HistoryRequest{Channel: ch, Limit: -1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(h.Publications) != 1 {
+			t.Errorf("%s has %d publications, want 1", ch, len(h.Publications))
+		}
+	}
+}
+
 func TestIntegrationBatch(t *testing.T) {
 	c := realClient(t, gocent.AutoBatch{})
 	ch := uniqueChannel(t)

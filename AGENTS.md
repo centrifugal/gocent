@@ -145,7 +145,8 @@ docs here - these are the places a reader goes wrong.
   comment of every PRO-only method says "Centrifugo PRO only."
 - **An error from `Broadcast` or `Batch.Send` does not mean nothing was
   done.** `*BroadcastError` and `*BatchError` say which parts succeeded. A
-  broadcast retried with the same `IdempotencyKey` is not published twice.
+  broadcast retried with the same `IdempotencyKey` is not published twice -
+  with the memory, Redis and PostgreSQL brokers; the NATS broker ignores keys.
 - **Credentials are not required by `New`.** No `APIKey` or `BearerTokenFunc`
   is valid - mutual TLS, a proxy, `http_api.insecure` - so a key which failed
   to load shows as `ErrUnauthorized` on the first call, not at `New`.

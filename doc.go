@@ -77,6 +77,8 @@
 //     not published again. So is a different publication into the same
 //     channel under the same key: a key derived from, say, an order ID must
 //     also name the event - "order-42-paid", not "order-42".
+//   - The memory, Redis and PostgreSQL brokers keep keys. The NATS broker
+//     ignores them, so with it a retry publishes again.
 //
 // To retry a failed batch, build it again with the same keys, leaving out the
 // commands which failed for good, and send it: the publications which

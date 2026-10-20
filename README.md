@@ -95,6 +95,8 @@ Choosing keys:
   and so is a *different* publication into the same channel under the same key.
   A key built from an ID must name the event too: `order-42-paid`, not
   `order-42`.
+- The memory, Redis and PostgreSQL brokers keep keys. The NATS broker ignores
+  them, so with it a retry publishes again.
 
 ## Broadcast and batch
 
