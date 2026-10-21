@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -51,7 +52,7 @@ func TestClaims(t *testing.T) {
 	iat := time.Unix(1700000000, 0)
 	exp := time.Unix(1700003600, 0)
 	conn, err := Connection(HMAC([]byte("k")), ConnectionClaims{
-		User: "42", ExpiresAt: exp, ExpireAt: &time.Time{}, IssuedAt: iat, ID: "t1", Audience: "centrifugo", Issuer: "app",
+		User: "42", ExpiresAt: exp, ConnectionNoExpiry: true, IssuedAt: iat, ID: "t1", Audience: "centrifugo", Issuer: "app",
 		Info: jsontext.Value(`{"name":"Alice"}`), B64Info: "aW5mbw==", Meta: jsontext.Value(`{"m":1}`),
 		Subs: map[string]SubscribeOptions{"chat": {Data: jsontext.Value(`{"hi":1}`), Override: gocent.SubscribeOptionOverride{Presence: gocent.Bool(false)}}},
 	})
@@ -67,7 +68,7 @@ func TestClaims(t *testing.T) {
 
 	at := time.Unix(1700007200, 0)
 	sub, err := Subscription(HMAC([]byte("k")), SubscriptionClaims{
-		User: "42", Channel: "chat:1", ExpiresAt: exp, ExpireAt: &at, IssuedAt: iat,
+		User: "42", Channel: "chat:1", ExpiresAt: exp, SubscriptionExpiresAt: at, IssuedAt: iat,
 		Info: jsontext.Value(`{"role":"admin"}`), Data: jsontext.Value(`{"d":1}`),
 		Override: gocent.SubscribeOptionOverride{JoinLeave: gocent.Bool(true)},
 	})
@@ -86,7 +87,7 @@ func TestClaims(t *testing.T) {
 // connection, is always there, and the time of issue is now.
 func TestClaimDefaults(t *testing.T) {
 	before := time.Now().Unix()
-	tok, err := Connection(HMAC([]byte("k")), ConnectionClaims{})
+	tok, err := Connection(HMAC([]byte("k")), ConnectionClaims{NoExpiry: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,24 +104,27 @@ func TestErrors(t *testing.T) {
 	k := HMAC([]byte("k"))
 	for name, err := range map[string]error{
 		"channels and subs": func() error {
-			_, err := Connection(k, ConnectionClaims{Channels: []string{"a"}, Subs: map[string]SubscribeOptions{"b": {}}})
+			_, err := Connection(k, ConnectionClaims{NoExpiry: true, Channels: []string{"a"}, Subs: map[string]SubscribeOptions{"b": {}}})
 			return err
 		}(),
-		"subscription without channel": func() error { _, err := Subscription(k, SubscriptionClaims{User: "42"}); return err }(),
-		"zero key":                     func() error { _, err := Connection(Key{}, ConnectionClaims{}); return err }(),
-		"empty secret":                 func() error { _, err := Connection(HMAC(nil), ConnectionClaims{}); return err }(),
+		"subscription without channel": func() error { _, err := Subscription(k, SubscriptionClaims{User: "42", NoExpiry: true}); return err }(),
+		"zero key":                     func() error { _, err := Connection(Key{}, ConnectionClaims{NoExpiry: true}); return err }(),
+		"empty secret":                 func() error { _, err := Connection(HMAC(nil), ConnectionClaims{NoExpiry: true}); return err }(),
 		"invalid info": func() error {
-			_, err := Connection(k, ConnectionClaims{Info: jsontext.Value(`{not json`)})
+			_, err := Connection(k, ConnectionClaims{NoExpiry: true, Info: jsontext.Value(`{not json`)})
 			return err
 		}(),
-		"nil RSA":   func() error { _, err := Connection(RSA(nil), ConnectionClaims{}); return err }(),
-		"nil ECDSA": func() error { _, err := Connection(ECDSA(nil), ConnectionClaims{}); return err }(),
+		"nil RSA":   func() error { _, err := Connection(RSA(nil), ConnectionClaims{NoExpiry: true}); return err }(),
+		"nil ECDSA": func() error { _, err := Connection(ECDSA(nil), ConnectionClaims{NoExpiry: true}); return err }(),
 		"P-224": func() error {
 			ek, _ := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
-			_, err := Connection(ECDSA(ek), ConnectionClaims{})
+			_, err := Connection(ECDSA(ek), ConnectionClaims{NoExpiry: true})
 			return err
 		}(),
-		"bad Ed25519": func() error { _, err := Connection(Ed25519(ed25519.PrivateKey{1}), ConnectionClaims{}); return err }(),
+		"bad Ed25519": func() error {
+			_, err := Connection(Ed25519(ed25519.PrivateKey{1}), ConnectionClaims{NoExpiry: true})
+			return err
+		}(),
 	} {
 		if err == nil {
 			t.Errorf("%s: no error", name)
@@ -181,7 +185,7 @@ func TestSignatures(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.alg, func(t *testing.T) {
 			key, verify := tc.make(t, Key{})
-			tok, err := Subscription(key.WithKeyID("key-1"), SubscriptionClaims{User: "42", Channel: "c"})
+			tok, err := Subscription(key.WithKeyID("key-1"), SubscriptionClaims{User: "42", Channel: "c", NoExpiry: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -204,7 +208,7 @@ func TestProClaims(t *testing.T) {
 	iat := time.Unix(1700000000, 0)
 	filter := gocent.FilterNode{Key: "role", Cmp: "eq", Val: "admin"}
 	conn, err := Connection(HMAC([]byte("k")), ConnectionClaims{
-		User: "42", IssuedAt: iat,
+		User: "42", IssuedAt: iat, NoExpiry: true,
 		Caps:   []ChannelsCapability{{Channels: []string{"user_*"}, Allow: []string{"sub", "pub"}, Match: "wildcard"}},
 		Labels: map[string]string{"region": "eu"},
 		Subs:   map[string]SubscribeOptions{"feed": {ServerTagsFilter: filter}},
@@ -218,7 +222,7 @@ func TestProClaims(t *testing.T) {
 	if string(raw) != want {
 		t.Errorf("connection claims\n%s\nwant\n%s", raw, want)
 	}
-	sub, err := Subscription(HMAC([]byte("k")), SubscriptionClaims{User: "42", Channel: "c", IssuedAt: iat, Allow: []string{"pub"}, ServerTagsFilter: filter})
+	sub, err := Subscription(HMAC([]byte("k")), SubscriptionClaims{User: "42", Channel: "c", IssuedAt: iat, NoExpiry: true, Allow: []string{"pub"}, ServerTagsFilter: filter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,5 +230,59 @@ func TestProClaims(t *testing.T) {
 	want = `{"sub":"42","iat":1700000000,"channel":"c","allow":["pub"],"server_tags_filter":{"key":"role","cmp":"eq","val":"admin"}}`
 	if string(raw) != want {
 		t.Errorf("subscription claims\n%s\nwant\n%s", raw, want)
+	}
+}
+
+// Every combination of the expiry fields: the claims they make, or why they
+// are refused.
+func TestExpiry(t *testing.T) {
+	tExp := time.Unix(1700003600, 0)
+	tConn := time.Unix(1700086400, 0)
+	cases := []struct {
+		name string
+		c    ConnectionClaims
+		want string // the exp and expire_at claims; "error" when refused
+	}{
+		{"nothing", ConnectionClaims{}, "error"},
+		{"exp", ConnectionClaims{ExpiresAt: tExp}, `"exp":1700003600`},
+		{"exp, connection at", ConnectionClaims{ExpiresAt: tExp, ConnectionExpiresAt: tConn}, `"exp":1700003600 "expire_at":1700086400`},
+		{"exp, connection never", ConnectionClaims{ExpiresAt: tExp, ConnectionNoExpiry: true}, `"exp":1700003600 "expire_at":0`},
+		{"no exp", ConnectionClaims{NoExpiry: true}, ``},
+		{"no exp, connection at", ConnectionClaims{NoExpiry: true, ConnectionExpiresAt: tConn}, `"expire_at":1700086400`},
+		{"no exp, connection never", ConnectionClaims{NoExpiry: true, ConnectionNoExpiry: true}, `"expire_at":0`},
+		{"exp and no exp", ConnectionClaims{ExpiresAt: tExp, NoExpiry: true}, "error"},
+		{"connection at and never", ConnectionClaims{ExpiresAt: tExp, ConnectionExpiresAt: tConn, ConnectionNoExpiry: true}, "error"},
+		{"connection only", ConnectionClaims{ConnectionNoExpiry: true}, "error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tok, err := Connection(HMAC([]byte("k")), tc.c)
+			if tc.want == "error" {
+				if err == nil {
+					t.Fatal("signed")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, claims, _, _, _ := parts(t, tok)
+			var got []string
+			for _, k := range []string{"exp", "expire_at"} {
+				if v, ok := claims[k]; ok {
+					got = append(got, fmt.Sprintf("%q:%v", k, int64(v.(float64))))
+				}
+			}
+			if strings.Join(got, " ") != tc.want {
+				t.Errorf("claims %v, want %s", got, tc.want)
+			}
+		})
+	}
+	// The same rules for subscription tokens.
+	if _, err := Subscription(HMAC([]byte("k")), SubscriptionClaims{Channel: "c"}); err == nil {
+		t.Error("subscription token without expiry signed")
+	}
+	if _, err := Subscription(HMAC([]byte("k")), SubscriptionClaims{Channel: "c", ExpiresAt: tExp, SubscriptionExpiresAt: tConn, SubscriptionNoExpiry: true}); err == nil {
+		t.Error("contradicting subscription expiry signed")
 	}
 }

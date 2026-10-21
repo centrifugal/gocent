@@ -17,14 +17,31 @@ type ConnectionClaims struct {
 	// User is the ID of the user the connection belongs to: the "sub" claim.
 	// Empty means an anonymous connection.
 	User string
-	// ExpiresAt is when the token expires: the "exp" claim. Centrifugo then
-	// asks the client for a new one, and closes the connection without it.
-	// Zero means never.
+	// ExpiresAt is until when the token is accepted: the "exp" claim. The
+	// connection expires then too, unless ConnectionExpiresAt or
+	// ConnectionNoExpiry say otherwise: Centrifugo asks the client for a new
+	// token, and closes the connection without one. Required, unless NoExpiry
+	// is set.
 	ExpiresAt time.Time
-	// ExpireAt, when set, is when the connection expires instead - the
-	// "expire_at" claim - while ExpiresAt still bounds the token's own
-	// validity. A pointer to the zero time means the connection never expires.
-	ExpireAt *time.Time
+	// NoExpiry leaves the "exp" claim out: the token is accepted forever, and
+	// works forever once leaked - for a trusted service's own connection, say.
+	// It must be set explicitly, instead of ExpiresAt.
+	NoExpiry bool
+	// ConnectionExpiresAt, when set, is when the connection expires instead of
+	// at ExpiresAt: the "expire_at" claim, for a token accepted briefly opening
+	// a longer connection. Most applications leave it unset. With NoExpiry
+	// the connection must still refresh at ConnectionExpiresAt, but the token
+	// it was opened with stays accepted.
+	ConnectionExpiresAt time.Time
+	// ConnectionNoExpiry makes the connection never expire - the "expire_at"
+	// claim zero - while ExpiresAt still bounds when the token is accepted.
+	// Centrifugo then never asks the client for a new token: the connection
+	// lives until the client leaves, it drops, or it is disconnected - with
+	// the server API's Disconnect, or by Centrifugo PRO's user blocking or
+	// token revocation. A reconnect presents the token again, so ExpiresAt
+	// applies to it: past it, Centrifugo refuses the token, and the client
+	// asks for a new one.
+	ConnectionNoExpiry bool
 	// IssuedAt is the "iat" claim. Zero means now.
 	IssuedAt time.Time
 	// ID is the token's "jti" claim, for Centrifugo PRO's token revocation.
@@ -84,7 +101,8 @@ type SubscribeOptions struct {
 	// subscription.
 	Override gocent.SubscribeOptionOverride `json:"override,omitzero"`
 	// ServerTagsFilter makes the subscription receive only publications whose
-	// tags match it. Centrifugo PRO only.
+	// tags match it. Centrifugo PRO only, which refuses a malformed filter:
+	// the subscription fails. The zero filter is none.
 	ServerTagsFilter gocent.FilterNode `json:"server_tags_filter,omitzero"`
 }
 
@@ -96,15 +114,29 @@ type SubscriptionClaims struct {
 	User string
 	// Channel is the channel the token allows to subscribe to. Required.
 	Channel string
-	// ExpiresAt is when the token expires: the "exp" claim. Centrifugo then
-	// asks the client for a new one, and ends the subscription without it.
-	// Zero means never.
+	// ExpiresAt is until when the token is accepted: the "exp" claim. The
+	// subscription expires then too, unless SubscriptionExpiresAt or
+	// SubscriptionNoExpiry say otherwise: Centrifugo asks the client for a new
+	// token, and ends the subscription without one. Required, unless NoExpiry
+	// is set.
 	ExpiresAt time.Time
-	// ExpireAt, when set, is when the subscription expires instead - the
-	// "expire_at" claim - while ExpiresAt still bounds the token's own
-	// validity. A pointer to the zero time means the subscription never
-	// expires: a token usable once.
-	ExpireAt *time.Time
+	// NoExpiry leaves the "exp" claim out: the token is accepted forever, and
+	// works forever once leaked. It must be set explicitly, instead of
+	// ExpiresAt.
+	NoExpiry bool
+	// SubscriptionExpiresAt, when set, is when the subscription expires
+	// instead of at ExpiresAt: the "expire_at" claim. Most applications leave
+	// it unset.
+	SubscriptionExpiresAt time.Time
+	// SubscriptionNoExpiry makes the subscription never expire - the
+	// "expire_at" claim zero - while ExpiresAt still bounds when the token is
+	// accepted: with a short ExpiresAt, a token which subscribes once.
+	// Centrifugo then never asks the client for a new token: the subscription
+	// lives until the client unsubscribes, it is unsubscribed - with the
+	// server API's Unsubscribe, or by Centrifugo PRO's token revocation - or
+	// its connection ends. A resubscribe presents the token again, so
+	// ExpiresAt applies to it.
+	SubscriptionNoExpiry bool
 	// IssuedAt is the "iat" claim. Zero means now.
 	IssuedAt time.Time
 	// ID is the token's "jti" claim, for Centrifugo PRO's token revocation.
@@ -128,7 +160,8 @@ type SubscriptionClaims struct {
 	// "pub", "hst" and "prs". Centrifugo PRO only.
 	Allow []string
 	// ServerTagsFilter makes the subscription receive only publications whose
-	// tags match it. Centrifugo PRO only.
+	// tags match it. Centrifugo PRO only, which refuses a malformed filter:
+	// the subscription fails. The zero filter is none.
 	ServerTagsFilter gocent.FilterNode
 }
 
@@ -179,25 +212,42 @@ func newRegistered(user string, expiresAt, issuedAt time.Time, id, audience, iss
 	return r
 }
 
-func unixOrNil(t *time.Time) *int64 {
-	if t == nil {
+// checkExpiry refuses claims which do not say when the token expires, or
+// which contradict themselves.
+func checkExpiry(expiresAt time.Time, noExpiry bool, sessionAt time.Time, sessionNever bool, session string) error {
+	switch {
+	case expiresAt.IsZero() && !noExpiry:
+		return errors.New("token: set ExpiresAt, or NoExpiry for a token accepted forever")
+	case !expiresAt.IsZero() && noExpiry:
+		return errors.New("token: ExpiresAt and NoExpiry contradict each other")
+	case !sessionAt.IsZero() && sessionNever:
+		return fmt.Errorf("token: %sExpiresAt and %sNoExpiry contradict each other", session, session)
+	}
+	return nil
+}
+
+// expireAt is the "expire_at" claim: left out, zero for never, or a time.
+func expireAt(at time.Time, never bool) *int64 {
+	switch {
+	case never:
+		return new(int64(0))
+	case at.IsZero():
 		return nil
 	}
-	var u int64
-	if !t.IsZero() {
-		u = t.Unix()
-	}
-	return &u
+	return new(at.Unix())
 }
 
 // Connection returns a connection token with c's claims, signed with key.
 func Connection(key Key, c ConnectionClaims) (string, error) {
+	if err := checkExpiry(c.ExpiresAt, c.NoExpiry, c.ConnectionExpiresAt, c.ConnectionNoExpiry, "Connection"); err != nil {
+		return "", err
+	}
 	if len(c.Channels) > 0 && len(c.Subs) > 0 {
 		return "", errors.New("token: set Channels or Subs, not both: Centrifugo ignores Channels when Subs is set")
 	}
 	return sign(key, connectionWire{
 		registered: newRegistered(c.User, c.ExpiresAt, c.IssuedAt, c.ID, c.Audience, c.Issuer),
-		ExpireAt:   unixOrNil(c.ExpireAt),
+		ExpireAt:   expireAt(c.ConnectionExpiresAt, c.ConnectionNoExpiry),
 		Info:       c.Info,
 		B64Info:    c.B64Info,
 		Channels:   c.Channels,
@@ -214,10 +264,13 @@ func Subscription(key Key, c SubscriptionClaims) (string, error) {
 	if c.Channel == "" {
 		return "", errors.New("token: subscription token without a channel")
 	}
+	if err := checkExpiry(c.ExpiresAt, c.NoExpiry, c.SubscriptionExpiresAt, c.SubscriptionNoExpiry, "Subscription"); err != nil {
+		return "", err
+	}
 	return sign(key, subscriptionWire{
 		registered:       newRegistered(c.User, c.ExpiresAt, c.IssuedAt, c.ID, c.Audience, c.Issuer),
 		Channel:          c.Channel,
-		ExpireAt:         unixOrNil(c.ExpireAt),
+		ExpireAt:         expireAt(c.SubscriptionExpiresAt, c.SubscriptionNoExpiry),
 		Info:             c.Info,
 		B64Info:          c.B64Info,
 		Data:             c.Data,
