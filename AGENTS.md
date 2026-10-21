@@ -109,9 +109,14 @@ make test-integration
 ```
 
 The integration tests cover every method of Centrifugo OSS. CI runs them
-against the `centrifugo/centrifugo:v6` image, configured through environment
+against the `centrifugo/centrifugo` image, configured through environment
 variables in `.github/workflows/ci.yml`: a setting added to
 `testdata/centrifugo.json` must be added there too.
+
+CI and `testdata/centrifugo-pro.compose.yml` use one Centrifugo release, now
+v6.10.1, for OSS and PRO, the one `api.proto` is synced from. Moving to a new
+release changes all three together: `make sync-proto CENTRIFUGO_REF=<tag>`, the
+OSS image in `ci.yml` and the PRO image in the compose file.
 
 The PRO methods are covered by `pro_integration_test.go`, which skips against
 OSS. To run them, start Centrifugo PRO with what they need - Redis,

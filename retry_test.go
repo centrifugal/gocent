@@ -140,3 +140,32 @@ func TestRetryableChannels(t *testing.T) {
 		t.Errorf("only permanent failures: RetryableChannels() = %v, want nil", got)
 	}
 }
+
+// WholeFailure drops the error of a broadcast or batch which Centrifugo
+// carried out with some failed parts, and keeps every other error.
+func TestWholeFailure(t *testing.T) {
+	partial := []error{
+		&gocent.BroadcastError{Total: 2, Failed: []gocent.ChannelResult{{Channel: "a", Err: gocent.ErrUnknownChannel}}},
+		&gocent.BatchError{Total: 2, Failed: []gocent.CommandError{{Index: 1, Method: "publish", Err: gocent.ErrUnknownChannel}}},
+		fmt.Errorf("notify: %w", &gocent.BroadcastError{Total: 1}),
+	}
+	for _, err := range partial {
+		if got := gocent.WholeFailure(err); got != nil {
+			t.Errorf("WholeFailure(%v) = %v, want nil", err, got)
+		}
+	}
+	whole := []error{
+		gocent.ErrUnknownChannel,
+		&gocent.HTTPError{StatusCode: http.StatusUnauthorized},
+		fmt.Errorf("gocent: broadcast: %w", context.DeadlineExceeded),
+		gocent.ErrInvalidRequest,
+	}
+	for _, err := range whole {
+		if got := gocent.WholeFailure(err); got != err { //nolint:errorlint // the same error, not a matching one
+			t.Errorf("WholeFailure(%v) = %v, want the error itself", err, got)
+		}
+	}
+	if got := gocent.WholeFailure(nil); got != nil {
+		t.Errorf("WholeFailure(nil) = %v", got)
+	}
+}

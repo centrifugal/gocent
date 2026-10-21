@@ -38,6 +38,12 @@ import (
 // internal error Centrifugo may have published it already. Back off between
 // attempts, and bound their number. See "Retrying" in the package
 // documentation for how to choose keys.
+//
+// Retryable suits a retry library's condition to retry on, which such
+// libraries take as a func(error) bool. A library which retries on any error
+// instead resends a broadcast which failed in some channels to every channel,
+// those which already got it included: give the broadcast an IdempotencyKey,
+// so that they do not get it twice.
 func Retryable(err error) bool {
 	if err == nil {
 		return false

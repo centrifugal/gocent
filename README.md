@@ -113,6 +113,11 @@ Choosing keys:
 - The memory, Redis and PostgreSQL brokers keep keys. The NATS broker ignores
   them, so with it a retry publishes again.
 
+With a retry library which calls the function again on any error, give it
+`gocent.Retryable` as the condition to retry on, and set an `IdempotencyKey`:
+after a broadcast failed in some channels, such a library sends it to every
+channel again, those which already got it included.
+
 ## Broadcast and batch
 
 `Broadcast` publishes the same data into many channels in one request; a `Batch`
@@ -154,7 +159,7 @@ one - every part always has an outcome, whatever the error:
 
 ```go
 res, err := client.Broadcast(ctx, req)
-if _, partial := errors.AsType[*gocent.BroadcastError](err); err != nil && !partial {
+if err = gocent.WholeFailure(err); err != nil {
 	return err // no channel got a reply
 }
 for _, ch := range res.Channels {

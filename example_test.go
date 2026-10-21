@@ -81,7 +81,7 @@ func ExampleBroadcastError() {
 		Channels: []string{"user:1", "user:2", "user:3"},
 		Data:     jsontext.Value(`{"text":"hello"}`),
 	})
-	if _, partial := errors.AsType[*gocent.BroadcastError](err); err != nil && !partial {
+	if err = gocent.WholeFailure(err); err != nil {
 		log.Fatal(err) // no channel got a reply
 	}
 	for _, ch := range res.Channels {

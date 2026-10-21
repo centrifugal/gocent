@@ -110,7 +110,7 @@
 // despite some failed parts, check err first, then read each part:
 //
 //	res, err := client.Broadcast(ctx, req)
-//	if _, partial := errors.AsType[*gocent.BroadcastError](err); err != nil && !partial {
+//	if err = gocent.WholeFailure(err); err != nil {
 //		return err // no channel got a reply
 //	}
 //	for _, ch := range res.Channels { ... } // ch.Err is set for a failed channel

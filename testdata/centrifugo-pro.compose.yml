@@ -40,7 +40,7 @@ services:
       retries: 30
 
   centrifugo:
-    image: centrifugo/centrifugo-pro:v6
+    image: centrifugo/centrifugo-pro:v6.10.1
     command: centrifugo -c /centrifugo/config.json
     volumes:
       - ./centrifugo.json:/centrifugo/config.json:ro

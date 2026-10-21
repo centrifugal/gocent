@@ -19,7 +19,9 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   channel or command succeeded; when some failed, it is a
   `*gocent.BroadcastError` or `*gocent.BatchError` saying which. Every part
   always has an outcome: `res.Channels` holds one entry per requested
-  channel, and every batch command its `Pending`.
+  channel, and every batch command its `Pending`. Code which handles failed
+  parts on its own uses `gocent.WholeFailure(err)`, which keeps only an error
+  of the request as a whole.
 * **Typed batches.** `client.NewBatch(opts)` gives a `Batch` with a method per
   command, each returning a `Pending` holding that command's typed result.
 * **Automatic batching.** `Config.AutoBatch` sends concurrent calls together
@@ -177,7 +179,7 @@ pub := b.Publish(gocent.PublishRequest{Channel: "a", Data: data})
 stats := b.PresenceStats(gocent.PresenceStatsRequest{Channel: "a"})
 
 err := b.Send(ctx)
-if _, partial := errors.AsType[*gocent.BatchError](err); err != nil && !partial {
+if err = gocent.WholeFailure(err); err != nil {
 	return err // no command got a reply
 }
 // Each command's own outcome - also when others failed:

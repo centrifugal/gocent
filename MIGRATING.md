@@ -171,7 +171,6 @@ package main
 import (
 	"context"
 	"encoding/json/jsontext"
-	"errors"
 	"log"
 	"os"
 	"time"
@@ -196,10 +195,10 @@ func main() {
 		Data:           jsontext.Value(`{"text":"hello"}`),
 		IdempotencyKey: "notice-1",
 	})
-	// err is nil only when every channel got the publication. A
-	// *BroadcastError means Centrifugo ran the broadcast and some channels
-	// failed; any other error means no channel got a reply.
-	if _, partial := errors.AsType[*gocent.BroadcastError](err); err != nil && !partial {
+	// err is nil only when every channel got the publication. This program
+	// reports each failed channel below, as the v3 one did, so it stops only
+	// when no channel got a reply.
+	if err = gocent.WholeFailure(err); err != nil {
 		log.Fatal(err)
 	}
 	for _, ch := range res.Channels {
@@ -253,12 +252,13 @@ is the point.
 **When to keep v3's behaviour.** Code which already handled every channel on
 its own - it checked each reply, logged or counted the failed channels, and
 went on on purpose - may want a broadcast with some failed channels to stay a
-success, as in v3. For that, treat a `*BroadcastError` as success, and read
-the channels as before:
+success, as in v3. For that, pass the error through `gocent.WholeFailure`,
+which drops a `*BroadcastError` and keeps any other error, and read the
+channels as before:
 
 ```go
 res, err := c.Broadcast(ctx, req)
-if _, partial := errors.AsType[*gocent.BroadcastError](err); err != nil && !partial {
+if err = gocent.WholeFailure(err); err != nil {
 	return err // the request failed as a whole: no channel got a reply
 }
 for _, ch := range res.Channels {
@@ -393,7 +393,6 @@ package main
 import (
 	"context"
 	"encoding/json/jsontext"
-	"errors"
 	"log"
 	"os"
 	"time"
@@ -418,11 +417,9 @@ func main() {
 	stats := b.PresenceStats(gocent.PresenceStatsRequest{Channel: "news"})
 	history := b.History(gocent.HistoryRequest{Channel: "news", Limit: 10})
 
-	// err is nil only when every command succeeded. A *BatchError means
-	// Centrifugo ran the batch and some commands failed; any other error
-	// means no command got a reply.
-	err = b.Send(ctx)
-	if _, partial := errors.AsType[*gocent.BatchError](err); err != nil && !partial {
+	// err is nil only when every command succeeded. This program reads each
+	// command's outcome below, so it stops only when no command got a reply.
+	if err = gocent.WholeFailure(b.Send(ctx)); err != nil {
 		log.Fatal(err)
 	}
 	// Each command has its own typed result, or its own error.

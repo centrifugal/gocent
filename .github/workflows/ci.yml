@@ -58,7 +58,7 @@ jobs:
     # environment variables.
     services:
       centrifugo:
-        image: centrifugo/centrifugo:v6
+        image: centrifugo/centrifugo:v6.10.1
         ports:
           - 8100:8000
         env:

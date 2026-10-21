@@ -100,6 +100,9 @@ func TestIntegrationBroadcast(t *testing.T) {
 	if !errors.As(err, &be) {
 		t.Fatalf("Broadcast: %v", err)
 	}
+	if gocent.WholeFailure(err) != nil {
+		t.Errorf("WholeFailure(%v) is not nil: some channels got a reply", err)
+	}
 	if len(be.Failed) != 1 || be.Failed[0].Channel != "unknown:x" {
 		t.Fatalf("failed channels %+v", be.Failed)
 	}
