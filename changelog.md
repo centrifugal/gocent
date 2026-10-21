@@ -72,6 +72,16 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   cause, a wrong `APIEndpoint`.
 * **Async consumers.** `APIMethod()` on every request gives the method name for
   building events from a request.
+* **Tokens.** The new `token` package signs connection and subscription
+  tokens with Centrifugo's claims - `token.Connection`, `token.Subscription` -
+  with HMAC, RSA, ECDSA or Ed25519 keys - Centrifugo PRO's claims included:
+  capabilities, labels, server-side tag filters - and `token.Handlers` serves the
+  endpoints the `getToken` callbacks of client SDKs call: `{"token": ...}`,
+  never cached, 403 for `token.ErrUnauthorized`.
+* **Shared poll signatures.** The new `sharedpoll` package signs the keys a
+  client may track - `sharedpoll.Sign` - and `sharedpoll.Handlers` serves the
+  endpoint centrifuge-js's `getSignature` calls: keys left out are revoked,
+  `sharedpoll.ErrUnauthorized` ends the subscription.
 * **Proxy handlers.** The new `proxy` package serves Centrifugo's HTTP proxy:
   the request and result types of every proxy type, generated from
   Centrifugo's `proxy.proto`, and `proxy.Handlers` making an `http.Handler`

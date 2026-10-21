@@ -105,7 +105,7 @@ no-deps: ## Assert the package has no dependencies, no cgo and no unsafe
 # written by the same generator, and TestEveryMethodReachesItsEndpoint checks
 # every one of them reaches its endpoint and batch command.
 cover: ## Measure coverage of the hand-written code and fail below COVERAGE_MIN
-	$(GO) test -count=1 -covermode=atomic -coverprofile=coverage.all.out . ./proxy
+	$(GO) test -count=1 -covermode=atomic -coverpkg=.,./proxy,./sharedpoll,./token,./internal/sdkendpoint -coverprofile=coverage.all.out . ./proxy ./sharedpoll ./token
 	@grep -vE '/(api_gen|proxy_gen)\.go:' coverage.all.out > coverage.out && rm coverage.all.out
 	@$(GO) tool cover -func=coverage.out | tail -1
 	@pct=$$($(GO) tool cover -func=coverage.out | tail -1 | grep -oE '[0-9.]+%' | tr -d '%'); \

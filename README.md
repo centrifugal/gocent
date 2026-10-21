@@ -334,6 +334,47 @@ logged. Keep proxy endpoints reachable
 by Centrifugo only: whoever can call them can claim to be any user. See the
 [package docs](https://pkg.go.dev/github.com/centrifugal/gocent/v4/proxy).
 
+## Tokens
+
+The `token` package issues the JWTs Centrifugo authenticates clients with -
+connection and subscription tokens, with Centrifugo's claims, signed with
+HMAC, RSA, ECDSA or Ed25519 - and serves the endpoints the `getToken`
+callbacks of client SDKs call:
+
+```go
+key := token.HMAC(secret) // client.token.hmac_secret_key
+h := token.Handlers{OnError: logError}
+mux.Handle("/centrifugo/connection_token", h.Connection(
+	func(r *http.Request) (string, error) {
+		user, ok := sessionUser(r)
+		if !ok {
+			return "", token.ErrUnauthorized // 403: the client stops asking
+		}
+		return token.Connection(key, token.ConnectionClaims{User: user, ExpiresAt: time.Now().Add(time.Hour)})
+	}))
+```
+
+`h.Subscription` serves subscription tokens the same way, with the channel the
+client asks for.
+
+## Shared poll signatures
+
+Clients tracking keys of a [shared poll](https://centrifugal.dev/docs/server/shared_poll)
+channel need a signature from the backend. The `sharedpoll` package makes one,
+and serves the endpoint a subscription's `getSignature` callback calls:
+
+```go
+h := sharedpoll.Handlers{OnError: logError}
+mux.Handle("/centrifugo/shared_poll_signature", h.Signature(
+	func(r *http.Request, channel string, keys []string) ([]string, string, error) {
+		allowed := readable(r.Context(), user, channel, keys) // the rest are revoked
+		return allowed, sharedpoll.Sign(secret, user, channel, allowed, time.Now().Add(time.Hour)), nil
+	}))
+```
+
+Shared poll subscriptions are experimental in Centrifugo, and the package
+follows their changes.
+
 ## More
 
 - [Package docs](https://pkg.go.dev/github.com/centrifugal/gocent/v4): everything
