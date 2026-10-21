@@ -58,9 +58,10 @@ func sessionUser(r *http.Request) (string, bool) {
 
 func canRead(context.Context, string, string) bool { return true }
 
-// Keys published for Centrifugo's JWKS endpoint, and rotated: the new key is
-// published next to the old one, and signs; the old one is dropped once the
-// tokens it signed have expired.
+// Keys published for Centrifugo's JWKS endpoint, mid-rotation: both keys are
+// published, and the new one signs - once every instance of the application
+// publishes it. The old one is dropped once the tokens it signed have
+// expired.
 func ExampleJWKS() {
 	_, previousKey, _ := ed25519.GenerateKey(nil)
 	_, currentKey, _ := ed25519.GenerateKey(nil)

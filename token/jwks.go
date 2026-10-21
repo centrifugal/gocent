@@ -34,9 +34,12 @@ type jwk struct {
 // refuses a set without keys.
 //
 // A set is how keys rotate without restarting Centrifugo: publish the new key
-// next to the old one, sign with the new one, and drop the old one once the
-// tokens it signed have expired. Centrifugo fetches a key it does not know when
-// a token names it, and keeps keys for an hour.
+// next to the old one; once every instance of the application publishes it,
+// sign with it - from a time set ahead, say; drop the old key once the tokens
+// it signed have expired. Centrifugo fetches the set when a token names a key
+// it does not know - at most every few seconds, from whichever instance
+// answers - so a key signing before every instance publishes it gets tokens
+// refused until the next fetch. See _examples/jwks-rotation.
 func JWKS(keys ...Key) (jsontext.Value, error) {
 	if len(keys) == 0 {
 		return nil, errors.New("token: a JWKS without keys")

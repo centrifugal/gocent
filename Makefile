@@ -49,8 +49,8 @@ test: ## Run the test suite
 	$(GO) test -count=1 ./...
 
 .PHONY: test-race
-test-race: ## Run the test suite under the race detector
-	$(GO) test -count=1 -race ./...
+test-race: ## Run the test suite under the race detector, the examples' included
+	$(GO) test -count=1 -race ./... $(EXAMPLES)
 
 .PHONY: test-integration
 test-integration: ## Run against a real Centrifugo (see testdata/centrifugo.json)
@@ -58,9 +58,16 @@ test-integration: ## Run against a real Centrifugo (see testdata/centrifugo.json
 		$(GO) test -count=1 -race -tags integration -run Integration ./...
 
 .PHONY: vet
-vet: ## Run go vet, with and without the integration tag
+# The examples: go's ./... patterns skip directories starting with "_", so
+# they are listed. They build and vet with the module, as the docs point to
+# them.
+EXAMPLES = ./_examples/jwks-rotation
+
+vet: ## Run go vet, with and without the integration tag, and on the examples
 	$(GO) vet ./...
 	$(GO) vet -tags integration ./...
+	$(GO) vet $(EXAMPLES)
+	$(GO) build -o /dev/null $(EXAMPLES)
 
 .PHONY: generate
 generate: ## Regenerate api_gen.go and proxy/proxy_gen.go from their protos
@@ -146,6 +153,7 @@ fmt-check: ## Fail if anything needs formatting
 lint: fmt-check ## Run golangci-lint, with and without the integration tag
 	$(GOLANGCI_LINT) run ./...
 	$(GOLANGCI_LINT) run --build-tags=integration ./...
+	$(GOLANGCI_LINT) run $(EXAMPLES)
 
 .PHONY: sec
 sec: ## Run govulncheck (gosec runs as part of make lint)

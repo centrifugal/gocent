@@ -29,5 +29,7 @@
 // With asymmetric keys, [JWKS] and [Handlers.JWKS] publish the public keys
 // for Centrifugo's client.token.jwks_public_endpoint, which is how keys
 // rotate without restarting Centrifugo: publish the new key next to the old
-// one, sign with the new one, drop the old one once its tokens expired.
+// one, sign with it once every instance publishes it - from a time set ahead,
+// say - and drop the old one once its tokens expired. See the example in
+// _examples/jwks-rotation.
 package token
