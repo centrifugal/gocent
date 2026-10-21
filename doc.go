@@ -175,13 +175,21 @@
 // # Async consumers
 //
 // Instead of calling Centrifugo, an application can leave a command for its
-// async consumers to run - in a PostgreSQL outbox table, a Kafka topic. A
-// command is an API method's name and its request as JSON, and a request
-// struct gives both: APIMethod, such as [PublishRequest.APIMethod], returns
-// the name, and the request encodes to the JSON:
+// async consumers to run - in a PostgreSQL outbox table, a Kafka topic, a
+// Redis stream - in the same transaction as the change it reports.
+// [NewCommand] makes one from any request, checked as a call would be: a
+// command Centrifugo could not run fails here, not in a consumer which would
+// drop it.
 //
-//	payload, err := json.Marshal(req) // {"channel":"news","data":{...}}
+//	cmd, err := gocent.NewCommand(gocent.PublishRequest{Channel: "news", Data: data})
+//	if err != nil {
+//		return err
+//	}
 //	_, err = tx.ExecContext(ctx,
 //		"INSERT INTO centrifugo_outbox (method, payload, partition) VALUES ($1, $2, 0)",
-//		req.APIMethod(), payload)
+//		cmd.Method, cmd.Payload)
+//
+// A [Command] encoded as JSON is the {"method": ..., "payload": ...} message
+// other consumers take, Kafka's say. See [Command] for keeping a channel's
+// commands in order.
 package gocent

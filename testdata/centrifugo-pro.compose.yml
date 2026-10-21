@@ -23,6 +23,9 @@ name: gocent-pro
 services:
   redis:
     image: redis:7
+    # For the async consumer test, which adds commands to a stream.
+    ports:
+      - "46379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 1s
@@ -77,6 +80,9 @@ services:
       CENTRIFUGO_PUSH_NOTIFICATIONS_WEBPUSH_VAPID_PUBLIC_KEY: BJ16Mnup_xun6oJ4UW1JfCgY1QA5zeEoFqZ0VUbuu5ZXJkhsH2f7PGLcvhkJ_OAgFBDzkda_1LykKzXcVe99elg
       CENTRIFUGO_PUSH_NOTIFICATIONS_WEBPUSH_VAPID_PRIVATE_KEY: TqaHuW-sLvwKJlREuBvmg_UvWuqFZuuEYoYU6WWXJrc
       CENTRIFUGO_PUSH_NOTIFICATIONS_WEBPUSH_SUBJECT: mailto:test@example.com
+      # Commands written by the async consumer test: gocent.NewCommand.
+      CENTRIFUGO_CONSUMERS: >-
+        [{"name":"gocent_commands","enabled":true,"type":"redis_stream","redis_stream":{"address":["redis://redis:6379"],"streams":["gocent_commands"],"consumer_group":"centrifugo"}}]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8100/health"]
       interval: 1s

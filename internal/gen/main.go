@@ -349,6 +349,8 @@ func generate(s *schema) ([]byte, error) {
 		w.p("func (%s) APIMethod() string { return %q }", c.request.name, c.method)
 		w.p("")
 		w.p("func (r *%s) addTo(c *command) { c.%s = r }", c.request.name, c.goName)
+		w.p("")
+		w.p("func (r %s) asRequest() request { return &r }", c.request.name)
 	}
 
 	w.p("")

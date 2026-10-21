@@ -70,8 +70,11 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   Centrifugo's API never redirects, and following one would send the API key
   to wherever it points. A redirect is an `HTTPError` naming the likely
   cause, a wrong `APIEndpoint`.
-* **Async consumers.** `APIMethod()` on every request gives the method name for
-  building events from a request.
+* **Async consumers.** `gocent.NewCommand(req)` makes the command an async
+  consumer runs - its method and JSON payload, or the `{"method", "payload"}`
+  message as a whole - checking the request as a call would, so that an
+  invalid command fails when written, not in a consumer which would drop it.
+  `APIMethod()` on every request gives the method name alone.
 * **Tokens.** The new `token` package signs connection and subscription
   tokens with Centrifugo's claims - `token.Connection`, `token.Subscription` -
   with HMAC, RSA, ECDSA or Ed25519 keys - Centrifugo PRO's claims included:

@@ -1646,12 +1646,16 @@ func (PublishRequest) APIMethod() string { return "publish" }
 
 func (r *PublishRequest) addTo(c *command) { c.Publish = r }
 
+func (r PublishRequest) asRequest() request { return &r }
+
 // APIMethod returns "broadcast", the Centrifugo server API method a [BroadcastRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (BroadcastRequest) APIMethod() string { return "broadcast" }
 
 func (r *BroadcastRequest) addTo(c *command) { c.Broadcast = r }
+
+func (r BroadcastRequest) asRequest() request { return &r }
 
 // APIMethod returns "subscribe", the Centrifugo server API method a [SubscribeRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1660,12 +1664,16 @@ func (SubscribeRequest) APIMethod() string { return "subscribe" }
 
 func (r *SubscribeRequest) addTo(c *command) { c.Subscribe = r }
 
+func (r SubscribeRequest) asRequest() request { return &r }
+
 // APIMethod returns "unsubscribe", the Centrifugo server API method a [UnsubscribeRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (UnsubscribeRequest) APIMethod() string { return "unsubscribe" }
 
 func (r *UnsubscribeRequest) addTo(c *command) { c.Unsubscribe = r }
+
+func (r UnsubscribeRequest) asRequest() request { return &r }
 
 // APIMethod returns "disconnect", the Centrifugo server API method a [DisconnectRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1674,12 +1682,16 @@ func (DisconnectRequest) APIMethod() string { return "disconnect" }
 
 func (r *DisconnectRequest) addTo(c *command) { c.Disconnect = r }
 
+func (r DisconnectRequest) asRequest() request { return &r }
+
 // APIMethod returns "presence", the Centrifugo server API method a [PresenceRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (PresenceRequest) APIMethod() string { return "presence" }
 
 func (r *PresenceRequest) addTo(c *command) { c.Presence = r }
+
+func (r PresenceRequest) asRequest() request { return &r }
 
 // APIMethod returns "presence_stats", the Centrifugo server API method a [PresenceStatsRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1688,12 +1700,16 @@ func (PresenceStatsRequest) APIMethod() string { return "presence_stats" }
 
 func (r *PresenceStatsRequest) addTo(c *command) { c.PresenceStats = r }
 
+func (r PresenceStatsRequest) asRequest() request { return &r }
+
 // APIMethod returns "history", the Centrifugo server API method a [HistoryRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (HistoryRequest) APIMethod() string { return "history" }
 
 func (r *HistoryRequest) addTo(c *command) { c.History = r }
+
+func (r HistoryRequest) asRequest() request { return &r }
 
 // APIMethod returns "history_remove", the Centrifugo server API method a [HistoryRemoveRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1702,12 +1718,16 @@ func (HistoryRemoveRequest) APIMethod() string { return "history_remove" }
 
 func (r *HistoryRemoveRequest) addTo(c *command) { c.HistoryRemove = r }
 
+func (r HistoryRemoveRequest) asRequest() request { return &r }
+
 // APIMethod returns "info", the Centrifugo server API method a [InfoRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (InfoRequest) APIMethod() string { return "info" }
 
 func (r *InfoRequest) addTo(c *command) { c.Info = r }
+
+func (r InfoRequest) asRequest() request { return &r }
 
 // APIMethod returns "refresh", the Centrifugo server API method a [RefreshRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1716,12 +1736,16 @@ func (RefreshRequest) APIMethod() string { return "refresh" }
 
 func (r *RefreshRequest) addTo(c *command) { c.Refresh = r }
 
+func (r RefreshRequest) asRequest() request { return &r }
+
 // APIMethod returns "channels", the Centrifugo server API method a [ChannelsRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (ChannelsRequest) APIMethod() string { return "channels" }
 
 func (r *ChannelsRequest) addTo(c *command) { c.Channels = r }
+
+func (r ChannelsRequest) asRequest() request { return &r }
 
 // APIMethod returns "connections", the Centrifugo server API method a [ConnectionsRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1730,12 +1754,16 @@ func (ConnectionsRequest) APIMethod() string { return "connections" }
 
 func (r *ConnectionsRequest) addTo(c *command) { c.Connections = r }
 
+func (r ConnectionsRequest) asRequest() request { return &r }
+
 // APIMethod returns "update_user_status", the Centrifugo server API method a [UpdateUserStatusRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (UpdateUserStatusRequest) APIMethod() string { return "update_user_status" }
 
 func (r *UpdateUserStatusRequest) addTo(c *command) { c.UpdateUserStatus = r }
+
+func (r UpdateUserStatusRequest) asRequest() request { return &r }
 
 // APIMethod returns "get_user_status", the Centrifugo server API method a [GetUserStatusRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1744,12 +1772,16 @@ func (GetUserStatusRequest) APIMethod() string { return "get_user_status" }
 
 func (r *GetUserStatusRequest) addTo(c *command) { c.GetUserStatus = r }
 
+func (r GetUserStatusRequest) asRequest() request { return &r }
+
 // APIMethod returns "delete_user_status", the Centrifugo server API method a [DeleteUserStatusRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (DeleteUserStatusRequest) APIMethod() string { return "delete_user_status" }
 
 func (r *DeleteUserStatusRequest) addTo(c *command) { c.DeleteUserStatus = r }
+
+func (r DeleteUserStatusRequest) asRequest() request { return &r }
 
 // APIMethod returns "block_user", the Centrifugo server API method a [BlockUserRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1758,12 +1790,16 @@ func (BlockUserRequest) APIMethod() string { return "block_user" }
 
 func (r *BlockUserRequest) addTo(c *command) { c.BlockUser = r }
 
+func (r BlockUserRequest) asRequest() request { return &r }
+
 // APIMethod returns "unblock_user", the Centrifugo server API method a [UnblockUserRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (UnblockUserRequest) APIMethod() string { return "unblock_user" }
 
 func (r *UnblockUserRequest) addTo(c *command) { c.UnblockUser = r }
+
+func (r UnblockUserRequest) asRequest() request { return &r }
 
 // APIMethod returns "revoke_token", the Centrifugo server API method a [RevokeTokenRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1772,12 +1808,16 @@ func (RevokeTokenRequest) APIMethod() string { return "revoke_token" }
 
 func (r *RevokeTokenRequest) addTo(c *command) { c.RevokeToken = r }
 
+func (r RevokeTokenRequest) asRequest() request { return &r }
+
 // APIMethod returns "invalidate_user_tokens", the Centrifugo server API method a [InvalidateUserTokensRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (InvalidateUserTokensRequest) APIMethod() string { return "invalidate_user_tokens" }
 
 func (r *InvalidateUserTokensRequest) addTo(c *command) { c.InvalidateUserTokens = r }
+
+func (r InvalidateUserTokensRequest) asRequest() request { return &r }
 
 // APIMethod returns "device_register", the Centrifugo server API method a [DeviceRegisterRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1786,12 +1826,16 @@ func (DeviceRegisterRequest) APIMethod() string { return "device_register" }
 
 func (r *DeviceRegisterRequest) addTo(c *command) { c.DeviceRegister = r }
 
+func (r DeviceRegisterRequest) asRequest() request { return &r }
+
 // APIMethod returns "device_update", the Centrifugo server API method a [DeviceUpdateRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (DeviceUpdateRequest) APIMethod() string { return "device_update" }
 
 func (r *DeviceUpdateRequest) addTo(c *command) { c.DeviceUpdate = r }
+
+func (r DeviceUpdateRequest) asRequest() request { return &r }
 
 // APIMethod returns "device_remove", the Centrifugo server API method a [DeviceRemoveRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1800,12 +1844,16 @@ func (DeviceRemoveRequest) APIMethod() string { return "device_remove" }
 
 func (r *DeviceRemoveRequest) addTo(c *command) { c.DeviceRemove = r }
 
+func (r DeviceRemoveRequest) asRequest() request { return &r }
+
 // APIMethod returns "device_list", the Centrifugo server API method a [DeviceListRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (DeviceListRequest) APIMethod() string { return "device_list" }
 
 func (r *DeviceListRequest) addTo(c *command) { c.DeviceList = r }
+
+func (r DeviceListRequest) asRequest() request { return &r }
 
 // APIMethod returns "device_topic_list", the Centrifugo server API method a [DeviceTopicListRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1814,12 +1862,16 @@ func (DeviceTopicListRequest) APIMethod() string { return "device_topic_list" }
 
 func (r *DeviceTopicListRequest) addTo(c *command) { c.DeviceTopicList = r }
 
+func (r DeviceTopicListRequest) asRequest() request { return &r }
+
 // APIMethod returns "device_topic_update", the Centrifugo server API method a [DeviceTopicUpdateRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (DeviceTopicUpdateRequest) APIMethod() string { return "device_topic_update" }
 
 func (r *DeviceTopicUpdateRequest) addTo(c *command) { c.DeviceTopicUpdate = r }
+
+func (r DeviceTopicUpdateRequest) asRequest() request { return &r }
 
 // APIMethod returns "user_topic_list", the Centrifugo server API method a [UserTopicListRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1828,12 +1880,16 @@ func (UserTopicListRequest) APIMethod() string { return "user_topic_list" }
 
 func (r *UserTopicListRequest) addTo(c *command) { c.UserTopicList = r }
 
+func (r UserTopicListRequest) asRequest() request { return &r }
+
 // APIMethod returns "user_topic_update", the Centrifugo server API method a [UserTopicUpdateRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (UserTopicUpdateRequest) APIMethod() string { return "user_topic_update" }
 
 func (r *UserTopicUpdateRequest) addTo(c *command) { c.UserTopicUpdate = r }
+
+func (r UserTopicUpdateRequest) asRequest() request { return &r }
 
 // APIMethod returns "send_push_notification", the Centrifugo server API method a [SendPushNotificationRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1842,12 +1898,16 @@ func (SendPushNotificationRequest) APIMethod() string { return "send_push_notifi
 
 func (r *SendPushNotificationRequest) addTo(c *command) { c.SendPushNotification = r }
 
+func (r SendPushNotificationRequest) asRequest() request { return &r }
+
 // APIMethod returns "update_push_status", the Centrifugo server API method a [UpdatePushStatusRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (UpdatePushStatusRequest) APIMethod() string { return "update_push_status" }
 
 func (r *UpdatePushStatusRequest) addTo(c *command) { c.UpdatePushStatus = r }
+
+func (r UpdatePushStatusRequest) asRequest() request { return &r }
 
 // APIMethod returns "cancel_push", the Centrifugo server API method a [CancelPushRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1856,12 +1916,16 @@ func (CancelPushRequest) APIMethod() string { return "cancel_push" }
 
 func (r *CancelPushRequest) addTo(c *command) { c.CancelPush = r }
 
+func (r CancelPushRequest) asRequest() request { return &r }
+
 // APIMethod returns "map_publish", the Centrifugo server API method a [MapPublishRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (MapPublishRequest) APIMethod() string { return "map_publish" }
 
 func (r *MapPublishRequest) addTo(c *command) { c.MapPublish = r }
+
+func (r MapPublishRequest) asRequest() request { return &r }
 
 // APIMethod returns "map_remove", the Centrifugo server API method a [MapRemoveRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1870,12 +1934,16 @@ func (MapRemoveRequest) APIMethod() string { return "map_remove" }
 
 func (r *MapRemoveRequest) addTo(c *command) { c.MapRemove = r }
 
+func (r MapRemoveRequest) asRequest() request { return &r }
+
 // APIMethod returns "map_read_state", the Centrifugo server API method a [MapReadStateRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (MapReadStateRequest) APIMethod() string { return "map_read_state" }
 
 func (r *MapReadStateRequest) addTo(c *command) { c.MapReadState = r }
+
+func (r MapReadStateRequest) asRequest() request { return &r }
 
 // APIMethod returns "map_read_stream", the Centrifugo server API method a [MapReadStreamRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1884,12 +1952,16 @@ func (MapReadStreamRequest) APIMethod() string { return "map_read_stream" }
 
 func (r *MapReadStreamRequest) addTo(c *command) { c.MapReadStream = r }
 
+func (r MapReadStreamRequest) asRequest() request { return &r }
+
 // APIMethod returns "map_stats", the Centrifugo server API method a [MapStatsRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (MapStatsRequest) APIMethod() string { return "map_stats" }
 
 func (r *MapStatsRequest) addTo(c *command) { c.MapStats = r }
+
+func (r MapStatsRequest) asRequest() request { return &r }
 
 // APIMethod returns "map_clear", the Centrifugo server API method a [MapClearRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
@@ -1898,12 +1970,16 @@ func (MapClearRequest) APIMethod() string { return "map_clear" }
 
 func (r *MapClearRequest) addTo(c *command) { c.MapClear = r }
 
+func (r MapClearRequest) asRequest() request { return &r }
+
 // APIMethod returns "shared_poll_publish", the Centrifugo server API method a [SharedPollPublishRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an
 // event for Centrifugo's async consumers.
 func (SharedPollPublishRequest) APIMethod() string { return "shared_poll_publish" }
 
 func (r *SharedPollPublishRequest) addTo(c *command) { c.SharedPollPublish = r }
+
+func (r SharedPollPublishRequest) asRequest() request { return &r }
 
 // command is one entry of a batch: exactly one of its fields is set.
 type command struct {
