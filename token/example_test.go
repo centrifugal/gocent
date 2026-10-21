@@ -2,6 +2,7 @@ package token_test
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json/jsontext"
 	"log"
 	"log/slog"
@@ -56,3 +57,26 @@ func sessionUser(r *http.Request) (string, bool) {
 }
 
 func canRead(context.Context, string, string) bool { return true }
+
+// Keys published for Centrifugo's JWKS endpoint, and rotated: the new key is
+// published next to the old one, and signs; the old one is dropped once the
+// tokens it signed have expired.
+func ExampleJWKS() {
+	_, previousKey, _ := ed25519.GenerateKey(nil)
+	_, currentKey, _ := ed25519.GenerateKey(nil)
+	previous := token.Ed25519(previousKey).WithKeyID("2026-04")
+	current := token.Ed25519(currentKey).WithKeyID("2026-10")
+
+	mux := http.NewServeMux()
+	// Centrifugo: "client": {"token": {"jwks_public_endpoint": "http://backend:3000/centrifugo/jwks"}}
+	mux.Handle("/centrifugo/jwks", token.Handlers{}.JWKS(current, previous))
+	mux.Handle("/centrifugo/connection_token", token.Handlers{}.Connection(
+		func(r *http.Request) (string, error) {
+			user, ok := sessionUser(r)
+			if !ok {
+				return "", token.ErrUnauthorized
+			}
+			return token.Connection(current, token.ConnectionClaims{User: user, ExpiresAt: time.Now().Add(time.Hour)})
+		}))
+	log.Fatal(http.ListenAndServe("127.0.0.1:3000", mux)) //nolint:gosec // an example
+}

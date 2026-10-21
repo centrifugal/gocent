@@ -80,7 +80,9 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   with HMAC, RSA, ECDSA or Ed25519 keys - Centrifugo PRO's claims included:
   capabilities, labels, server-side tag filters - and `token.Handlers` serves the
   endpoints the `getToken` callbacks of client SDKs call: `{"token": ...}`,
-  never cached, 403 for `token.ErrUnauthorized`.
+  never cached, 403 for `token.ErrUnauthorized`. `token.JWKS` and
+  `Handlers.JWKS` publish RSA, ECDSA and Ed25519 public keys as a JSON Web Key
+  Set for Centrifugo's JWKS endpoint, for key rotation.
 * **Shared poll signatures.** The new `sharedpoll` package signs the keys a
   client may track - `sharedpoll.Sign` - and `sharedpoll.Handlers` serves the
   endpoint centrifuge-js's `getSignature` calls: keys left out are revoked,

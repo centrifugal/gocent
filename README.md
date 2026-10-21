@@ -355,7 +355,9 @@ mux.Handle("/centrifugo/connection_token", h.Connection(
 ```
 
 `h.Subscription` serves subscription tokens the same way, with the channel the
-client asks for.
+client asks for. With RSA, ECDSA or Ed25519 keys, `h.JWKS(keys...)` publishes
+the public keys for Centrifugo's `jwks_public_endpoint` - the way to rotate
+keys without restarting Centrifugo.
 
 ## Shared poll signatures
 

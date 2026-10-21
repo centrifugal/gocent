@@ -25,4 +25,9 @@
 //
 // The two are independent: sign tokens anywhere, or serve tokens signed
 // elsewhere.
+//
+// With asymmetric keys, [JWKS] and [Handlers.JWKS] publish the public keys
+// for Centrifugo's client.token.jwks_public_endpoint, which is how keys
+// rotate without restarting Centrifugo: publish the new key next to the old
+// one, sign with the new one, drop the old one once its tokens expired.
 package token
