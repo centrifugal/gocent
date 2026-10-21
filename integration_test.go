@@ -156,6 +156,41 @@ func TestIntegrationBroadcastRetry(t *testing.T) {
 	}
 }
 
+// BroadcastWithRetry against a real server: a key is made when the request
+// has none, a permanent failure is not retried, and the result and error are
+// what Broadcast gives for the same partial failure.
+func TestIntegrationBroadcastWithRetry(t *testing.T) {
+	c := realClient(t, gocent.AutoBatch{})
+	a, b := uniqueChannel(t)+"-a", uniqueChannel(t)+"-b"
+	res, err := c.BroadcastWithRetry(t.Context(), gocent.BroadcastRequest{
+		Channels: []string{a, "unknown:x", b},
+		Data:     jsontext.Value(`{"text":"hello"}`),
+	}, gocent.RetryOptions{Backoff: 10 * time.Millisecond})
+	be, ok := errors.AsType[*gocent.BroadcastError](err)
+	if !ok || len(be.Failed) != 1 || be.Failed[0].Channel != "unknown:x" || gocent.Retryable(err) {
+		t.Fatalf("got %v, want a BroadcastError for unknown:x only, not retryable", err)
+	}
+	if res.Channels[0].Err != nil || res.Channels[0].Result.Offset != 1 || res.Channels[2].Result.Offset != 1 {
+		t.Errorf("result %+v", res.Channels)
+	}
+	// Sent once: the permanent failure was not retried. And a retry later,
+	// outside the call, with the key the result names, does not publish into
+	// the channels which got it.
+	again := gocent.BroadcastRequest{Channels: []string{a, b}, Data: jsontext.Value(`{"text":"hello"}`), IdempotencyKey: res.IdempotencyKey}
+	if !strings.HasPrefix(res.IdempotencyKey, "gocent-") {
+		t.Fatalf("result's key %q, want the one made for the call", res.IdempotencyKey)
+	}
+	if _, err := c.Broadcast(t.Context(), again); err != nil {
+		t.Fatalf("retry later: %v", err)
+	}
+	for _, ch := range []string{a, b} {
+		h, err := c.History(t.Context(), gocent.HistoryRequest{Channel: ch, Limit: -1})
+		if err != nil || len(h.Publications) != 1 {
+			t.Errorf("%s: %d publications, %v", ch, len(h.Publications), err)
+		}
+	}
+}
+
 func TestIntegrationBatch(t *testing.T) {
 	c := realClient(t, gocent.AutoBatch{})
 	ch := uniqueChannel(t)

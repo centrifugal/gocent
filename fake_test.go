@@ -16,7 +16,9 @@ import (
 // fakeCentrifugo answers like Centrifugo's HTTP API for the methods the tests
 // use. Publishing into a channel starting with "bad" fails with code 102
 // (unknown channel) and into one starting with "full" with code 108 (not
-// available); everything else succeeds, with offsets counting up per channel.
+// available); into one starting with "flaky" it fails with the temporary
+// internal error the first flakyFailures times, then succeeds. Everything else
+// succeeds, with offsets counting up per channel.
 type fakeCentrifugo struct {
 	t      *testing.T
 	server *httptest.Server
@@ -28,9 +30,15 @@ type fakeCentrifugo struct {
 
 	// delay holds every request back this long, to let calls pile up.
 	delay time.Duration
+	// flakyFailures is how many times a "flaky" channel fails before it
+	// succeeds.
+	flakyFailures int
+	// unavailable is how many of the next requests fail as a whole with 503.
+	unavailable atomic.Int64
 
 	mu       sync.Mutex
 	offsets  map[string]uint64
+	flaky    map[string]int
 	requests []fakeRequest
 
 	inFlight    atomic.Int64
@@ -45,7 +53,7 @@ type fakeRequest struct {
 
 func newFake(t *testing.T) *fakeCentrifugo {
 	t.Helper()
-	f := &fakeCentrifugo{t: t, key: "secret", offsets: map[string]uint64{}}
+	f := &fakeCentrifugo{t: t, key: "secret", offsets: map[string]uint64{}, flaky: map[string]int{}}
 	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.server.Close)
 	return f
@@ -85,6 +93,11 @@ func (f *fakeCentrifugo) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if !authorized {
 		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if f.unavailable.Load() > 0 {
+		f.unavailable.Add(-1)
+		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
 	method, ok := strings.CutPrefix(r.URL.Path, "/api/")
@@ -131,16 +144,24 @@ func (f *fakeCentrifugo) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 type fakeError struct {
-	Code    uint32 `json:"code"`
-	Message string `json:"message"`
+	Code      uint32 `json:"code"`
+	Message   string `json:"message"`
+	Temporary bool   `json:"temporary,omitempty"`
 }
 
-func channelError(ch string) *fakeError {
+func (f *fakeCentrifugo) channelError(ch string) *fakeError {
 	switch {
 	case strings.HasPrefix(ch, "bad"):
 		return &fakeError{Code: 102, Message: "unknown channel"}
 	case strings.HasPrefix(ch, "full"):
 		return &fakeError{Code: 108, Message: "not available"}
+	case strings.HasPrefix(ch, "flaky"):
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.flaky[ch] < f.flakyFailures {
+			f.flaky[ch]++
+			return &fakeError{Code: 100, Message: "internal server error", Temporary: true}
+		}
 	}
 	return nil
 }
@@ -161,7 +182,7 @@ func (f *fakeCentrifugo) handle(method string, params []byte) (any, *fakeError) 
 		if err := json.Unmarshal(params, &req); err != nil || req.Channel == "" {
 			return nil, &fakeError{Code: 107, Message: "bad request"}
 		}
-		if e := channelError(req.Channel); e != nil {
+		if e := f.channelError(req.Channel); e != nil {
 			return nil, e
 		}
 		return f.publish(req.Channel), nil
@@ -178,7 +199,7 @@ func (f *fakeCentrifugo) handle(method string, params []byte) (any, *fakeError) 
 		}
 		responses := make([]map[string]any, len(req.Channels))
 		for i, ch := range req.Channels {
-			if e := channelError(ch); e != nil {
+			if e := f.channelError(ch); e != nil {
 				responses[i] = map[string]any{"error": e}
 				continue
 			}

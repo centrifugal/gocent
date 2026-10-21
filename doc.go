@@ -67,9 +67,9 @@
 // from a temporary condition - a broker being unavailable, a rate limit, the
 // network - not from the request. Newer Centrifugo versions mark such errors
 // themselves ([Error.Temporary]). Back off between attempts and bound their
-// number. A broadcast which failed in some channels is retried into
-// [BroadcastError.RetryableChannels], which drops the channels that can never
-// succeed - see the example of [Retryable].
+// number - see the example of [Retryable]. A broadcast is retried with
+// [Client.BroadcastWithRetry], which sends again only the channels which may
+// still succeed, with one IdempotencyKey for all its attempts.
 //
 // A temporary error does not mean nothing was done: after a timeout, and
 // even with an internal error, the publication may have happened. So a

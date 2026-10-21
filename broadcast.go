@@ -2,6 +2,7 @@ package gocent
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,11 +30,12 @@ import (
 // it, so retrying the whole broadcast is safe - with the memory, Redis and
 // PostgreSQL brokers, which keep keys; the NATS broker ignores them.
 //
-// A generic retry helper - one which calls Broadcast again on any error -
-// needs the IdempotencyKey even more: after some channels failed, it sends
-// the publication to every channel again, those which got it included. Give
-// it [Retryable] as the condition to retry on, so that it retries only what
-// may succeed, or retry into [BroadcastError.RetryableChannels] yourself.
+// To retry a broadcast, use [Client.BroadcastWithRetry]: it sends again only
+// the channels which may still succeed, with one IdempotencyKey - made for the
+// call when the request has none - and merges the attempts' results. A
+// generic retry helper - one which calls Broadcast again on any error -
+// sends the publication to every channel again after some failed, those
+// which got it included; without an IdempotencyKey they get it twice.
 //
 // To go on despite some failed channels:
 //
@@ -49,9 +51,13 @@ import (
 func (c *Client) Broadcast(ctx context.Context, req BroadcastRequest) (BroadcastResult, error) {
 	w, err := invoke(ctx, c, &req, func(r *reply) *broadcastWire { return r.Broadcast })
 	if err != nil {
-		return failedBroadcast(req.Channels, err), err
+		res := failedBroadcast(req.Channels, err)
+		res.finish(req, err)
+		return res, err
 	}
-	return w.result(req.Channels)
+	res, err := w.result(req.Channels)
+	res.finish(req, err)
+	return res, err
 }
 
 // Broadcast adds a broadcast command to the batch. Its outcome, read with
@@ -70,14 +76,21 @@ func (b *Batch) Broadcast(req BroadcastRequest) *Pending[BroadcastResult] {
 		err  error
 	)
 	get := func(r *reply) (BroadcastResult, error) {
-		once.Do(func() { res, err = deref(r.Broadcast).result(channels) })
+		once.Do(func() {
+			res, err = deref(r.Broadcast).result(channels)
+			res.finish(req, err)
+		})
 		return res, err
 	}
 	// A broadcast which failed in any channel failed as a command too, so
 	// Send counts it in its BatchError.
 	check := func(r *reply) error { _, err := get(r); return err }
 	p := addChecked(b, &req, get, check)
-	p.fail = func(err error) BroadcastResult { return failedBroadcast(channels, err) }
+	p.fail = func(err error) BroadcastResult {
+		res := failedBroadcast(channels, err)
+		res.finish(req, err)
+		return res
+	}
 	return p
 }
 
@@ -85,6 +98,46 @@ func (b *Batch) Broadcast(req BroadcastRequest) *Pending[BroadcastResult] {
 // order the request listed them.
 type BroadcastResult struct {
 	Channels []ChannelResult
+
+	// IdempotencyKey is the key the broadcast was sent with: the request's,
+	// or the one [Client.BroadcastWithRetry] made when the request had none.
+	// A later retry of the same broadcast - from a job queue, say - which
+	// sends it with this key does not publish it again into the channels
+	// which got it.
+	IdempotencyKey string
+
+	// Attempts is how many times the broadcast was tried: 1 from
+	// [Client.Broadcast], up to RetryOptions.Attempts from
+	// [Client.BroadcastWithRetry], and 0 when it was refused before sending,
+	// as an invalid request.
+	Attempts int
+}
+
+// Failed returns the channels which did not get the publication, with their
+// errors, in the order of the request; nil when every channel got it. For a
+// broadcast which failed as a whole, that is every channel.
+func (res BroadcastResult) Failed() []ChannelResult {
+	var failed []ChannelResult
+	for _, ch := range res.Channels {
+		if ch.Err != nil {
+			failed = append(failed, ch)
+		}
+	}
+	return failed
+}
+
+// finish completes a broadcast's result with what the request and its error
+// say: the key it was sent with, and whether it was tried at all - a request
+// refused before sending was not.
+func (res *BroadcastResult) finish(req BroadcastRequest, err error) {
+	res.IdempotencyKey = req.IdempotencyKey
+	if errors.Is(err, ErrInvalidRequest) || errors.Is(err, ErrBatchNotSent) {
+		return
+	}
+	res.Attempts = 1
+	for i := range res.Channels {
+		res.Channels[i].Attempts = 1
+	}
 }
 
 // ChannelResult is the outcome of a broadcast in one channel.
@@ -98,6 +151,9 @@ type ChannelResult struct {
 	// channel's [*Error], or the error of the whole broadcast when it failed
 	// as a whole.
 	Err error
+	// Attempts is how many times the channel was sent: more than 1 when
+	// [Client.BroadcastWithRetry] retried it.
+	Attempts int
 }
 
 // BroadcastError reports a broadcast which Centrifugo carried out and which

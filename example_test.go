@@ -150,9 +150,9 @@ func ExamplePublishRequest_APIMethod() {
 	// Output: publish {"channel":"news","data":{"text":"hello"}}
 }
 
-// A broadcast retried until every channel got the publication, dropping the
-// channels which can never succeed. The IdempotencyKey keeps a channel from
-// getting the publication twice when a retry repeats it.
+// Retrying a call: Retryable says whether it may succeed, and the same
+// IdempotencyKey keeps a publication which happened in an earlier attempt
+// from happening again. For a broadcast, use [Client.BroadcastWithRetry].
 func ExampleRetryable() {
 	client, err := gocent.New(gocent.Config{
 		APIEndpoint: "http://localhost:8000/api",
@@ -161,29 +161,18 @@ func ExampleRetryable() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	req := gocent.BroadcastRequest{
-		Channels: []string{"news", "sport", "weather"},
-		Data:     jsontext.Value(`{"text":"hello"}`),
-		// The same key on every attempt: a channel which got the publication
-		// in an earlier one - even one reported as failed - does not get it
-		// again.
-		IdempotencyKey: "message-42",
+	req := gocent.PublishRequest{
+		Channel: "orders:42",
+		Data:    jsontext.Value(`{"status":"paid"}`),
+		// The same key on every attempt: a publication which happened in an
+		// earlier one - even one reported as failed - is not published again.
+		IdempotencyKey: "order-42-paid",
 	}
-	broadcast := func(ctx context.Context) error {
+	publish := func(ctx context.Context) error {
 		for attempt := 1; ; attempt++ {
-			_, broadcastErr := client.Broadcast(ctx, req)
-			if broadcastErr == nil || !gocent.Retryable(broadcastErr) || attempt == 3 {
-				return broadcastErr
-			}
-			if be, ok := errors.AsType[*gocent.BroadcastError](broadcastErr); ok {
-				// Retry only the channels which failed for a temporary
-				// reason, and report the ones which failed for good.
-				for _, f := range be.Failed {
-					if !gocent.Retryable(f.Err) {
-						log.Printf("not published into %s: %v", f.Channel, f.Err)
-					}
-				}
-				req.Channels = be.RetryableChannels()
+			_, publishErr := client.Publish(ctx, req)
+			if publishErr == nil || !gocent.Retryable(publishErr) || attempt == 3 {
+				return publishErr
 			}
 			// Back off, unless the context ends first.
 			select {
@@ -195,10 +184,46 @@ func ExampleRetryable() {
 	}
 	// All the attempts together, backing off included, take at most this.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	err = broadcast(ctx)
+	err = publish(ctx)
 	cancel()
 	if err != nil {
 		log.Fatal(err)
+	}
+}
+
+// A broadcast retried by the client: only the channels which failed for a
+// temporary reason are sent again, all with one IdempotencyKey, and the result
+// holds every channel's last outcome.
+func ExampleClient_BroadcastWithRetry() {
+	client, err := gocent.New(gocent.Config{
+		APIEndpoint: "http://localhost:8000/api",
+		APIKey:      os.Getenv("CENTRIFUGO_API_KEY"),
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res, err := client.BroadcastWithRetry(ctx, gocent.BroadcastRequest{
+		Channels: []string{"news", "sport", "weather"},
+		Data:     jsontext.Value(`{"text":"hello"}`),
+		// Optional: without one, a key is made for this call.
+		IdempotencyKey: "message-42",
+	}, gocent.RetryOptions{
+		Attempts: 3,
+		Backoff:  100 * time.Millisecond,
+		// Why each retry happens. Log a count and a sample, not every
+		// channel: a broadcast to many channels may fail in all of them.
+		OnRetry: func(ctx context.Context, e gocent.RetryEvent) {
+			log.Printf("attempt %d: %d channels to retry in %v, first: %v",
+				e.Attempt, len(e.Failed), e.Wait, e.Failed[0].Err)
+		},
+	})
+	log.Printf("broadcast: %d channels, %d failed, %d attempts, key %s",
+		len(res.Channels), len(res.Failed()), res.Attempts, res.IdempotencyKey)
+	if err = gocent.WholeFailure(err); err != nil {
+		log.Print(err) // no attempt got a reply
 	}
 }
 

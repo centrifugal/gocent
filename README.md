@@ -113,10 +113,9 @@ Choosing keys:
 - The memory, Redis and PostgreSQL brokers keep keys. The NATS broker ignores
   them, so with it a retry publishes again.
 
-With a retry library which calls the function again on any error, give it
-`gocent.Retryable` as the condition to retry on, and set an `IdempotencyKey`:
-after a broadcast failed in some channels, such a library sends it to every
-channel again, those which already got it included.
+Retry a broadcast with `client.BroadcastWithRetry` rather than a retry library:
+see below. With a retry library for other calls, give it `gocent.Retryable` as
+the condition to retry on, and set an `IdempotencyKey`.
 
 ## Broadcast and batch
 
@@ -171,10 +170,25 @@ for _, ch := range res.Channels {
 
 Retrying:
 
-- a **broadcast**: send it again with the same `IdempotencyKey`, into the
-  channels which may still succeed - `be.RetryableChannels()` leaves out those
-  which failed for good. See the example of `Retryable` in the
-  [package docs](https://pkg.go.dev/github.com/centrifugal/gocent/v4#Retryable).
+- a **broadcast**: `client.BroadcastWithRetry` does it. It sends again only the
+  channels which may still succeed, all attempts with one `IdempotencyKey` -
+  made for the call when the request has none - and returns every channel's
+  last outcome, as `Broadcast` does:
+
+  ```go
+  res, err := client.BroadcastWithRetry(ctx, req, gocent.RetryOptions{Attempts: 3})
+  ```
+
+  Waits between attempts grow, with some randomness, so that clients which
+  failed together do not retry together. `res.IdempotencyKey` is the key the
+  attempts used: to retry the broadcast later, after it gave up - from a job
+  queue, say - send it with that key. `res.Attempts`, each channel's
+  `Attempts` and `res.Failed()` tell what happened, and
+  `RetryOptions.OnRetry` is called before each retry, with the call's
+  context and why it retries - to log or count retries.
+
+  A retry library which calls `Broadcast` again on any error would instead
+  send it to every channel again, those which already got it included.
 - a **batch**: build it again with the same keys, leaving out the commands which
   failed for good. A batch is sent once, so keep your own list of its requests.
   Commands without a key are repeated.

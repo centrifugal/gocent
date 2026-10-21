@@ -31,8 +31,15 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   temporary condition, such as the new `ErrTooManyRequests`, and treats
   network failures, timeouts and HTTP 429 or 5xx as retryable too. A
   retryable error does not mean nothing was done: retry publications with
-  the same `IdempotencyKey`. `BroadcastError.RetryableChannels()` gives the
-  channels a broadcast's retry should go to.
+  the same `IdempotencyKey`. `Client.BroadcastWithRetry` retries a broadcast:
+  only the channels which may still succeed, with one `IdempotencyKey` for all
+  its attempts - made for the call when the request has none - the attempts'
+  results merged, and growing, randomized waits between them.
+  `BroadcastResult.IdempotencyKey` names the key used, for a retry later.
+  `Attempts`, on the result and on each channel, and `BroadcastResult.Failed()`
+  tell what happened; `RetryOptions.OnRetry` is called before each retry,
+  with the call's context and the channels it retries with their errors. `BroadcastError.RetryableChannels()` gives the
+  channels to retry for a loop of your own.
 * **Bearer token authentication.** `Config.BearerTokenFunc` sends a token
   with every request as `Authorization: Bearer`, for Centrifugo PRO's JWKS
   authentication of the API.

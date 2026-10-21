@@ -308,12 +308,13 @@ What else changes for code written against v3's `Broadcast`:
   if errors.Is(ch.Err, gocent.ErrUnknownChannel) { ... }
   ```
 
-- **Retries have helpers.** Instead of a retry loop of your own,
-  `gocent.Retryable(err)` says whether a retry may succeed, and
-  `be.RetryableChannels()` which channels to retry, leaving out those which
-  failed for good. Retry with the same `IdempotencyKey`. See the example of
-  `Retryable` in the
-  [package docs](https://pkg.go.dev/github.com/centrifugal/gocent/v4#Retryable).
+- **Retries are built for broadcast.** Instead of a retry loop of your own,
+  `c.BroadcastWithRetry(ctx, req, gocent.RetryOptions{Attempts: 3})` retries
+  only the channels which may still succeed, with one `IdempotencyKey` for
+  all attempts - made for the call when the request has none - and returns
+  every channel's last outcome. For other calls, `gocent.Retryable(err)` says
+  whether a retry may succeed; retry publications with the same
+  `IdempotencyKey`.
 
 ## Pipe, now a batch
 
