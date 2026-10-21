@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -831,20 +833,21 @@ func TestNotFoundForProMethod(t *testing.T) {
 // them all while idle: calls beyond that wait for a connection instead of
 // opening one, and a second burst reuses the first one's connections, so no
 // connection is opened only to be closed.
+//
+// The first 256 calls connect one at a time - each reaching the server
+// before the next starts - since a listen backlog, small on Windows, refuses
+// connections made all at once. The calls beyond them start once every
+// connection is busy, and the requests are released only after each of those
+// calls asked for a connection: without the cap, each would be dialing one.
 func TestDefaultHTTPClientConnections(t *testing.T) {
 	const limit, calls = 256, 300
 	var (
-		opened   atomic.Int64
-		inFlight atomic.Int64
-		reached  = make(chan struct{})
-		release  = make(chan struct{})
-		once     sync.Once
+		opened  atomic.Int64
+		arrived = make(chan struct{}, 2*calls)
+		release = make(chan struct{})
 	)
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if inFlight.Add(1) == limit {
-			once.Do(func() { close(reached) })
-		}
-		defer inFlight.Add(-1)
+		arrived <- struct{}{}
 		select {
 		case <-release:
 		case <-r.Context().Done():
@@ -865,38 +868,55 @@ func TestDefaultHTTPClientConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	burst := func() {
-		var wg sync.WaitGroup
-		errs := make(chan error, calls)
-		for range calls {
-			wg.Go(func() {
-				if _, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "a", Data: data}); err != nil {
-					errs <- err
-				}
-			})
+	var asked atomic.Int64
+	allAsked := make(chan struct{})
+	ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{GetConn: func(string) {
+		if asked.Add(1) == calls {
+			close(allAsked)
 		}
-		wg.Wait()
-		close(errs)
-		for err := range errs {
-			t.Errorf("call failed: %v", err)
+	}})
+	var wg sync.WaitGroup
+	errs := make(chan error, 2*calls)
+	call := func() {
+		wg.Go(func() {
+			if _, err := c.Publish(ctx, gocent.PublishRequest{Channel: "a", Data: data}); err != nil {
+				errs <- err
+			}
+		})
+	}
+	wait := func(ch <-chan struct{}, what string) {
+		t.Helper()
+		select {
+		case <-ch:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("timed out waiting for %s", what)
 		}
 	}
 
-	// The first burst holds every request until the limit is reached, so
-	// that all calls want a connection at once.
-	go func() {
-		select {
-		case <-reached:
-		case <-time.After(10 * time.Second):
-			t.Error("the server never had the limit of requests at once")
-		}
-		close(release)
-	}()
-	burst()
+	for i := range limit {
+		call()
+		wait(arrived, "request "+strconv.Itoa(i+1)+" to reach the server")
+	}
+	for range calls - limit {
+		call()
+	}
+	wait(allAsked, "every call to ask for a connection")
+	close(release)
+	wg.Wait()
 	if got := opened.Load(); got != limit {
 		t.Fatalf("first burst of %d calls opened %d connections, want %d", calls, got, limit)
 	}
-	burst()
+
+	// The connections are idle now, all of them kept: a second burst reuses
+	// them.
+	for range calls {
+		call()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("call failed: %v", err)
+	}
 	if got := opened.Load(); got != limit {
 		t.Errorf("second burst opened %d more connections: the idle ones were not kept", got-limit)
 	}
