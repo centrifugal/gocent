@@ -79,6 +79,10 @@ type HTTPError struct {
 	StatusCode int
 	// Body holds the start of the response body, for diagnostics.
 	Body []byte
+	// Header holds the response's headers, as received: a request ID a proxy
+	// set, or a Retry-After, say. It is never nil in an HTTPError gocent
+	// returns.
+	Header http.Header
 
 	// proMethod names the method of the request when only Centrifugo PRO
 	// has it: a 404 for it most likely means the server is Centrifugo OSS.
@@ -131,30 +135,6 @@ func (e *DecodeError) Error() string {
 }
 
 func (e *DecodeError) Unwrap() error { return e.Err }
-
-// WholeFailure returns err unless it is a [*BroadcastError] or a [*BatchError]
-// - Centrifugo carried the request out, and only some of its parts failed -
-// in which case it returns nil. It is for a caller which handles failed parts
-// on its own and stops only when the request failed as a whole: no part got a
-// reply.
-//
-//	res, err := client.Broadcast(ctx, req)
-//	if err = gocent.WholeFailure(err); err != nil {
-//		return err // no channel got a reply
-//	}
-//	for _, ch := range res.Channels { ... } // the failed channels have Err set
-//
-// Use it only where failed parts are expected and handled: elsewhere, let the
-// error through, so that a channel or command which failed is not missed.
-func WholeFailure(err error) error {
-	if _, ok := errors.AsType[*BroadcastError](err); ok {
-		return nil
-	}
-	if _, ok := errors.AsType[*BatchError](err); ok {
-		return nil
-	}
-	return err
-}
 
 // ErrInvalidConfig is wrapped by every error [New] returns.
 var ErrInvalidConfig = errors.New("gocent: invalid config")

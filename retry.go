@@ -20,8 +20,10 @@ import (
 //     one of the caller's own context, which a retry needs a new deadline for;
 //   - an [*HTTPError] with status 429 or 5xx, such as from a proxy in front
 //     of Centrifugo;
-//   - a [*BroadcastError] or [*BatchError] with at least one failed part
-//     which is retryable.
+//   - a [*BroadcastFailedChannelsError] or [*BatchFailedCommandsError] with at
+//     least one failed part which is retryable - also inside the error of a
+//     [Client.BroadcastWithRetry] which its OnAttemptErr stopped, whatever the
+//     reason it stopped with: the broadcast may still succeed later.
 //
 // Not retryable are the request's own errors - an unknown channel, a bad
 // request, [ErrInvalidRequest] - and a cancelled context, a reply which is
@@ -48,10 +50,10 @@ func Retryable(err error) bool {
 	if err == nil {
 		return false
 	}
-	if be, ok := errors.AsType[*BroadcastError](err); ok {
+	if be, ok := errors.AsType[*BroadcastFailedChannelsError](err); ok {
 		return slices.ContainsFunc(be.Failed, func(f ChannelResult) bool { return Retryable(f.Err) })
 	}
-	if batchErr, ok := errors.AsType[*BatchError](err); ok {
+	if batchErr, ok := errors.AsType[*BatchFailedCommandsError](err); ok {
 		return slices.ContainsFunc(batchErr.Failed, func(f CommandError) bool { return Retryable(f.Err) })
 	}
 	if apiErr, ok := errors.AsType[*Error](err); ok {

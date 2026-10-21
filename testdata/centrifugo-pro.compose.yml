@@ -46,6 +46,10 @@ services:
       - ./centrifugo.json:/centrifugo/config.json:ro
     ports:
       - "8100:8100"
+    # The proxy tests' backend runs on the host, which Centrifugo reaches as
+    # host.docker.internal - built in on Docker Desktop, mapped here on Linux.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy

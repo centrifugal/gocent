@@ -114,9 +114,10 @@ func main() {
 - `New` checks the config and returns an error: an endpoint ending with a
   method name, a header that net/http would refuse, and the like.
 - A request struct replaces the positional arguments and the `With...`
-  options. `Data` is a `jsontext.Value`: convert bytes you already have with
-  `jsontext.Value(data)`. It must be valid JSON, or the call fails before
-  anything is sent.
+  options. `Data` is a `jsontext.Value`, which takes a `[]byte` or a
+  `json.RawMessage` you already have as is: since Go 1.27 `json.RawMessage`
+  is the same type. It must be valid JSON, or the call fails before anything
+  is sent.
 - `errors.Is` matches Centrifugo errors by code, so there is no need to
   compare `Code` by hand.
 
@@ -198,7 +199,7 @@ func main() {
 	// err is nil only when every channel got the publication. This program
 	// reports each failed channel below, as the v3 one did, so it stops only
 	// when no channel got a reply.
-	if err = gocent.WholeFailure(err); err != nil {
+	if !res.Replied {
 		log.Fatal(err)
 	}
 	for _, ch := range res.Channels {
@@ -212,7 +213,7 @@ func main() {
 ```
 
 - In v3 a broadcast which failed in some channels returned a nil error. In v4
-  the error is a `*BroadcastError` then - see
+  the error is a `*BroadcastFailedChannelsError` then - see
   [Failed channels are errors now](#failed-channels-are-errors-now).
 - Each entry of `res.Channels` names its channel, and has one whatever the
   error.
@@ -242,23 +243,23 @@ logged nor retried it. Code which checked every `Error` in `res.Responses` was
 right; the trap was that leaving the check out was the natural way to write
 the call.
 
-**What v4 does.** The error is nil only when every channel got the
-publication. When Centrifugo ran the broadcast and some channels failed, the
-error is a `*gocent.BroadcastError` listing them, so the same `if err != nil`
-now catches them - and, for a temporary failure, can retry them. Check
-code which only looked at `err`: it reports failures it used to miss, which
-is the point.
+**What v4 does.** The error is nil only when every channel got the publication.
+When Centrifugo ran the broadcast and some channels failed, the error is a
+`*gocent.BroadcastFailedChannelsError` listing them, so the same `if err != nil`
+now catches them - and, for a temporary failure, can retry them. Check code
+which only looked at `err`: it reports failures it used to miss, which is the
+point.
 
 **When to keep v3's behaviour.** Code which already handled every channel on
 its own - it checked each reply, logged or counted the failed channels, and
 went on on purpose - may want a broadcast with some failed channels to stay a
-success, as in v3. For that, pass the error through `gocent.WholeFailure`,
-which drops a `*BroadcastError` and keeps any other error, and read the
-channels as before:
+success, as in v3. For that, stop only when `res.Replied` is false - the
+request failed as a whole, so no channel got a reply - and read the channels
+as before:
 
 ```go
 res, err := c.Broadcast(ctx, req)
-if err = gocent.WholeFailure(err); err != nil {
+if !res.Replied {
 	return err // the request failed as a whole: no channel got a reply
 }
 for _, ch := range res.Channels {
@@ -290,9 +291,9 @@ What else changes for code written against v3's `Broadcast`:
   ```
 
 - **A failed request still has every channel.** v3 returned no responses when
-  the request failed as a whole; v4 returns an entry per channel, each with
-  that error. Tell the two failures apart by the error - a `*BroadcastError`
-  or not - not by the number of entries.
+  the request failed as a whole; v4 returns an entry per channel, each with that
+  error. Tell the two failures apart by the error - a
+  `*BroadcastFailedChannelsError` or not - not by the number of entries.
 - **Some broadcasts are refused before sending,** with an error wrapping
   `gocent.ErrInvalidRequest`: no channels, an empty channel name among them,
   no data, or data which is not valid JSON or repeats a key in an object. v3
@@ -309,9 +310,9 @@ What else changes for code written against v3's `Broadcast`:
   ```
 
 - **Retries are built for broadcast.** Instead of a retry loop of your own,
-  `c.BroadcastWithRetry(ctx, req, gocent.RetryOptions{Attempts: 3})` retries
-  only the channels which may still succeed, with one `IdempotencyKey` for
-  all attempts - made for the call when the request has none - and returns
+  `c.BroadcastWithRetry(ctx, req, gocent.BroadcastRetryOptions{MaxAttempts: 3})`
+  retries only the channels which may still succeed, with one `IdempotencyKey`
+  for all attempts - made for the call when the request has none - and returns
   every channel's last outcome. For other calls, `gocent.Retryable(err)` says
   whether a retry may succeed; retry publications with the same
   `IdempotencyKey`.
@@ -420,7 +421,7 @@ func main() {
 
 	// err is nil only when every command succeeded. This program reads each
 	// command's outcome below, so it stops only when no command got a reply.
-	if err = gocent.WholeFailure(b.Send(ctx)); err != nil {
+	if sent, err := b.Send(ctx); !sent.Replied {
 		log.Fatal(err)
 	}
 	// Each command has its own typed result, or its own error.
@@ -440,8 +441,8 @@ func main() {
 
 - Each command returns a `Pending` with its own typed result: no decoding by
   position.
-- `Send` returns an error when any command failed, a `*BatchError` listing
-  them. Every `Pending` still has its own outcome.
+- `Send` returns an error when any command failed, a `*BatchFailedCommandsError`
+  listing them. Every `Pending` still has its own outcome.
 - A batch is sent once; to send the same commands again, build a new one.
   An empty batch sends nothing and returns nil, where v3 returned
   `ErrPipeEmpty`.

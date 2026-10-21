@@ -58,6 +58,11 @@ linters:
         text: "G101"
         linters:
           - gosec
+      # Tests use seeded randomness, which must repeat, not resist guessing.
+      - path: _test\.go
+        text: "G404"
+        linters:
+          - gosec
       # The generator reads a path go generate gives it.
       - path: internal/gen
         text: "G304"

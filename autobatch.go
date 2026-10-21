@@ -39,6 +39,8 @@ type queued struct {
 	// deadline is the caller's: the batch carrying the call lasts until
 	// the latest deadline of its calls.
 	deadline time.Time
+	// ctx is the caller's, for Config.BatchContext to take values from.
+	ctx context.Context
 	// taken is set, under the batcher's lock, once the call is in a batch;
 	// gone once its caller gave up waiting before that.
 	taken bool
@@ -80,7 +82,7 @@ func batched[W any](ctx context.Context, b *batcher, req request, get func(*repl
 		}
 		b.mu.Lock()
 	}
-	q := &queued{command: encoded, done: make(chan struct{}), deadline: deadline}
+	q := &queued{command: encoded, done: make(chan struct{}), deadline: deadline, ctx: ctx}
 	b.queue = append(b.queue, q)
 	b.mu.Unlock()
 
@@ -175,12 +177,17 @@ func (b *batcher) release() {
 	b.mu.Unlock()
 	// Sent from a goroutine of its own, so no caller's goroutine is held by
 	// work done for others, and a caller giving up does not cancel it.
+	// Counted as a call: Close waits for it even when its callers left.
+	b.client.calls.add()
 	go b.flush(items)
 }
 
-// dropGone removes calls whose callers gave up from the head of the queue, so
-// that a queue holding only those does not stop a call from being sent at
-// once. The caller holds the lock.
+// dropGone removes calls whose callers gave up from the head of the queue.
+// It only saves work: calls queue only while every request slot is taken,
+// and a finished request passes its slot on to the queued calls, skipping
+// those whose callers gave up - so they never keep a call from being sent,
+// and dropping them early only spares a batch with nothing to send. The
+// caller holds the lock.
 func (b *batcher) dropGone() {
 	n := 0
 	for n < len(b.queue) && b.queue[n].gone {
@@ -195,6 +202,7 @@ func (b *batcher) dropGone() {
 }
 
 func (b *batcher) flush(items []*queued) {
+	defer b.client.calls.leave()
 	defer b.release()
 	if len(items) == 0 {
 		return
@@ -216,13 +224,23 @@ func (b *batcher) flush(items []*queued) {
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
+	if b.client.batchContext != nil {
+		callers := make([]context.Context, len(items))
+		for i, q := range items {
+			callers[i] = q.ctx
+		}
+		// The batch keeps its deadline whatever the function made.
+		var cancelBatch context.CancelFunc
+		ctx, cancelBatch = context.WithDeadline(b.client.batchContext(ctx, callers), deadline)
+		defer cancelBatch()
+	}
 	// Parallel: the commands of an automatic batch come from calls made
 	// concurrently - a goroutine waits for one call before making the next,
 	// so two calls of one goroutine are never in the same batch. Nothing
 	// orders them against each other, and running them in parallel lets
 	// Centrifugo pipeline their broker commands, as it does for separate
 	// requests, instead of waiting for each in turn.
-	replies, err := sendBatch(ctx, b.client, commands, BatchOptions{Parallel: true})
+	replies, err := sendBatch(ctx, b.client, commands, BatchOptions{Parallel: true}, true)
 	for i, q := range items {
 		if err != nil {
 			q.err = err

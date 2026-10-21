@@ -203,7 +203,7 @@ func TestAutoBatchBroadcastPartialFailure(t *testing.T) {
 			res, err := c.Broadcast(t.Context(), gocent.BroadcastRequest{
 				Channels: []string{"ok" + strconv.Itoa(i), "bad" + strconv.Itoa(i)}, Data: data,
 			})
-			var be *gocent.BroadcastError
+			var be *gocent.BroadcastFailedChannelsError
 			if !errors.As(err, &be) || len(be.Failed) != 1 || be.Failed[0].Channel != "bad"+strconv.Itoa(i) {
 				t.Errorf("broadcast %d: %v", i, err)
 			}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Batch collects commands and sends them to Centrifugo in one request. Create
@@ -15,7 +16,7 @@ import (
 //	b := client.NewBatch(gocent.BatchOptions{})
 //	pub := b.Publish(gocent.PublishRequest{Channel: "news", Data: data})
 //	stats := b.PresenceStats(gocent.PresenceStatsRequest{Channel: "news"})
-//	if err := b.Send(ctx); err != nil {
+//	if _, err := b.Send(ctx); err != nil {
 //		return err // not every command succeeded
 //	}
 //	res, err := pub.Result() // this command's own outcome
@@ -78,11 +79,15 @@ func (b *Batch) Len() int { return len(b.commands) }
 // Like every call, Send returns an error unless every command succeeded:
 //
 //   - nil means every command succeeded.
-//   - A [*BatchError] means one or more commands failed, up to all of them.
-//     Every command got its own reply: each [Pending] holds its outcome,
-//     success or failure, and the error lists the failed ones.
+//   - A [*BatchFailedCommandsError] means one or more commands failed, up to
+//     all of them. Every command got its own reply: each [Pending] holds its
+//     outcome, success or failure, and the error lists the failed ones.
 //   - Any other error means the batch failed as a whole: no command got a
 //     reply, and every Pending returns that same error.
+//
+// The result says which: BatchResult.Replied is true when Centrifugo replied
+// to every command, and [BatchResult.Failed] lists the commands which failed. Code which only needs the error writes
+// _, err := b.Send(ctx).
 //
 // A command the client can tell is invalid - see [ErrInvalidRequest] - fails
 // the whole batch before anything is sent, and every Pending returns that
@@ -91,13 +96,18 @@ func (b *Batch) Len() int { return len(b.commands) }
 // Sending an empty batch does nothing and returns nil. A batch is sent once,
 // whatever Send returns - fix a batch by building it again. Sending it again
 // returns [ErrBatchSent].
-func (b *Batch) Send(ctx context.Context) error {
+func (b *Batch) Send(ctx context.Context) (BatchResult, error) {
 	if b.sent {
-		return ErrBatchSent
+		return BatchResult{}, ErrBatchSent
 	}
 	b.sent = true
+	if err := b.client.calls.enter(); err != nil {
+		b.err = err
+		return b.failedAsWhole(err), err
+	}
+	defer b.client.calls.leave()
 	if len(b.commands) == 0 {
-		return nil
+		return BatchResult{Replied: true}, nil
 	}
 	// A command the client can tell is invalid would fail the whole batch
 	// when encoded - or reach Centrifugo only to be refused - so nothing is
@@ -105,10 +115,10 @@ func (b *Batch) Send(ctx context.Context) error {
 	for i, err := range b.invalid {
 		if err != nil {
 			b.err = &commandInvalidError{index: i, err: err}
-			return b.err
+			return b.failedAsWhole(b.err), b.err
 		}
 	}
-	replies, err := sendBatch(ctx, b.client, b.commands, b.opts)
+	replies, err := sendBatch(ctx, b.client, b.commands, b.opts, false)
 	if err != nil {
 		if errors.Is(err, ErrInvalidRequest) {
 			// A command which cannot be encoded - a payload which is not
@@ -116,11 +126,11 @@ func (b *Batch) Send(ctx context.Context) error {
 			err = b.unencodable(err)
 		}
 		b.err = err
-		return err
+		return b.failedAsWhole(err), err
 	}
 	b.replies = replies
 
-	var be *BatchError
+	var be *BatchFailedCommandsError
 	for i := range replies {
 		var err error
 		switch {
@@ -133,14 +143,44 @@ func (b *Batch) Send(ctx context.Context) error {
 			continue
 		}
 		if be == nil {
-			be = &BatchError{Total: len(replies)}
+			be = &BatchFailedCommandsError{Total: len(replies)}
 		}
 		be.Failed = append(be.Failed, CommandError{Index: i, Method: b.methods[i], Err: err})
 	}
 	if be != nil {
-		return be
+		return BatchResult{Replied: true, failed: be.Failed}, be
 	}
-	return nil
+	return BatchResult{Replied: true}, nil
+}
+
+// BatchResult is the outcome of a sent batch as a whole. Each command's own
+// result is in the [Pending] its method returned.
+type BatchResult struct {
+	// Replied is true when Centrifugo carried the batch out and replied to
+	// every command, the failed ones included - Send's error is nil or a
+	// [*BatchFailedCommandsError]. It is false when the batch failed as a
+	// whole: a network error, a timeout, an HTTP error status such as 401, or a
+	// command the client refused before sending; no command got a reply then.
+	// It is true for an empty batch.
+	Replied bool
+
+	failed []CommandError
+}
+
+// Failed returns the commands which failed, with their errors, in the order
+// they were added; nil when every command succeeded. When the batch failed as
+// a whole, that is every command, each with the batch's error - as each
+// Pending returns it.
+func (r BatchResult) Failed() []CommandError { return r.failed }
+
+// failedAsWhole is the result of a batch which failed as a whole with err:
+// every command failed with it.
+func (b *Batch) failedAsWhole(err error) BatchResult {
+	failed := make([]CommandError, len(b.methods))
+	for i, method := range b.methods {
+		failed[i] = CommandError{Index: i, Method: method, Err: err}
+	}
+	return BatchResult{failed: failed}
 }
 
 // unencodable finds the command which failed the batch's encoding, and
@@ -224,14 +264,14 @@ func addChecked[T any](b *Batch, req request, get func(*reply) (T, error), check
 	return &Pending[T]{batch: b, index: len(b.commands) - 1, get: get}
 }
 
-// BatchError reports a batch in which one or more commands failed, up to all
-// of them. Every command got its own reply: each one's outcome, success or
-// failure, is available from its [Pending].
+// BatchFailedCommandsError reports a batch in which one or more commands
+// failed, up to all of them. Every command got its own reply: each one's
+// outcome, success or failure, is available from its [Pending].
 //
 // It does not unwrap to the commands' errors: errors.Is(err, ErrUnknownChannel)
 // is not true because one command of many failed that way. Look at each
 // command's error in Failed, or at its [Pending].
-type BatchError struct {
+type BatchFailedCommandsError struct {
 	// Failed lists the failed commands in the order they were added.
 	Failed []CommandError
 	// Total is how many commands the batch had.
@@ -245,12 +285,12 @@ type CommandError struct {
 	// Method is the command's API method, such as "publish".
 	Method string
 	// Err is the error the command's [Pending] returns: an [*Error], or a
-	// [*BroadcastError] for a broadcast which failed in one or more of its
-	// channels.
+	// [*BroadcastFailedChannelsError] for a broadcast which failed in one or
+	// more of its channels.
 	Err error
 }
 
-func (e *BatchError) Error() string {
+func (e *BatchFailedCommandsError) Error() string {
 	return failuresMessage("batch", "commands", len(e.Failed), e.Total, func(b *strings.Builder, i int) (string, error) {
 		f := e.Failed[i]
 		b.WriteString("#")
@@ -313,14 +353,25 @@ type batchResponse struct {
 
 // sendBatch sends commands to the batch endpoint, and returns a reply for
 // each, in order.
-func sendBatch[C any](ctx context.Context, c *Client, commands []C, opts BatchOptions) ([]reply, error) {
+func sendBatch[C any](ctx context.Context, c *Client, commands []C, opts BatchOptions, auto bool) ([]reply, error) {
 	req := batchRequest[C]{Commands: commands, Parallel: opts.Parallel}
 	var resp batchResponse
-	if err := c.post(ctx, "batch", &req, &resp); err != nil {
-		return nil, err
+	info := RequestInfo{Method: "batch", Commands: len(commands), AutoBatch: auto}
+	start := time.Now()
+	err := c.post(ctx, "batch", &req, &resp, &info.StatusCode)
+	if err == nil && len(resp.Replies) != len(commands) {
+		err = &DecodeError{Err: errMismatchedReplies(len(resp.Replies), len(commands), "commands")}
 	}
-	if len(resp.Replies) != len(commands) {
-		return nil, &DecodeError{Err: errMismatchedReplies(len(resp.Replies), len(commands), "commands")}
+	if err == nil {
+		for i := range resp.Replies {
+			if resp.Replies[i].Error != nil {
+				info.Failed++
+			}
+		}
+	}
+	c.reportRequest(ctx, info, start, err)
+	if err != nil {
+		return nil, err
 	}
 	return resp.Replies, nil
 }

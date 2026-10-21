@@ -82,7 +82,7 @@ func BenchmarkBatch100(b *testing.B) {
 		for i := range 100 {
 			batch.Publish(gocent.PublishRequest{Channel: "ch" + strconv.Itoa(i), Data: data})
 		}
-		if err := batch.Send(b.Context()); err != nil {
+		if _, err := batch.Send(b.Context()); err != nil {
 			b.Fatal(err)
 		}
 	}

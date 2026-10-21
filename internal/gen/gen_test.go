@@ -18,7 +18,7 @@ func TestParseRejectsUnsupported(t *testing.T) {
 		"unterminated":   "message A {\n string a = 1;",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := parse(strings.NewReader(src)); err == nil {
+			if _, err := parse(strings.NewReader(src), "test.proto"); err == nil {
 				t.Fatal("parsed without error")
 			}
 		})
@@ -36,7 +36,7 @@ message A {
     // Detached, then a blank line: documents nothing.
 
     string z = 3;
-}`))
+}`), "test.proto")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestGeneratedIsCurrent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = f.Close() }()
-	s, err := parse(f)
+	s, err := parse(f, "api.proto")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +109,58 @@ func TestGoDoc(t *testing.T) {
 	for _, tc := range cases {
 		if got := w.goDoc(tc.in, "join_leave", "JoinLeave"); got != tc.want {
 			t.Errorf("goDoc(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// A method may end with a semicolon or an empty body, and may stream either
+// way: proxy.proto has all of them.
+func TestParseMethods(t *testing.T) {
+	s, err := parse(strings.NewReader(`
+message Req {}
+message Res {}
+service S {
+  rpc Plain(Req) returns (Res) {}
+  rpc Semicolon(Req) returns (Res);
+  rpc Out(Req) returns (stream Res);
+  rpc Both(stream Req) returns (stream Res);
+}`), "test.proto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"Plain": false, "Semicolon": false, "Out": true, "Both": true}
+	if len(s.methods) != len(want) {
+		t.Fatalf("%d methods", len(s.methods))
+	}
+	for _, m := range s.methods {
+		if streaming, ok := want[m.name]; !ok || m.streaming != streaming || m.request != "Req" || m.response != "Res" {
+			t.Errorf("method %+v", *m)
+		}
+	}
+}
+
+// The proxy types leave out what only streaming methods use, and what nothing
+// uses.
+func TestProxyMessages(t *testing.T) {
+	s, err := parse(strings.NewReader(`
+message Req {
+  Shared shared = 1;
+}
+message Res {}
+message Shared {}
+message StreamOnly {}
+message Unused {}
+service S {
+  rpc Call(Req) returns (Res);
+  rpc Stream(StreamOnly) returns (stream Shared);
+}`), "test.proto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := proxyMessages(s)
+	for name, want := range map[string]bool{"Req": true, "Res": true, "Shared": true, "StreamOnly": false, "Unused": false} {
+		if got[name] != want {
+			t.Errorf("%s: %v, want %v", name, got[name], want)
 		}
 	}
 }

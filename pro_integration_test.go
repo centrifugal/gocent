@@ -166,7 +166,7 @@ func TestIntegrationProBatch(t *testing.T) {
 	status := b.GetUserStatus(gocent.GetUserStatusRequest{Users: []string{user}})
 	reg := b.DeviceRegister(gocent.DeviceRegisterRequest{Provider: "webpush", Platform: "web", Token: webpushToken(t), User: user})
 	conns := b.Connections(gocent.ConnectionsRequest{User: user})
-	if err := b.Send(t.Context()); err != nil {
+	if _, err := b.Send(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if st, err := status.Result(); err != nil || len(st.Statuses) != 1 || st.Statuses[0].State != "busy" {

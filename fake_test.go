@@ -35,6 +35,11 @@ type fakeCentrifugo struct {
 	flakyFailures int
 	// unavailable is how many of the next requests fail as a whole with 503.
 	unavailable atomic.Int64
+	// retryAfter, when set, is the Retry-After header of those 503s.
+	retryAfter string
+	// hang is how many of the next requests get no reply until the client
+	// gives up on them.
+	hang atomic.Int64
 
 	mu       sync.Mutex
 	offsets  map[string]uint64
@@ -95,8 +100,16 @@ func (f *fakeCentrifugo) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
+	if f.hang.Load() > 0 {
+		f.hang.Add(-1)
+		<-r.Context().Done()
+		return
+	}
 	if f.unavailable.Load() > 0 {
 		f.unavailable.Add(-1)
+		if f.retryAfter != "" {
+			w.Header().Set("Retry-After", f.retryAfter)
+		}
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}

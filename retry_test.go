@@ -16,8 +16,8 @@ import (
 )
 
 func TestRetryable(t *testing.T) {
-	broadcast := func(errs ...error) *gocent.BroadcastError {
-		be := &gocent.BroadcastError{Total: len(errs) + 1}
+	broadcast := func(errs ...error) *gocent.BroadcastFailedChannelsError {
+		be := &gocent.BroadcastFailedChannelsError{Total: len(errs) + 1}
 		for i, err := range errs {
 			be.Failed = append(be.Failed, gocent.ChannelResult{Channel: fmt.Sprint("ch", i), Err: err})
 		}
@@ -52,11 +52,11 @@ func TestRetryable(t *testing.T) {
 		{"invalid certificate", &url.Error{Op: "Post", URL: "https://x/api", Err: &tls.CertificateVerificationError{Err: errors.New("unknown authority")}}, false},
 		{"broadcast, one channel temporary", broadcast(&gocent.Error{Code: 102}, &gocent.Error{Code: 100}), true},
 		{"broadcast, only permanent", broadcast(&gocent.Error{Code: 102}, &gocent.Error{Code: 107}), false},
-		{"batch holding a temporary broadcast", &gocent.BatchError{Total: 2, Failed: []gocent.CommandError{
+		{"batch holding a temporary broadcast", &gocent.BatchFailedCommandsError{Total: 2, Failed: []gocent.CommandError{
 			{Index: 0, Method: "publish", Err: &gocent.Error{Code: 107}},
 			{Index: 1, Method: "broadcast", Err: broadcast(&gocent.Error{Code: 100})},
 		}}, true},
-		{"batch, only permanent", &gocent.BatchError{Total: 1, Failed: []gocent.CommandError{
+		{"batch, only permanent", &gocent.BatchFailedCommandsError{Total: 1, Failed: []gocent.CommandError{
 			{Index: 0, Method: "publish", Err: &gocent.Error{Code: 102}},
 		}}, false},
 	} {
@@ -126,7 +126,7 @@ func TestRetryableFromClient(t *testing.T) {
 // RetryableChannels keeps the channels a retry may still publish into, in the
 // order of the request, and leaves out those which failed for good.
 func TestRetryableChannels(t *testing.T) {
-	be := &gocent.BroadcastError{Total: 5, Failed: []gocent.ChannelResult{
+	be := &gocent.BroadcastFailedChannelsError{Total: 5, Failed: []gocent.ChannelResult{
 		{Channel: "a", Err: &gocent.Error{Code: 100, Temporary: true}},
 		{Channel: "b", Err: gocent.ErrUnknownChannel},
 		{Channel: "c", Err: &gocent.Error{Code: 111, Temporary: true}},
@@ -135,37 +135,8 @@ func TestRetryableChannels(t *testing.T) {
 	if got := be.RetryableChannels(); !slices.Equal(got, []string{"a", "c"}) {
 		t.Errorf("RetryableChannels() = %v, want [a c]", got)
 	}
-	permanent := &gocent.BroadcastError{Total: 1, Failed: []gocent.ChannelResult{{Channel: "b", Err: gocent.ErrUnknownChannel}}}
+	permanent := &gocent.BroadcastFailedChannelsError{Total: 1, Failed: []gocent.ChannelResult{{Channel: "b", Err: gocent.ErrUnknownChannel}}}
 	if got := permanent.RetryableChannels(); got != nil {
 		t.Errorf("only permanent failures: RetryableChannels() = %v, want nil", got)
-	}
-}
-
-// WholeFailure drops the error of a broadcast or batch which Centrifugo
-// carried out with some failed parts, and keeps every other error.
-func TestWholeFailure(t *testing.T) {
-	partial := []error{
-		&gocent.BroadcastError{Total: 2, Failed: []gocent.ChannelResult{{Channel: "a", Err: gocent.ErrUnknownChannel}}},
-		&gocent.BatchError{Total: 2, Failed: []gocent.CommandError{{Index: 1, Method: "publish", Err: gocent.ErrUnknownChannel}}},
-		fmt.Errorf("notify: %w", &gocent.BroadcastError{Total: 1}),
-	}
-	for _, err := range partial {
-		if got := gocent.WholeFailure(err); got != nil {
-			t.Errorf("WholeFailure(%v) = %v, want nil", err, got)
-		}
-	}
-	whole := []error{
-		gocent.ErrUnknownChannel,
-		&gocent.HTTPError{StatusCode: http.StatusUnauthorized},
-		fmt.Errorf("gocent: broadcast: %w", context.DeadlineExceeded),
-		gocent.ErrInvalidRequest,
-	}
-	for _, err := range whole {
-		if got := gocent.WholeFailure(err); got != err { //nolint:errorlint // the same error, not a matching one
-			t.Errorf("WholeFailure(%v) = %v, want the error itself", err, got)
-		}
-	}
-	if got := gocent.WholeFailure(nil); got != nil {
-		t.Errorf("WholeFailure(nil) = %v", got)
 	}
 }

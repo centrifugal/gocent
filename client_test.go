@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -290,12 +291,12 @@ func TestErrorMessages(t *testing.T) {
 		{&gocent.HTTPError{StatusCode: 401}, "gocent: unexpected HTTP status 401 (check the credentials: APIKey or BearerTokenFunc)"},
 		{&gocent.HTTPError{StatusCode: 404, Body: []byte("404 page not found")}, "gocent: unexpected HTTP status 404 (is APIEndpoint the API base URL, such as http://localhost:8000/api?): 404 page not found"},
 		{&gocent.DecodeError{Err: errors.New("invalid character")}, "gocent: decoding response: invalid character"},
-		{&gocent.BatchError{Total: 3, Failed: []gocent.CommandError{
+		{&gocent.BatchFailedCommandsError{Total: 3, Failed: []gocent.CommandError{
 			{Index: 0, Method: "publish", Err: gocent.ErrUnknownChannel},
 			{Index: 2, Method: "history", Err: gocent.ErrNotAvailable},
 		}}, "gocent: batch: 2 of 3 commands failed: #0 publish: unknown channel (code 102); #2 history: not available (code 108)"},
-		{&gocent.BatchError{Total: 1, Failed: []gocent.CommandError{
-			{Index: 0, Method: "broadcast", Err: &gocent.BroadcastError{Total: 2, Failed: []gocent.ChannelResult{
+		{&gocent.BatchFailedCommandsError{Total: 1, Failed: []gocent.CommandError{
+			{Index: 0, Method: "broadcast", Err: &gocent.BroadcastFailedChannelsError{Total: 2, Failed: []gocent.ChannelResult{
 				{Channel: "a", Err: gocent.ErrUnknownChannel},
 			}}},
 		}}, "gocent: batch: 1 of 1 commands failed: #0 broadcast: 1 of 2 channels failed: a: unknown channel (code 102)"},
@@ -337,7 +338,7 @@ func TestInvalidRequestsAreNotSent(t *testing.T) {
 	b := c.NewBatch(gocent.BatchOptions{})
 	pending := b.Publish(gocent.PublishRequest{Channel: "news", Data: data})
 	b.Publish(gocent.PublishRequest{Channel: "news", Data: jsontext.Value(`{`)})
-	err := b.Send(t.Context())
+	_, err := b.Send(t.Context())
 	if !errors.Is(err, gocent.ErrInvalidRequest) || !strings.Contains(err.Error(), "batch command #1") {
 		t.Fatalf("batch with an invalid command: %v", err)
 	}
@@ -729,7 +730,7 @@ func TestUnencodableRequest(t *testing.T) {
 	b := c.NewBatch(gocent.BatchOptions{})
 	b.Publish(gocent.PublishRequest{Channel: "news", Data: data})
 	sub := b.Subscribe(gocent.SubscribeRequest{User: "u", Channel: "news", Data: bad})
-	err = b.Send(t.Context())
+	_, err = b.Send(t.Context())
 	if !errors.Is(err, gocent.ErrInvalidRequest) || !strings.HasPrefix(err.Error(), "gocent: batch command #1: invalid subscribe request") {
 		t.Errorf("Send: %v", err)
 	}
@@ -823,5 +824,80 @@ func TestNotFoundForProMethod(t *testing.T) {
 	_, err = c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data})
 	if !strings.Contains(err.Error(), "is APIEndpoint the API base URL") {
 		t.Errorf("OSS method: got %v", err)
+	}
+}
+
+// The default HTTP client opens at most 256 connections to a host and keeps
+// them all while idle: calls beyond that wait for a connection instead of
+// opening one, and a second burst reuses the first one's connections, so no
+// connection is opened only to be closed.
+func TestDefaultHTTPClientConnections(t *testing.T) {
+	const limit, calls = 256, 300
+	var (
+		opened   atomic.Int64
+		inFlight atomic.Int64
+		reached  = make(chan struct{})
+		release  = make(chan struct{})
+		once     sync.Once
+	)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if inFlight.Add(1) == limit {
+			once.Do(func() { close(reached) })
+		}
+		defer inFlight.Add(-1)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":{"offset":1}}`))
+	}))
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			opened.Add(1)
+		}
+	}
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	c, err := gocent.New(gocent.Config{APIEndpoint: srv.URL + "/api", APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	burst := func() {
+		var wg sync.WaitGroup
+		errs := make(chan error, calls)
+		for range calls {
+			wg.Go(func() {
+				if _, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "a", Data: data}); err != nil {
+					errs <- err
+				}
+			})
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Errorf("call failed: %v", err)
+		}
+	}
+
+	// The first burst holds every request until the limit is reached, so
+	// that all calls want a connection at once.
+	go func() {
+		select {
+		case <-reached:
+		case <-time.After(10 * time.Second):
+			t.Error("the server never had the limit of requests at once")
+		}
+		close(release)
+	}()
+	burst()
+	if got := opened.Load(); got != limit {
+		t.Fatalf("first burst of %d calls opened %d connections, want %d", calls, got, limit)
+	}
+	burst()
+	if got := opened.Load(); got != limit {
+		t.Errorf("second burst opened %d more connections: the idle ones were not kept", got-limit)
 	}
 }

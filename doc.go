@@ -56,10 +56,14 @@
 //     send it.
 //   - Anything else comes from the network or the context, wrapped.
 //
-// A request without a deadline in its context times out after
-// Config.RequestTimeout, ten seconds by default, so a call never hangs.
-// However a request times out, errors.Is(err, context.DeadlineExceeded) is
-// true.
+// Each call is bounded by its context: give a call a timeout of its own with
+// context.WithTimeout. A request without a deadline in its context times out
+// after Config.RequestTimeout, ten seconds by default, so a call never hangs;
+// http.Client.Timeout, in Config.HTTPClient, bounds every request of the
+// client on top of that. [Client.BroadcastWithRetry] makes several requests
+// in one call: its context bounds them all, and
+// [BroadcastRetryOptions].AttemptTimeout each one. However a request times
+// out, errors.Is(err, context.DeadlineExceeded) is true.
 //
 // # Retrying
 //
@@ -85,21 +89,23 @@
 //   - The memory, Redis and PostgreSQL brokers keep keys. The NATS broker
 //     ignores them, so with it a retry publishes again.
 //
-// To retry a failed batch, build it again with the same keys, leaving out the
-// commands which failed for good, and send it: the publications which
-// happened are not repeated. See the batch example of [Retryable]. A command without a key
-// is repeated, and so is a read, which is harmless.
+// To retry a failed batch, build a new one with the commands which may still
+// succeed - those [BatchResult.Failed] lists with a retryable error, which is
+// every command when the batch failed as a whole - with the same keys: the
+// publications which happened are not repeated. See the batch example of
+// [Retryable]. A command without a key is repeated, and so is a read, which is
+// harmless.
 //
 // # Broadcast and batch
 //
 // A call returns an error unless it did everything asked, and
 // [Client.Broadcast] and [Batch.Send] are no exception - though they do many
-// things in one request, and each of those can fail on its own. When
-// Centrifugo carried out the request and one or more parts failed, up to
-// all, the error is a [*BroadcastError] or a [*BatchError] listing them. Any
-// other error means the request failed as a whole: no part got a reply. After
-// a timeout or a network error Centrifugo may still have carried it out, so
-// retry with the same IdempotencyKey.
+// things in one request, and each of those can fail on its own. When Centrifugo
+// carried out the request and one or more parts failed, up to all, the error is
+// a [*BroadcastFailedChannelsError] or a [*BatchFailedCommandsError] listing
+// them. Any other error means the request failed as a whole: no part got a
+// reply. After a timeout or a network error Centrifugo may still have carried
+// it out, so retry with the same IdempotencyKey.
 //
 // Every part always has an outcome, whatever the error: a broadcast's result
 // holds one entry per channel, and every command of a batch its [Pending].
@@ -107,10 +113,11 @@
 //
 // Most callers need no more than err != nil: a broadcast retried with the
 // same IdempotencyKey is not published twice into any channel. To go on
-// despite some failed parts, check err first, then read each part:
+// despite some failed parts, ask the result whether Centrifugo replied, then
+// read each part:
 //
 //	res, err := client.Broadcast(ctx, req)
-//	if err = gocent.WholeFailure(err); err != nil {
+//	if !res.Replied {
 //		return err // no channel got a reply
 //	}
 //	for _, ch := range res.Channels { ... } // ch.Err is set for a failed channel
@@ -144,9 +151,22 @@
 //
 // A call sent in an automatic batch is the exception. The batch request
 // carries the commands of several callers, so it does not run on any
-// caller's context: its span starts a trace of its own, not linked to the
-// spans of the calls it carries. Leave AutoBatch off where every call must
-// show in its caller's trace.
+// caller's context: its span starts a trace of its own. Config.BatchContext
+// makes its context from the callers' - with OpenTelemetry, a span with a
+// link to each caller's span:
+//
+//	BatchContext: func(ctx context.Context, callers []context.Context) context.Context {
+//		links := make([]trace.Link, 0, len(callers))
+//		for _, c := range callers {
+//			links = append(links, trace.LinkFromContext(c))
+//		}
+//		ctx, _ = tracer.Start(ctx, "gocent batch", trace.WithLinks(links...))
+//		return ctx
+//	},
+//
+// Config.OnRequest is told of every request - its method, how many commands
+// it carried and how many failed, whether it was an automatic batch, its
+// duration, status and error - for metrics without a transport of your own.
 //
 // A transport of your own works the same way. It must not modify the
 // request it is given - net/http's RoundTripper contract - but clone it

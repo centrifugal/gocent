@@ -61,6 +61,9 @@ jobs:
         image: centrifugo/centrifugo:v6.10.1
         ports:
           - 8100:8000
+        # The proxy tests' backend runs on the runner, which Centrifugo
+        # reaches as host.docker.internal.
+        options: --add-host=host.docker.internal:host-gateway
         env:
           CENTRIFUGO_HTTP_API_KEY: api_key
           CENTRIFUGO_CHANNEL_WITHOUT_NAMESPACE_HISTORY_SIZE: "1000"
@@ -68,6 +71,12 @@ jobs:
           CENTRIFUGO_CHANNEL_WITHOUT_NAMESPACE_PRESENCE: "true"
           CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY: client_secret
           CENTRIFUGO_UNI_HTTP_STREAM_ENABLED: "true"
+          CENTRIFUGO_CLIENT_PROXY_CONNECT_ENABLED: "true"
+          CENTRIFUGO_CLIENT_PROXY_CONNECT_ENDPOINT: http://host.docker.internal:3100/connect
+          CENTRIFUGO_CLIENT_PROXY_CONNECT_TIMEOUT: 3s
+          CENTRIFUGO_CLIENT_PROXY_REFRESH_ENABLED: "true"
+          CENTRIFUGO_CLIENT_PROXY_REFRESH_ENDPOINT: http://host.docker.internal:3100/refresh
+          CENTRIFUGO_CLIENT_PROXY_REFRESH_TIMEOUT: 3s
           CENTRIFUGO_SHARED_POLL_HMAC_SECRET_KEY: shared_poll_secret
           CENTRIFUGO_CHANNEL_PROXY_SHARED_POLL_REFRESH_ENDPOINT: http://localhost:3000/shared_poll_refresh
           CENTRIFUGO_CHANNEL_NAMESPACES: >-
@@ -116,3 +125,4 @@ jobs:
           go-version: stable
           cache: false
       - run: make fuzz FUZZTIME=1m
+      - run: make stress

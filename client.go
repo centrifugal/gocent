@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,7 +28,7 @@ type Config struct {
 	// Centrifugo's address is discovered rather than fixed. It must be safe
 	// for concurrent use. Exactly one of APIEndpoint and APIEndpointFunc must
 	// be set. With AutoBatch, a batch request is not any one caller's: its
-	// context has no values of the callers' contexts.
+	// context has the callers' values only through BatchContext.
 	APIEndpointFunc func(ctx context.Context) (string, error)
 
 	// APIKey is sent with every request in the X-API-Key header. Leave it
@@ -44,13 +45,17 @@ type Config struct {
 	// sent, and the error wraps it. It may not be set together with APIKey:
 	// Centrifugo PRO judges a request with a bearer token by the token alone.
 	// With AutoBatch, a batch request is not any one caller's: its context
-	// has no values of the callers' contexts, so a token must not depend on
-	// them.
+	// has the callers' values only through BatchContext, so a token should
+	// not depend on them.
 	BearerTokenFunc func(ctx context.Context) (string, error)
 
 	// HTTPClient sends the requests. When nil, [DefaultHTTPClient] is used,
 	// with a connection pool sized for concurrent use. http.DefaultClient is
-	// never used: it keeps few connections to a host.
+	// never used: it keeps few connections to a host. To customize the client
+	// - a transport for tracing, TLS settings - start from
+	// DefaultHTTPClient() and change what you need: a client built from
+	// scratch, or on http.DefaultTransport, keeps only 2 idle connections per
+	// host, so concurrent calls open and close connections all the time.
 	//
 	// Redirects are not followed: Centrifugo's API never redirects, so one
 	// means APIEndpoint is wrong - http where a proxy wants https, say - and
@@ -78,6 +83,53 @@ type Config struct {
 
 	// AutoBatch sends calls made concurrently in batches. See [AutoBatch].
 	AutoBatch AutoBatch
+
+	// OnRequest, when set, is called after every HTTP request to the API,
+	// with the request's context and what happened: for metrics and tracing
+	// without a dependency of gocent's. A retried broadcast calls it for
+	// each attempt, an automatic batch once for the batch. It is called in
+	// the goroutine which made the request, and the call waits for it.
+	OnRequest func(ctx context.Context, info RequestInfo)
+
+	// BatchContext, when set, makes the context of an automatic batch's
+	// request from the contexts of the calls it carries - for a tracing
+	// span linked to each caller's span, say. Without it, a batch's request
+	// runs on a context of its own, which carries no caller's values.
+	//
+	// ctx is the batch's own context, with its deadline: derive the result
+	// from it. callers are the contexts of the calls in the batch, in the
+	// order they queued; use only their values - some may be done already,
+	// their callers gone. The request keeps ctx's deadline whatever the
+	// result's.
+	BatchContext func(ctx context.Context, callers []context.Context) context.Context
+}
+
+// RequestInfo describes one HTTP request to Centrifugo's API, for
+// Config.OnRequest.
+type RequestInfo struct {
+	// Method is the API method the request went to: "publish", say, or
+	// "batch" for a batch.
+	Method string
+	// Commands is how many commands the request carried: 1, or a batch's
+	// size.
+	Commands int
+	// Failed is how many of them Centrifugo answered with an error. A
+	// broadcast which failed in some of its channels is not counted: its
+	// command was answered, channel by channel.
+	Failed int
+	// AutoBatch is true for a batch [AutoBatch] made of concurrent calls.
+	AutoBatch bool
+	// Duration is how long the request took, from before getting its
+	// endpoint and credentials to its reply read.
+	Duration time.Duration
+	// StatusCode is the HTTP status of the reply, 0 when there was none.
+	StatusCode int
+	// Err is the error of the request as a whole: the network, a timeout,
+	// an HTTP error status, a reply which is not Centrifugo's, or - in
+	// Centrifugo's transport error mode - the error of the request's only
+	// command. Nil when Centrifugo's reply was read: the commands' own
+	// outcomes are in Failed.
+	Err error
 }
 
 // AutoBatch lets the client send concurrent calls together, as one batch
@@ -103,10 +155,13 @@ type Config struct {
 // error. Keep payloads well within the body limit, or send large ones from a
 // client without AutoBatch. Each call keeps its own deadline in a batch: the
 // batch request lasts until the latest deadline of the calls in it, and a
-// call without one gets RequestTimeout, as when sent alone. The values of a
-// caller's context do not reach a batch request, though: not the
-// BearerTokenFunc or APIEndpointFunc, and not an HTTP transport which reads
-// them, for tracing say.
+// call without one gets RequestTimeout, as when sent alone. A call which
+// times out before its batch's request ends may still be carried out - as
+// after any timeout - so retry a publication only with an IdempotencyKey;
+// BroadcastWithRetry does. The values of a
+// caller's context reach a batch request only through Config.BatchContext:
+// without it, BearerTokenFunc, APIEndpointFunc, OnRequest and an HTTP
+// transport which reads them, for tracing say, see none.
 type AutoBatch struct {
 	// MaxInFlight is how many requests may be in flight at once before calls
 	// start to wait and be batched. Zero disables AutoBatch.
@@ -136,11 +191,18 @@ const (
 )
 
 // DefaultHTTPClient returns the HTTP client a [Client] uses when
-// Config.HTTPClient is nil: keep-alive connections, and a pool of up to 256
-// idle ones to Centrifugo so that concurrent calls reuse them. It sets no
-// timeouts of its own - each request's context bounds the whole request,
-// connecting included, so a request has exactly one deadline. Each call
-// returns a new client with its own connection pool.
+// Config.HTTPClient is nil. It keeps connections alive, at most 256 to a
+// host, and its pool keeps all of them while idle: concurrent calls reuse
+// them, and a burst of calls never opens connections only to close them
+// afterwards. A call made while all 256 are busy waits for one, within its
+// context's deadline; for more concurrent calls than that, see [AutoBatch].
+// An idle connection is closed after 50 seconds, before load balancers
+// commonly close theirs, so that a call does not pick one which is being
+// closed under it.
+//
+// It sets no timeouts of its own - each request's context bounds the whole
+// request, connecting included, so a request has exactly one deadline. Each
+// call returns a new client with its own connection pool.
 func DefaultHTTPClient() *http.Client {
 	return &http.Client{
 		CheckRedirect: refuseRedirect,
@@ -150,7 +212,8 @@ func DefaultHTTPClient() *http.Client {
 			ForceAttemptHTTP2:   true,
 			MaxIdleConns:        256,
 			MaxIdleConnsPerHost: 256,
-			IdleConnTimeout:     90 * time.Second,
+			MaxConnsPerHost:     256,
+			IdleConnTimeout:     50 * time.Second,
 		},
 	}
 }
@@ -172,16 +235,108 @@ type Client struct {
 	http     *http.Client
 	timeout  time.Duration
 	batcher  *batcher
+
+	onRequest    func(context.Context, RequestInfo)
+	batchContext func(context.Context, []context.Context) context.Context
+	// ownHTTP is set when the HTTP client is gocent's own, which Close may
+	// release the idle connections of.
+	ownHTTP bool
+	calls   calls
+}
+
+// ErrClosed is returned by a call made after [Client.Close].
+var ErrClosed = errors.New("gocent: client closed")
+
+// calls counts the calls in progress, so that Close can wait for them.
+type calls struct {
+	mu      sync.Mutex
+	closed  bool
+	active  int
+	drained chan struct{} // closed once the client is closed and active is 0
+}
+
+// enter counts a call in, unless the client is closed.
+func (c *calls) enter() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return ErrClosed
+	}
+	c.active++
+	return nil
+}
+
+// add counts in work which goes on for calls already counted - an
+// automatic batch which outlives its callers - closed or not.
+func (c *calls) add() {
+	c.mu.Lock()
+	c.active++
+	c.mu.Unlock()
+}
+
+func (c *calls) leave() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.active--
+	if c.closed && c.active == 0 && c.drained != nil {
+		close(c.drained)
+		c.drained = nil
+	}
+}
+
+// close stops new calls and returns a channel closed once none is left.
+func (c *calls) close() <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	done := make(chan struct{})
+	if c.active == 0 {
+		close(done)
+		return done
+	}
+	if c.drained == nil {
+		c.drained = make(chan struct{})
+	}
+	waiting := c.drained
+	go func() {
+		<-waiting
+		close(done)
+	}()
+	return done
+}
+
+// Close stops the client: calls made from now on return [ErrClosed], and
+// Close waits for the calls in progress to end - requests on their way,
+// calls queued for an automatic batch, batches sent for callers who left. A
+// broadcast being retried stops at its next attempt. It returns ctx's error
+// when ctx ends first; the calls left go on then. With the default HTTP
+// client it then closes its idle connections. Close may be called again: it
+// waits as the first one did.
+//
+// Call it when the application shuts down - on SIGTERM in Kubernetes, say -
+// so that what was accepted is sent before the process exits.
+func (c *Client) Close(ctx context.Context) error {
+	select {
+	case <-c.calls.close():
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if c.ownHTTP {
+		c.http.CloseIdleConnections()
+	}
+	return nil
 }
 
 // New returns a Client for cfg, or an error wrapping [ErrInvalidConfig] that
 // names what is wrong with it.
 func New(cfg Config) (*Client, error) {
 	c := &Client{
-		addrFunc: cfg.APIEndpointFunc,
-		token:    cfg.BearerTokenFunc,
-		http:     cfg.HTTPClient,
-		timeout:  cfg.RequestTimeout,
+		addrFunc:     cfg.APIEndpointFunc,
+		token:        cfg.BearerTokenFunc,
+		http:         cfg.HTTPClient,
+		timeout:      cfg.RequestTimeout,
+		onRequest:    cfg.OnRequest,
+		batchContext: cfg.BatchContext,
 	}
 	invalid := func(format string, args ...any) error {
 		return fmt.Errorf("%w: %s", ErrInvalidConfig, fmt.Sprintf(format, args...))
@@ -252,6 +407,7 @@ func New(cfg Config) (*Client, error) {
 	switch {
 	case c.http == nil:
 		c.http = DefaultHTTPClient()
+		c.ownHTTP = true
 	case c.http.CheckRedirect == nil:
 		hc := *c.http
 		hc.CheckRedirect = refuseRedirect
@@ -328,6 +484,11 @@ func invoke[W any](ctx context.Context, c *Client, req request, get func(*reply)
 		var zero W
 		return zero, err
 	}
+	if err := c.calls.enter(); err != nil {
+		var zero W
+		return zero, err
+	}
+	defer c.calls.leave()
 	if c.batcher != nil {
 		return batched(ctx, c.batcher, req, get)
 	}
@@ -344,14 +505,32 @@ func invoke[W any](ctx context.Context, c *Client, req request, get func(*reply)
 func send[W any](ctx context.Context, c *Client, req request, done func(*response[W]) (W, error)) (W, error) {
 	var resp response[W]
 	var zero W
-	if err := c.post(ctx, req.APIMethod(), req, &resp); err != nil {
+	info := RequestInfo{Method: req.APIMethod(), Commands: 1}
+	start := time.Now()
+	err := c.post(ctx, info.Method, req, &resp, &info.StatusCode)
+	if err == nil && resp.Error != nil {
+		info.Failed = 1
+	}
+	c.reportRequest(ctx, info, start, err)
+	if err != nil {
 		return zero, err
 	}
 	return done(&resp)
 }
 
+// reportRequest tells Config.OnRequest about a request which started at
+// start and ended with err.
+func (c *Client) reportRequest(ctx context.Context, info RequestInfo, start time.Time, err error) {
+	if c.onRequest == nil {
+		return
+	}
+	info.Duration = time.Since(start)
+	info.Err = err
+	c.onRequest(ctx, info)
+}
+
 // post sends body to the method's endpoint and decodes the reply into out.
-func (c *Client) post(ctx context.Context, method string, body, out any) error {
+func (c *Client) post(ctx context.Context, method string, body, out any, status *int) error {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.timeout)
@@ -406,6 +585,7 @@ func (c *Client) post(ctx context.Context, method string, body, out any) error {
 	if err != nil {
 		return transportError(method, err)
 	}
+	*status = resp.StatusCode
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrainBytes))
 		_ = resp.Body.Close()
@@ -418,7 +598,11 @@ func (c *Client) post(ctx context.Context, method string, body, out any) error {
 		if len(b) > maxErrorBodyBytes {
 			b = b[:maxErrorBodyBytes]
 		}
-		httpErr := &HTTPError{StatusCode: resp.StatusCode, Body: bytes.TrimSpace(b)}
+		httpErr := &HTTPError{
+			StatusCode: resp.StatusCode,
+			Body:       bytes.TrimSpace(b),
+			Header:     resp.Header,
+		}
 		if methodNames[method] {
 			httpErr.proMethod = method
 		}

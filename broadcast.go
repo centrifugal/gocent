@@ -21,9 +21,9 @@ import (
 // Like every call, Broadcast returns an error unless it did everything asked:
 // err is nil only when the data was published into every channel. When
 // Centrifugo carried out the broadcast and one or more channels failed - up
-// to all of them - err is a [*BroadcastError]. Any other error means the
-// broadcast failed as a whole: no channel got a reply. After a timeout or a
-// network error Centrifugo may still have published it.
+// to all of them - err is a [*BroadcastFailedChannelsError]. Any other error
+// means the broadcast failed as a whole: no channel got a reply. After a
+// timeout or a network error Centrifugo may still have published it.
 //
 // Most callers need no more than err != nil. A broadcast retried with the same
 // IdempotencyKey is not published again into the channels which already have
@@ -40,7 +40,7 @@ import (
 // To go on despite some failed channels:
 //
 //	res, err := client.Broadcast(ctx, req)
-//	if err = gocent.WholeFailure(err); err != nil {
+//	if !res.Replied {
 //		return err // no channel got a reply
 //	}
 //	for _, ch := range res.Channels {
@@ -62,14 +62,14 @@ func (c *Client) Broadcast(ctx context.Context, req BroadcastRequest) (Broadcast
 
 // Broadcast adds a broadcast command to the batch. Its outcome, read with
 // [Pending.Result] once the batch is sent, is what [Client.Broadcast] would
-// have returned: every channel's outcome, and a [*BroadcastError] when any
-// channel failed.
+// have returned: every channel's outcome, and a [*BroadcastFailedChannelsError]
+// when any channel failed.
 func (b *Batch) Broadcast(req BroadcastRequest) *Pending[BroadcastResult] {
 	channels := req.Channels
 	// The outcome is built once, on first use - by Send's check or by
-	// Pending.Result - and shared: a broadcast into many channels is costly
-	// to build, and Send's BatchError then holds the very *BroadcastError
-	// which Pending.Result returns.
+	// Pending.Result - and shared: a broadcast into many channels is costly to
+	// build, and Send's BatchFailedCommandsError then holds the very
+	// *BroadcastFailedChannelsError which Pending.Result returns.
 	var (
 		once sync.Once
 		res  BroadcastResult
@@ -83,7 +83,7 @@ func (b *Batch) Broadcast(req BroadcastRequest) *Pending[BroadcastResult] {
 		return res, err
 	}
 	// A broadcast which failed in any channel failed as a command too, so
-	// Send counts it in its BatchError.
+	// Send counts it in its BatchFailedCommandsError.
 	check := func(r *reply) error { _, err := get(r); return err }
 	p := addChecked(b, &req, get, check)
 	p.fail = func(err error) BroadcastResult {
@@ -107,10 +107,26 @@ type BroadcastResult struct {
 	IdempotencyKey string
 
 	// Attempts is how many times the broadcast was tried: 1 from
-	// [Client.Broadcast], up to RetryOptions.Attempts from
+	// [Client.Broadcast], up to BroadcastRetryOptions.MaxAttempts from
 	// [Client.BroadcastWithRetry], and 0 when it was refused before sending,
 	// as an invalid request.
 	Attempts int
+
+	// Replied is true when Centrifugo carried the broadcast out and replied
+	// for every channel, the failed ones included - the error is nil or a
+	// [*BroadcastFailedChannelsError]. It is false when the broadcast failed as
+	// a whole: a network error, a timeout, an HTTP error status such as 401, an
+	// invalid request; no channel got a reply then, and every channel carries
+	// that error. From [Client.BroadcastWithRetry], it is true when any attempt
+	// got a reply. gocent sets it to agree with the error; a test double may
+	// set it to stand for either case.
+	//
+	//	res, err := client.Broadcast(ctx, req)
+	//	if !res.Replied {
+	//		return err // no channel got a reply
+	//	}
+	//	for _, ch := range res.Failed() { ... } // the channels which failed
+	Replied bool
 }
 
 // Failed returns the channels which did not get the publication, with their
@@ -131,6 +147,8 @@ func (res BroadcastResult) Failed() []ChannelResult {
 // refused before sending was not.
 func (res *BroadcastResult) finish(req BroadcastRequest, err error) {
 	res.IdempotencyKey = req.IdempotencyKey
+	_, failedChannels := errors.AsType[*BroadcastFailedChannelsError](err)
+	res.Replied = err == nil || failedChannels
 	if errors.Is(err, ErrInvalidRequest) || errors.Is(err, ErrBatchNotSent) {
 		return
 	}
@@ -156,9 +174,9 @@ type ChannelResult struct {
 	Attempts int
 }
 
-// BroadcastError reports a broadcast which Centrifugo carried out and which
-// failed in one or more of its channels, up to all of them. The result
-// returned with it holds every channel's outcome.
+// BroadcastFailedChannelsError reports a broadcast which Centrifugo carried out
+// and which failed in one or more of its channels, up to all of them. The
+// result returned with it holds every channel's outcome.
 //
 // It does not unwrap to the channels' errors: errors.Is(err,
 // ErrUnknownChannel) is not true because one channel of many failed that way.
@@ -167,7 +185,7 @@ type ChannelResult struct {
 //	for _, f := range be.Failed {
 //		if errors.Is(f.Err, gocent.ErrUnknownChannel) { ... }
 //	}
-type BroadcastError struct {
+type BroadcastFailedChannelsError struct {
 	// Failed lists the channels which failed, with their errors, in the order
 	// of the request.
 	Failed []ChannelResult
@@ -175,7 +193,7 @@ type BroadcastError struct {
 	Total int
 }
 
-func (e *BroadcastError) Error() string {
+func (e *BroadcastFailedChannelsError) Error() string {
 	return failuresMessage("broadcast", "channels", len(e.Failed), e.Total, func(b *strings.Builder, i int) (string, error) {
 		b.WriteString(e.Failed[i].Channel)
 		return "", e.Failed[i].Err
@@ -188,10 +206,10 @@ func (e *BroadcastError) Error() string {
 // channel, are left out; they are in Failed with their errors. It returns nil
 // when no failure is retryable.
 //
-//	if be, ok := errors.AsType[*gocent.BroadcastError](err); ok {
+//	if be, ok := errors.AsType[*gocent.BroadcastFailedChannelsError](err); ok {
 //		req.Channels = be.RetryableChannels() // the same IdempotencyKey
 //	}
-func (e *BroadcastError) RetryableChannels() []string {
+func (e *BroadcastFailedChannelsError) RetryableChannels() []string {
 	var channels []string
 	for _, f := range e.Failed {
 		if Retryable(f.Err) {
@@ -248,7 +266,7 @@ func (w broadcastWire) result(channels []string) (BroadcastResult, error) {
 	if failed == 0 {
 		return res, nil
 	}
-	be := &BroadcastError{Failed: make([]ChannelResult, 0, failed), Total: len(channels)}
+	be := &BroadcastFailedChannelsError{Failed: make([]ChannelResult, 0, failed), Total: len(channels)}
 	for _, cr := range res.Channels {
 		if cr.Err != nil {
 			be.Failed = append(be.Failed, cr)

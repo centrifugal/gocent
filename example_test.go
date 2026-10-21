@@ -73,15 +73,16 @@ func ExampleClient_Broadcast() {
 }
 
 // The result holds every channel's outcome whatever the error, so a caller
-// which accepts some failed channels checks err first, then reads each one.
-func ExampleBroadcastError() {
+// which accepts some failed channels stops only when Centrifugo did not
+// reply, then reads each one.
+func ExampleBroadcastFailedChannelsError() {
 	var client *gocent.Client // created once with gocent.New
 
 	res, err := client.Broadcast(context.Background(), gocent.BroadcastRequest{
 		Channels: []string{"user:1", "user:2", "user:3"},
 		Data:     jsontext.Value(`{"text":"hello"}`),
 	})
-	if err = gocent.WholeFailure(err); err != nil {
+	if !res.Replied {
 		log.Fatal(err) // no channel got a reply
 	}
 	for _, ch := range res.Channels {
@@ -103,7 +104,7 @@ func ExampleBatch() {
 	pub := b.Publish(gocent.PublishRequest{Channel: "news", Data: jsontext.Value(`{}`)})
 	stats := b.PresenceStats(gocent.PresenceStatsRequest{Channel: "news"})
 
-	if err := b.Send(context.Background()); err != nil {
+	if _, err := b.Send(context.Background()); err != nil {
 		log.Print(err) // gocent: batch: 1 of 2 commands failed: ...
 	}
 	if res, err := pub.Result(); err == nil {
@@ -168,6 +169,7 @@ func ExampleRetryable() {
 		// earlier one - even one reported as failed - is not published again.
 		IdempotencyKey: "order-42-paid",
 	}
+	backoff := gocent.ExponentialBackoff(100*time.Millisecond, 2*time.Second)
 	publish := func(ctx context.Context) error {
 		for attempt := 1; ; attempt++ {
 			_, publishErr := client.Publish(ctx, req)
@@ -175,10 +177,8 @@ func ExampleRetryable() {
 				return publishErr
 			}
 			// Back off, unless the context ends first.
-			select {
-			case <-time.After(time.Duration(attempt) * 100 * time.Millisecond):
-			case <-ctx.Done():
-				return ctx.Err()
+			if waitErr := gocent.Wait(ctx, backoff(attempt)); waitErr != nil {
+				return waitErr
 			}
 		}
 	}
@@ -205,32 +205,34 @@ func ExampleClient_BroadcastWithRetry() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	backoff := gocent.ExponentialBackoff(100*time.Millisecond, 2*time.Second)
 	res, err := client.BroadcastWithRetry(ctx, gocent.BroadcastRequest{
 		Channels: []string{"news", "sport", "weather"},
 		Data:     jsontext.Value(`{"text":"hello"}`),
 		// Optional: without one, a key is made for this call.
 		IdempotencyKey: "message-42",
-	}, gocent.RetryOptions{
-		Attempts: 3,
-		Backoff:  100 * time.Millisecond,
-		// Why each retry happens. Log a count and a sample, not every
-		// channel: a broadcast to many channels may fail in all of them.
-		OnRetry: func(ctx context.Context, e gocent.RetryEvent) {
-			log.Printf("attempt %d: %d channels to retry in %v, first: %v",
-				e.Attempt, len(e.Failed), e.Wait, e.Failed[0].Err)
+	}, gocent.BroadcastRetryOptions{
+		MaxAttempts: 3,
+		// Logs why each retry happens, then waits. Log a count and a sample,
+		// not every channel: a broadcast to many channels may fail in all of
+		// them. a.Retry is never empty here.
+		OnAttemptErr: func(ctx context.Context, a gocent.BroadcastAttempt) error {
+			log.Printf("attempt %d: %d channels to retry, first: %v",
+				a.Attempt, len(a.Retry), a.Retry[0].Err)
+			return gocent.Wait(ctx, backoff(a.Attempt))
 		},
 	})
 	log.Printf("broadcast: %d channels, %d failed, %d attempts, key %s",
 		len(res.Channels), len(res.Failed()), res.Attempts, res.IdempotencyKey)
-	if err = gocent.WholeFailure(err); err != nil {
+	if !res.Replied {
 		log.Print(err) // no attempt got a reply
 	}
 }
 
 // A batch is retried by building it again: a Batch is sent once. Keep the
-// requests, give every publication an IdempotencyKey, and leave out the
-// commands which failed for good. The publications which happened are not
-// repeated.
+// requests, give every publication an IdempotencyKey, and send again only the
+// commands which failed for a temporary reason - all of them when the batch
+// failed as a whole, since res.Failed() then lists every command.
 func ExampleRetryable_batch() {
 	client, err := gocent.New(gocent.Config{
 		APIEndpoint: "http://localhost:8000/api",
@@ -245,38 +247,30 @@ func ExampleRetryable_batch() {
 		{Channel: "orders:42", Data: jsontext.Value(`{"status":"paid"}`), IdempotencyKey: "order-42-paid"},
 		{Channel: "user:7", Data: jsontext.Value(`{"text":"payment received"}`), IdempotencyKey: "order-42-paid"},
 	}
+	backoff := gocent.ExponentialBackoff(100*time.Millisecond, 2*time.Second)
 	send := func(ctx context.Context) error {
 		for attempt := 1; ; attempt++ {
 			b := client.NewBatch(gocent.BatchOptions{})
 			for _, req := range reqs {
 				b.Publish(req)
 			}
-			sendErr := b.Send(ctx)
+			res, sendErr := b.Send(ctx)
 			if sendErr == nil || !gocent.Retryable(sendErr) || attempt == 3 {
 				return sendErr
 			}
-			if batchErr, ok := errors.AsType[*gocent.BatchError](sendErr); ok {
-				// Resending every command is safe with keys, but a command
-				// which failed for good would fail on every attempt: leave it
-				// out.
-				failed := map[int]error{}
-				for _, f := range batchErr.Failed {
-					failed[f.Index] = f.Err
+			// Next, the commands which may still succeed. Index is the
+			// command's position in this attempt's batch, that is in reqs.
+			var next []gocent.PublishRequest
+			for _, f := range res.Failed() {
+				if gocent.Retryable(f.Err) {
+					next = append(next, reqs[f.Index])
+				} else {
+					log.Printf("not published into %s: %v", reqs[f.Index].Channel, f.Err)
 				}
-				keep := reqs[:0:0]
-				for i, req := range reqs {
-					if cmdErr, ok := failed[i]; ok && !gocent.Retryable(cmdErr) {
-						log.Printf("not published into %s: %v", req.Channel, cmdErr)
-						continue
-					}
-					keep = append(keep, req)
-				}
-				reqs = keep
 			}
-			select {
-			case <-time.After(time.Duration(attempt) * 100 * time.Millisecond):
-			case <-ctx.Done():
-				return ctx.Err()
+			reqs = next
+			if waitErr := gocent.Wait(ctx, backoff(attempt)); waitErr != nil {
+				return waitErr
 			}
 		}
 	}

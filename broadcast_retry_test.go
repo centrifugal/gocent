@@ -13,8 +13,13 @@ import (
 	"github.com/centrifugal/gocent/v4"
 )
 
+// constant waits d between attempts.
+func constant(d time.Duration) gocent.BroadcastAttemptErrFunc {
+	return func(ctx context.Context, _ gocent.BroadcastAttempt) error { return gocent.Wait(ctx, d) }
+}
+
 // fast retries without waiting long between attempts.
-var fast = gocent.RetryOptions{Backoff: time.Millisecond}
+var fast = gocent.BroadcastRetryOptions{OnAttemptErr: constant(time.Millisecond)}
 
 // broadcastAttempts returns, for each broadcast request the fake got, its
 // channels and idempotency key.
@@ -71,9 +76,9 @@ func TestBroadcastWithRetryLeavesPermanentFailures(t *testing.T) {
 	f.flakyFailures = 1
 	c := newClient(t, f)
 	res, err := c.BroadcastWithRetry(t.Context(), gocent.BroadcastRequest{Channels: []string{"bad", "flaky"}, Data: data}, fast)
-	be, ok := errors.AsType[*gocent.BroadcastError](err)
+	be, ok := errors.AsType[*gocent.BroadcastFailedChannelsError](err)
 	if !ok || be.Total != 2 || len(be.Failed) != 1 || be.Failed[0].Channel != "bad" {
-		t.Fatalf("got %v, want a BroadcastError for bad only", err)
+		t.Fatalf("got %v, want a BroadcastFailedChannelsError for bad only", err)
 	}
 	if gocent.Retryable(err) {
 		t.Error("only a permanent failure is left, yet Retryable is true")
@@ -91,11 +96,11 @@ func TestBroadcastWithRetryGivesUp(t *testing.T) {
 	f.flakyFailures = 100
 	c := newClient(t, f)
 	opts := fast
-	opts.Attempts = 3
+	opts.MaxAttempts = 3
 	res, err := c.BroadcastWithRetry(t.Context(), gocent.BroadcastRequest{Channels: []string{"a", "flaky"}, Data: data}, opts)
-	be, ok := errors.AsType[*gocent.BroadcastError](err)
+	be, ok := errors.AsType[*gocent.BroadcastFailedChannelsError](err)
 	if !ok || len(be.Failed) != 1 || be.Failed[0].Channel != "flaky" || !gocent.Retryable(err) {
-		t.Fatalf("got %v, want a retryable BroadcastError for flaky", err)
+		t.Fatalf("got %v, want a retryable BroadcastFailedChannelsError for flaky", err)
 	}
 	// The channel which succeeded in the first attempt keeps its result.
 	if res.Channels[0].Err != nil || res.Channels[0].Result.Offset != 1 {
@@ -132,16 +137,16 @@ func TestBroadcastWithRetryWholeFailure(t *testing.T) {
 }
 
 // When no attempt got a reply, the error is the last one, as from Broadcast:
-// not a BroadcastError.
+// not a BroadcastFailedChannelsError.
 func TestBroadcastWithRetryNoReply(t *testing.T) {
 	f := newFake(t)
 	f.unavailable.Store(10)
 	c := newClient(t, f)
 	opts := fast
-	opts.Attempts = 2
+	opts.MaxAttempts = 2
 	res, err := c.BroadcastWithRetry(t.Context(), gocent.BroadcastRequest{Channels: []string{"a", "b"}, Data: data}, opts)
 	httpErr, ok := errors.AsType[*gocent.HTTPError](err)
-	if !ok || httpErr.StatusCode != http.StatusServiceUnavailable || gocent.WholeFailure(err) == nil {
+	if !ok || httpErr.StatusCode != http.StatusServiceUnavailable || res.Replied {
 		t.Fatalf("got %v, want the 503 of the last attempt", err)
 	}
 	if len(res.Channels) != 2 || res.Channels[0].Err == nil || res.Channels[1].Err == nil {
@@ -162,7 +167,8 @@ func TestBroadcastWithRetryKeepsCallersKey(t *testing.T) {
 	}
 }
 
-// When the context ends while backing off, it returns at once, with what the
+// When the context ends while waiting, the wait stops it at once: the error
+// joins the context's with the broadcast's, and the result holds what the
 // attempts so far achieved.
 func TestBroadcastWithRetryContextEnds(t *testing.T) {
 	f := newFake(t)
@@ -171,15 +177,15 @@ func TestBroadcastWithRetryContextEnds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	res, err := c.BroadcastWithRetry(ctx, gocent.BroadcastRequest{Channels: []string{"a", "flaky"}, Data: data}, gocent.RetryOptions{Backoff: time.Hour})
+	res, err := c.BroadcastWithRetry(ctx, gocent.BroadcastRequest{Channels: []string{"a", "flaky"}, Data: data}, gocent.BroadcastRetryOptions{OnAttemptErr: constant(time.Hour)})
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("returned after %v: the backoff did not end with the context", elapsed)
 	}
-	if be, ok := errors.AsType[*gocent.BroadcastError](err); !ok || len(be.Failed) != 1 || be.Failed[0].Channel != "flaky" {
-		t.Errorf("got %v, want a BroadcastError for flaky", err)
+	if be, ok := errors.AsType[*gocent.BroadcastFailedChannelsError](err); !ok || len(be.Failed) != 1 || be.Failed[0].Channel != "flaky" || !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("got %v, want the context's error and a BroadcastFailedChannelsError for flaky", err)
 	}
-	if res.Channels[0].Err != nil {
-		t.Errorf("channel a lost its result: %+v", res.Channels[0])
+	if res.Channels[0].Err != nil || !res.Replied {
+		t.Errorf("result: %+v", res)
 	}
 }
 
@@ -200,7 +206,7 @@ func TestBroadcastWithRetryRepeatedChannel(t *testing.T) {
 func TestBroadcastWithRetryInvalid(t *testing.T) {
 	f := newFake(t)
 	c := newClient(t, f)
-	for _, opts := range []gocent.RetryOptions{{Attempts: -1}, {Backoff: -time.Second}, {MaxBackoff: -time.Second}} {
+	for _, opts := range []gocent.BroadcastRetryOptions{{MaxAttempts: -1}} {
 		if _, err := c.BroadcastWithRetry(t.Context(), gocent.BroadcastRequest{Channels: []string{"a"}, Data: data}, opts); !errors.Is(err, gocent.ErrInvalidRequest) {
 			t.Errorf("%+v: got %v, want ErrInvalidRequest", opts, err)
 		}
@@ -228,27 +234,9 @@ func TestBroadcastResultIdempotencyKey(t *testing.T) {
 	}
 	b := c.NewBatch(gocent.BatchOptions{})
 	p := b.Broadcast(gocent.BroadcastRequest{Channels: []string{"a"}, Data: data, IdempotencyKey: "k"})
-	_ = b.Send(t.Context())
+	_, _ = b.Send(t.Context())
 	if res, _ := p.Result(); res.IdempotencyKey != "k" {
 		t.Errorf("in a batch: result's key %q", res.IdempotencyKey)
-	}
-}
-
-// The waits grow up to MaxBackoff, and no further.
-func TestBroadcastWithRetryMaxBackoff(t *testing.T) {
-	f := newFake(t)
-	f.flakyFailures = 100
-	c := newClient(t, f)
-	start := time.Now()
-	_, err := c.BroadcastWithRetry(t.Context(), gocent.BroadcastRequest{Channels: []string{"flaky"}, Data: data},
-		gocent.RetryOptions{Attempts: 7, Backoff: 20 * time.Millisecond, MaxBackoff: 20 * time.Millisecond})
-	if err == nil {
-		t.Fatal("want the flaky channel to fail")
-	}
-	// Six waits of at most 20ms. Doubling without the cap would wait at least
-	// 630ms, half of 20+40+...+640, even with the jitter.
-	if elapsed := time.Since(start); elapsed > 400*time.Millisecond {
-		t.Errorf("took %v: the waits were not capped", elapsed)
 	}
 }
 
@@ -273,61 +261,185 @@ func TestBroadcastAttempts(t *testing.T) {
 
 type ctxKey2 struct{}
 
-// OnRetry learns of each retry: the call's own context, the attempt which
-// failed, the channels to send again with their errors, the wait and the key.
-func TestBroadcastWithRetryOnRetry(t *testing.T) {
+// OnAttemptErr learns of each failed attempt a retry may fix: with the call's
+// own context, the attempt, its error, the channels the next attempt sends,
+// every channel's outcome so far and the key. It is not asked after the last
+// attempt.
+func TestBroadcastWithRetryOnAttemptErr(t *testing.T) {
 	f := newFake(t)
 	f.flakyFailures = 2
 	c := newClient(t, f)
-	var events []gocent.RetryEvent
-	opts := gocent.RetryOptions{
-		Attempts: 4,
-		Backoff:  10 * time.Millisecond,
-		OnRetry: func(ctx context.Context, e gocent.RetryEvent) {
+	var attempts []gocent.BroadcastAttempt
+	opts := gocent.BroadcastRetryOptions{
+		MaxAttempts: 4,
+		OnAttemptErr: func(ctx context.Context, a gocent.BroadcastAttempt) error {
 			if ctx.Value(ctxKey2{}) != "request-7" {
-				t.Error("OnRetry did not get the call's context")
+				t.Error("OnAttemptErr did not get the call's context")
 			}
-			events = append(events, e)
+			attempts = append(attempts, a)
+			return nil
 		},
 	}
 	ctx := context.WithValue(t.Context(), ctxKey2{}, "request-7")
 	res, err := c.BroadcastWithRetry(ctx, gocent.BroadcastRequest{Channels: []string{"a", "bad", "flaky"}, Data: data}, opts)
-	if be, ok := errors.AsType[*gocent.BroadcastError](err); !ok || len(be.Failed) != 1 || be.Failed[0].Channel != "bad" {
+	if be, ok := errors.AsType[*gocent.BroadcastFailedChannelsError](err); !ok || len(be.Failed) != 1 || be.Failed[0].Channel != "bad" {
 		t.Fatalf("got %v", err)
 	}
 	// The flaky channel failed twice: two retries, each of it alone - the
 	// unknown channel failed for good and is not sent again.
-	if len(events) != 2 {
-		t.Fatalf("%d events, want 2", len(events))
+	if len(attempts) != 2 {
+		t.Fatalf("called %d times, want 2", len(attempts))
 	}
-	for i, e := range events {
-		if e.Attempt != i+1 || len(e.Failed) != 1 || e.Failed[0].Channel != "flaky" || !gocent.Retryable(e.Failed[0].Err) ||
-			e.Failed[0].Attempts != i+1 || e.IdempotencyKey != res.IdempotencyKey ||
-			e.Wait < 5*time.Millisecond<<i || e.Wait > 10*time.Millisecond<<i {
-			t.Errorf("event %d: %+v", i, e)
+	for i, a := range attempts {
+		_, partial := errors.AsType[*gocent.BroadcastFailedChannelsError](a.Err)
+		if a.Attempt != i+1 || !partial || len(a.Retry) != 1 || a.Retry[0].Channel != "flaky" ||
+			!gocent.Retryable(a.Retry[0].Err) || a.Retry[0].Attempts != i+1 || a.IdempotencyKey != res.IdempotencyKey {
+			t.Errorf("attempt %d: %+v", i, a)
+		}
+		// The outcome so far: a got it in the first attempt.
+		if !a.Result.Replied || a.Result.Channels[0].Err != nil || a.Result.Channels[0].Result.Offset != 1 {
+			t.Errorf("attempt %d: result so far %+v", i, a.Result)
 		}
 	}
 }
 
-// A hook which cancels the call's context stops the retries before the next
-// attempt, and the cause tells why.
-func TestBroadcastWithRetryStoppedFromOnRetry(t *testing.T) {
+// An error from OnAttemptErr stops the retries: the call returns it joined
+// with the broadcast's error.
+func TestBroadcastWithRetryStop(t *testing.T) {
 	f := newFake(t)
 	f.flakyFailures = 100
 	c := newClient(t, f)
 	errStop := errors.New("circuit open")
-	ctx, cancel := context.WithCancelCause(t.Context())
-	defer cancel(nil)
-	opts := gocent.RetryOptions{
-		Backoff: time.Hour,
-		OnRetry: func(context.Context, gocent.RetryEvent) { cancel(errStop) },
+	opts := gocent.BroadcastRetryOptions{
+		MaxAttempts:  10,
+		OnAttemptErr: func(context.Context, gocent.BroadcastAttempt) error { return errStop },
 	}
-	start := time.Now()
-	res, err := c.BroadcastWithRetry(ctx, gocent.BroadcastRequest{Channels: []string{"flaky"}, Data: data}, opts)
-	if time.Since(start) > 5*time.Second || res.Attempts != 1 {
-		t.Fatalf("did not stop: attempts %d after %v", res.Attempts, time.Since(start))
+	res, err := c.BroadcastWithRetry(t.Context(), gocent.BroadcastRequest{Channels: []string{"a", "flaky"}, Data: data}, opts)
+	be, ok := errors.AsType[*gocent.BroadcastFailedChannelsError](err)
+	if !errors.Is(err, errStop) || !ok || len(be.Failed) != 1 || be.Failed[0].Channel != "flaky" {
+		t.Fatalf("got %v, want errStop and a BroadcastFailedChannelsError for flaky", err)
 	}
-	if !errors.Is(context.Cause(ctx), errStop) || err == nil {
-		t.Errorf("cause %v, err %v", context.Cause(ctx), err)
+	if res.Attempts != 1 || !res.Replied || res.Channels[0].Err != nil {
+		t.Errorf("result %+v", res)
+	}
+	// Stopped by the caller, the broadcast may still succeed later.
+	if !gocent.Retryable(err) {
+		t.Errorf("Retryable(%v) = false, want true: flaky failed temporarily", err)
+	}
+}
+
+// A failure no retry can fix never reaches OnAttemptErr: the call stops by
+// itself, and the default allows a single retry.
+func TestBroadcastWithRetryOnlyRetryable(t *testing.T) {
+	f := newFake(t)
+	f.flakyFailures = 100
+	c := newClient(t, f)
+	called := 0
+	count := gocent.BroadcastRetryOptions{OnAttemptErr: func(context.Context, gocent.BroadcastAttempt) error { called++; return nil }}
+	if _, err := c.BroadcastWithRetry(t.Context(), gocent.BroadcastRequest{Channels: []string{"bad"}, Data: data}, count); err == nil || called != 0 {
+		t.Errorf("a permanent failure: called %d times, %v", called, err)
+	}
+	res, _ := c.BroadcastWithRetry(t.Context(), gocent.BroadcastRequest{Channels: []string{"flaky"}, Data: data}, count)
+	if res.Attempts != 2 || called != 1 {
+		t.Errorf("default: %d attempts, called %d times; want 2 attempts, 1 call", res.Attempts, called)
+	}
+}
+
+// AttemptTimeout bounds each attempt: one which hangs times out, and its
+// channels are retried within the call's deadline.
+func TestBroadcastWithRetryAttemptTimeout(t *testing.T) {
+	f := newFake(t)
+	f.hang.Store(1)
+	c := newClient(t, f)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	opts := fast
+	opts.AttemptTimeout = 50 * time.Millisecond
+	res, err := c.BroadcastWithRetry(ctx, gocent.BroadcastRequest{Channels: []string{"a", "b"}, Data: data}, opts)
+	if err != nil || res.Attempts != 2 || res.Channels[0].Attempts != 2 || !res.Replied {
+		t.Fatalf("got %v, result %+v; want the hung attempt retried", err, res)
+	}
+	if ctx.Err() != nil {
+		t.Errorf("the call's deadline ended: the attempt was not bounded on its own")
+	}
+}
+
+// Without AttemptTimeout the call's context bounds each attempt: a hung one
+// takes all of it, and once it ends nothing is retried - OnAttemptErr is not
+// even called.
+func TestBroadcastWithRetryContextEnded(t *testing.T) {
+	f := newFake(t)
+	f.hang.Store(1)
+	c := newClient(t, f)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	called := 0
+	opts := gocent.BroadcastRetryOptions{MaxAttempts: 5, OnAttemptErr: func(context.Context, gocent.BroadcastAttempt) error {
+		called++
+		return nil
+	}}
+	res, err := c.BroadcastWithRetry(ctx, gocent.BroadcastRequest{Channels: []string{"a"}, Data: data}, opts)
+	if !errors.Is(err, context.DeadlineExceeded) || res.Attempts != 1 || called != 0 {
+		t.Errorf("got %v, %d attempts, OnAttemptErr called %d times", err, res.Attempts, called)
+	}
+}
+
+func TestBroadcastWithRetryNegativeAttemptTimeout(t *testing.T) {
+	c := newClient(t, newFake(t))
+	_, err := c.BroadcastWithRetry(t.Context(), gocent.BroadcastRequest{Channels: []string{"a"}, Data: data},
+		gocent.BroadcastRetryOptions{AttemptTimeout: -time.Second})
+	if !errors.Is(err, gocent.ErrInvalidRequest) {
+		t.Errorf("got %v, want ErrInvalidRequest", err)
+	}
+}
+
+// The response's headers, a Retry-After say, reach OnAttemptErr in the
+// attempt's *HTTPError.
+func TestBroadcastWithRetryResponseHeader(t *testing.T) {
+	f := newFake(t)
+	f.unavailable.Store(1)
+	f.retryAfter = "7"
+	c := newClient(t, f)
+	var got string
+	opts := gocent.BroadcastRetryOptions{OnAttemptErr: func(_ context.Context, a gocent.BroadcastAttempt) error {
+		if httpErr, ok := errors.AsType[*gocent.HTTPError](a.Err); ok {
+			got = httpErr.Header.Get("Retry-After")
+		}
+		return nil
+	}}
+	if _, err := c.BroadcastWithRetry(t.Context(), gocent.BroadcastRequest{Channels: []string{"a"}, Data: data}, opts); err != nil {
+		t.Fatal(err)
+	}
+	if got != "7" {
+		t.Errorf("Retry-After %q, want 7", got)
+	}
+}
+
+// A stop error the broadcast's error already holds - the context's, after an
+// attempt which failed on the same context - is not named twice.
+func TestBroadcastWithRetryStopNotRepeated(t *testing.T) {
+	f := newFake(t)
+	f.unavailable.Store(1)
+	c := newClient(t, f)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	opts := gocent.BroadcastRetryOptions{OnAttemptErr: func(context.Context, gocent.BroadcastAttempt) error {
+		// The broadcast's error is a 503, which does not hold this one:
+		// joined.
+		return context.Canceled
+	}}
+	_, err := c.BroadcastWithRetry(ctx, gocent.BroadcastRequest{Channels: []string{"a"}, Data: data}, opts)
+	if !errors.Is(err, context.Canceled) || strings.Count(err.Error(), "context canceled") != 1 {
+		t.Errorf("got %q", err)
+	}
+	f.hang.Store(1)
+	stopped := 0
+	opts = gocent.BroadcastRetryOptions{AttemptTimeout: 20 * time.Millisecond, OnAttemptErr: func(context.Context, gocent.BroadcastAttempt) error {
+		stopped++
+		return context.DeadlineExceeded
+	}}
+	_, err = c.BroadcastWithRetry(ctx, gocent.BroadcastRequest{Channels: []string{"a"}, Data: data}, opts)
+	if !errors.Is(err, context.DeadlineExceeded) || stopped != 1 || strings.Count(err.Error(), "deadline exceeded") != 1 {
+		t.Errorf("got %q", err)
 	}
 }

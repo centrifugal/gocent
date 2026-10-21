@@ -24,12 +24,19 @@ passes; if you find yourself about to break one, stop and say so instead.
    one entry per requested channel and every command has its `Pending`,
    whatever the error. When the request failed as a whole, each part's error
    is that error. When Centrifugo carried it out and one or more parts failed,
-   up to all, the error is a `*BroadcastError` or `*BatchError`. They do not
-   unwrap: `errors.Is` answers for the call as a whole, so one unknown channel
-   among many does not make `errors.Is(err, ErrUnknownChannel)` true; each
-   part's error is in `Failed`. Any other error means the request failed as a
-   whole: no part got a reply - which, after a timeout or a network error,
-   does not mean Centrifugo did nothing.
+   up to all, the error is a `*BroadcastFailedChannelsError` or
+   `*BatchFailedCommandsError`. They do not unwrap: `errors.Is` answers for the
+   call as a whole, so one unknown channel among many does not make
+   `errors.Is(err, ErrUnknownChannel)` true; each part's error is in `Failed`.
+   Any other error means the request failed as a whole: no part got a reply -
+   which, after a timeout or a network error, does not mean Centrifugo did
+   nothing.
+
+   `BroadcastResult` and the `BatchResult` from `Send` say the same through
+   `Replied` - false exactly when the error is set and is not one of those
+   two types - and `Failed()`. The two must never disagree:
+   `TestRepliedMatchesError` checks it for every way a broadcast or batch is
+   sent.
 4. **Errors follow Centrifugo's model.** A Centrifugo error is an `*Error`;
    `errors.Is` matches it against the exported values by `Code` only, never by
    message. Centrifugo adds codes over time: nothing may switch exhaustively
@@ -49,18 +56,24 @@ passes; if you find yourself about to break one, stop and say so instead.
      request finishes. Requests in flight never exceed `MaxInFlight`.
    - Every call gets exactly its own reply - its own command's result or error,
      or the error of the batch request which carried it. A broadcast inside a
-     batch returns what a direct broadcast returns, `*BroadcastError` included.
-     A batch request failing as a whole fails every call in it, by design: no
-     call is retried alone, since only some failures prove nothing ran.
+     batch returns what a direct broadcast returns,
+     `*BroadcastFailedChannelsError` included. A batch request failing as a
+     whole fails every call in it, by design: no call is retried alone, since
+     only some failures prove nothing ran.
    - A caller whose context ends while queued leaves without its command being
      sent. A call's command is encoded before it queues, and the batch sends
      those bytes: once a call returns - even while its batch is still on its
      way - nothing reads the caller's request. A batch runs on its own
      goroutine, never on a caller's context: it lasts until the latest
      deadline of its calls (`RequestTimeout` for a call without one), so each
-     call keeps its own deadline. The values of the callers' contexts do not
-     reach it. A reply which arrives as a caller's context ends is returned,
-     not a timeout.
+     call keeps its own deadline. The values of the callers' contexts reach
+     it only through `Config.BatchContext`. A reply which arrives as a
+     caller's context ends is returned, not a timeout.
+   - `Close` waits for every call in progress, a batch whose callers left
+     included, and refuses new ones with `ErrClosed`. A call counts from
+     `invoke` or `Send` to its end, and an automatic batch from the moment
+     it is formed: the counting in `calls` must cover any new path which
+     sends a request.
 6. **`New` catches configuration mistakes.** Anything wrong with a `Config` that
    can be seen without a request is an error from `New` wrapping
    `ErrInvalidConfig`, naming the field and the fix.
@@ -70,7 +83,10 @@ passes; if you find yourself about to break one, stop and say so instead.
    or a caller's `http.Client` - the error matches
    `errors.Is(err, context.DeadlineExceeded)`.
 8. **HTTP hygiene.** Every response body is closed and drained up to a bound,
-   so connections are reused. `http.DefaultClient` is never used. A request's
+   so connections are reused. `http.DefaultClient` is never used.
+   `DefaultHTTPClient` caps connections per host at the size of its idle pool,
+   so a burst never opens connections only to close them -
+   `TestDefaultHTTPClientConnections` checks both. A request's
    body is never reused: the transport may read it after `Do` returns.
    Redirects are never followed - Centrifugo's API does not redirect, and
    following one would send the API key wherever it points - unless the
@@ -94,8 +110,9 @@ Everything goes through the Makefile; CI runs the same targets.
 make check             # the gate: fmt, vet, no-deps, generated code, race, coverage, lint, govulncheck
 make test-race         # just the suite, under the race detector
 make test-integration  # against a real Centrifugo configured like testdata/centrifugo.json
-make fuzz              # reply decoding; FUZZTIME=2m for something thorough
-make generate          # regenerate api_gen.go from api.proto
+make fuzz              # replies, broadcast retries, backoff; FUZZTIME=2m each for something thorough
+make stress            # AutoBatch under random concurrency, -race; STRESS_ROUNDS=5000 by default
+make generate          # regenerate api_gen.go and proxy/proxy_gen.go from their protos
 make bench
 ```
 
@@ -104,9 +121,17 @@ transport, the error model or batching, also run `make test-integration` with
 Centrifugo running:
 
 ```sh
-centrifugo -c testdata/centrifugo.json   # listens on :8100
+docker run --rm -p 8100:8100 -v $PWD/testdata/centrifugo.json:/centrifugo/config.json \
+  centrifugo/centrifugo:v6.10.1 centrifugo -c config.json   # listens on :8100
 make test-integration
 ```
+
+The proxy package's tests run Centrifugo's connect and refresh proxies on
+port 3100 of the host, which the configuration has Centrifugo reach as
+`host.docker.internal`. A Centrifugo binary run on the host itself needs them
+pointed at localhost:
+`CENTRIFUGO_CLIENT_PROXY_CONNECT_ENDPOINT=http://localhost:3100/connect
+CENTRIFUGO_CLIENT_PROXY_REFRESH_ENDPOINT=http://localhost:3100/refresh`.
 
 The integration tests cover every method of Centrifugo OSS. CI runs them
 against the `centrifugo/centrifugo` image, configured through environment
@@ -134,8 +159,11 @@ docker compose -f testdata/centrifugo-pro.compose.yml down
 ## Updating to a new Centrifugo API
 
 1. `make sync-proto CENTRIFUGO_REF=v6.10.1` - a released tag. It copies
-   Centrifugo's `internal/apiproto/api.proto` at that tag over `api.proto` and
-   runs `make generate`. A new command appears as a `Client` method, a `Batch`
+   Centrifugo's `internal/apiproto/api.proto` at that tag over `api.proto`,
+   and its `internal/proxyproto/proxy.proto` over `proxy/proxy.proto`, and
+   runs `make generate`. For work which needs unreleased Centrifugo changes,
+   `CENTRIFUGO_BRANCH=master` syncs from a branch instead; sync from a tag
+   again before releasing. A new command appears as a `Client` method, a `Batch`
    method and a request type with `APIMethod`, with no hand-written code. A
    command whose comment in `Command` says "Centrifugo PRO only" is marked so
    in `methodNames`, which the 404 hint uses.
@@ -164,10 +192,11 @@ docs here - these are the places a reader goes wrong.
   any other method its hint asks whether APIEndpoint is the API base URL. In a
   batch the same call fails with `ErrNotFound` (code 104) instead. The doc
   comment of every PRO-only method says "Centrifugo PRO only."
-- **An error from `Broadcast` or `Batch.Send` does not mean nothing was
-  done.** `*BroadcastError` and `*BatchError` say which parts succeeded. A
-  broadcast retried with the same `IdempotencyKey` is not published twice -
-  with the memory, Redis and PostgreSQL brokers; the NATS broker ignores keys.
+- **An error from `Broadcast` or `Batch.Send` does not mean nothing was done.**
+  `*BroadcastFailedChannelsError` and `*BatchFailedCommandsError` say which
+  parts succeeded. A broadcast retried with the same `IdempotencyKey` is not
+  published twice - with the memory, Redis and PostgreSQL brokers; the NATS
+  broker ignores keys.
 - **Credentials are not required by `New`.** No `APIKey` or `BearerTokenFunc`
   is valid - mutual TLS, a proxy, `http_api.insecure` - so a key which failed
   to load shows as `ErrUnauthorized` on the first call, not at `New`.

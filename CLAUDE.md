@@ -11,7 +11,8 @@ lost:
   `make generate`.
 - **Every call returns an error unless it did everything asked.** The parts of
   a broadcast or batch always have an outcome each, whatever the error; when
-  some failed, the error is a `*BroadcastError` or `*BatchError`.
+  some failed, the error is a `*BroadcastFailedChannelsError` or
+  `*BatchFailedCommandsError`.
 - **Automatic batching never delays a call below `MaxInFlight`** and never
   gives a caller a reply that is not its own.
 

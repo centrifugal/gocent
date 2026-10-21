@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/centrifugal/gocent/v4"
 )
@@ -36,9 +37,9 @@ func TestBroadcastPartialFailure(t *testing.T) {
 	c := newClient(t, f)
 	res, err := c.Broadcast(t.Context(), gocent.BroadcastRequest{Channels: []string{"a", "bad:1", "b", "full:1"}, Data: data})
 
-	var be *gocent.BroadcastError
+	var be *gocent.BroadcastFailedChannelsError
 	if !errors.As(err, &be) {
-		t.Fatalf("error %v, want a *BroadcastError", err)
+		t.Fatalf("error %v, want a *BroadcastFailedChannelsError", err)
 	}
 	if be.Total != 4 || len(be.Failed) != 2 || be.Failed[0].Channel != "bad:1" || be.Failed[1].Channel != "full:1" {
 		t.Fatalf("broadcast error %+v", be)
@@ -62,7 +63,7 @@ func TestBroadcastPartialFailure(t *testing.T) {
 	}
 }
 
-func TestBroadcastErrorMessageIsBounded(t *testing.T) {
+func TestFailedChannelsErrorMessageIsBounded(t *testing.T) {
 	f := newFake(t)
 	c := newClient(t, f)
 	channels := make([]string, 100)
@@ -88,7 +89,7 @@ func TestBroadcastWholeFailure(t *testing.T) {
 		{"credentials", newClient(t, f, func(cfg *gocent.Config) { cfg.APIKey = "wrong" }), gocent.ErrUnauthorized},
 	} {
 		res, err := tc.c.Broadcast(t.Context(), gocent.BroadcastRequest{Channels: []string{"reject-all", "a"}, Data: data})
-		var be *gocent.BroadcastError
+		var be *gocent.BroadcastFailedChannelsError
 		if errors.As(err, &be) {
 			t.Fatalf("%s: a whole failure reported per channel", tc.name)
 		}
@@ -134,7 +135,7 @@ func TestBatch(t *testing.T) {
 	if _, err := pub.Result(); !errors.Is(err, gocent.ErrBatchNotSent) {
 		t.Fatalf("Result before Send: %v", err)
 	}
-	if err := b.Send(t.Context()); err != nil {
+	if _, err := b.Send(t.Context()); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if res, err := pub.Result(); err != nil || res.Offset != 1 {
@@ -146,7 +147,7 @@ func TestBatch(t *testing.T) {
 	if res, err := info.Result(); err != nil || len(res.Nodes) != 1 || res.Nodes[0].Name != "node" {
 		t.Errorf("info: %+v, %v", res, err)
 	}
-	if err := b.Send(t.Context()); !errors.Is(err, gocent.ErrBatchSent) {
+	if _, err := b.Send(t.Context()); !errors.Is(err, gocent.ErrBatchSent) {
 		t.Errorf("second Send: %v", err)
 	}
 	reqs := f.recorded()
@@ -160,7 +161,7 @@ func TestBatchOptionsOnTheWire(t *testing.T) {
 	c := newClient(t, f)
 	b := c.NewBatch(gocent.BatchOptions{Parallel: true})
 	b.Publish(gocent.PublishRequest{Channel: "news", Data: data})
-	if err := b.Send(t.Context()); err != nil {
+	if _, err := b.Send(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	body := string(f.recorded()[0].Body)
@@ -177,10 +178,10 @@ func TestBatchPartialFailure(t *testing.T) {
 	bad := b.Publish(gocent.PublishRequest{Channel: "bad:1", Data: data})
 	bc := b.Broadcast(gocent.BroadcastRequest{Channels: []string{"a", "full:1"}, Data: data})
 
-	err := b.Send(t.Context())
-	var batchErr *gocent.BatchError
+	_, err := b.Send(t.Context())
+	var batchErr *gocent.BatchFailedCommandsError
 	if !errors.As(err, &batchErr) {
-		t.Fatalf("error %v, want a *BatchError", err)
+		t.Fatalf("error %v, want a *BatchFailedCommandsError", err)
 	}
 	if batchErr.Total != 3 || len(batchErr.Failed) != 2 {
 		t.Fatalf("batch error %+v", batchErr)
@@ -191,7 +192,7 @@ func TestBatchPartialFailure(t *testing.T) {
 	// The broadcast failed in one channel, so it failed as a command. errors.Is
 	// answers for the batch as a whole and does not look into the parts; the
 	// channel's error is in the broadcast's own Failed.
-	var be *gocent.BroadcastError
+	var be *gocent.BroadcastFailedChannelsError
 	if f1 := batchErr.Failed[1]; f1.Index != 2 || !errors.As(f1.Err, &be) {
 		t.Errorf("second failure %+v", f1)
 	}
@@ -209,10 +210,10 @@ func TestBatchPartialFailure(t *testing.T) {
 		t.Errorf("failed command: %v", badErr)
 	}
 	// The broadcast's Pending returns what a direct broadcast would - the
-	// very error the BatchError holds.
+	// very error the BatchFailedCommandsError holds.
 	res, err := bc.Result()
 	if err != batchErr.Failed[1].Err { //nolint:errorlint // the same error, not a matching one
-		t.Errorf("Pending error %p, BatchError holds %p", err, batchErr.Failed[1].Err)
+		t.Errorf("Pending error %p, BatchFailedCommandsError holds %p", err, batchErr.Failed[1].Err)
 	}
 	if !errors.As(err, &be) || len(res.Channels) != 2 || res.Channels[0].Err != nil || res.Channels[1].Err == nil {
 		t.Errorf("broadcast in batch: %+v, %v", res, err)
@@ -226,9 +227,9 @@ func TestBroadcastEveryChannelFailed(t *testing.T) {
 	c := newClient(t, f)
 	res, err := c.Broadcast(t.Context(), gocent.BroadcastRequest{Channels: []string{"bad:1", "full:1"}, Data: data})
 
-	var be *gocent.BroadcastError
+	var be *gocent.BroadcastFailedChannelsError
 	if !errors.As(err, &be) || be.Total != 2 || len(be.Failed) != 2 {
-		t.Fatalf("error %v, want a *BroadcastError for both channels", err)
+		t.Fatalf("error %v, want a *BroadcastFailedChannelsError for both channels", err)
 	}
 	if len(res.Channels) != 2 ||
 		!errors.Is(res.Channels[0].Err, gocent.ErrUnknownChannel) ||
@@ -245,10 +246,10 @@ func TestBatchEveryCommandFailed(t *testing.T) {
 	pub := b.Publish(gocent.PublishRequest{Channel: "bad:1", Data: data})
 	bc := b.Broadcast(gocent.BroadcastRequest{Channels: []string{"reject-all", "a"}, Data: data})
 
-	err := b.Send(t.Context())
-	var batchErr *gocent.BatchError
+	_, err := b.Send(t.Context())
+	var batchErr *gocent.BatchFailedCommandsError
 	if !errors.As(err, &batchErr) {
-		t.Fatalf("error %v, want a *BatchError", err)
+		t.Fatalf("error %v, want a *BatchFailedCommandsError", err)
 	}
 	if batchErr.Total != 2 || len(batchErr.Failed) != 2 {
 		t.Fatalf("batch error %+v", batchErr)
@@ -272,11 +273,11 @@ func TestBatchWholeFailure(t *testing.T) {
 	if res, err := bc.Result(); !errors.Is(err, gocent.ErrBatchNotSent) || len(res.Channels) != 2 || !errors.Is(res.Channels[0].Err, err) {
 		t.Errorf("broadcast before Send: %+v, %v", res, err)
 	}
-	err := b.Send(t.Context())
+	_, err := b.Send(t.Context())
 	if !errors.Is(err, gocent.ErrUnauthorized) {
 		t.Fatalf("Send: %v", err)
 	}
-	var batchErr *gocent.BatchError
+	var batchErr *gocent.BatchFailedCommandsError
 	if errors.As(err, &batchErr) {
 		t.Error("a whole failure reported per command")
 	}
@@ -292,7 +293,7 @@ func TestBatchWholeFailure(t *testing.T) {
 func TestEmptyBatch(t *testing.T) {
 	f := newFake(t)
 	c := newClient(t, f)
-	if err := c.NewBatch(gocent.BatchOptions{}).Send(t.Context()); err != nil {
+	if _, err := c.NewBatch(gocent.BatchOptions{}).Send(t.Context()); err != nil {
 		t.Fatalf("empty Send: %v", err)
 	}
 	if n := len(f.recorded()); n != 0 {
@@ -305,7 +306,7 @@ func TestAddAfterSendPanics(t *testing.T) {
 	c := newClient(t, f)
 	b := c.NewBatch(gocent.BatchOptions{})
 	b.Publish(gocent.PublishRequest{Channel: "news", Data: data})
-	if err := b.Send(t.Context()); err != nil {
+	if _, err := b.Send(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
@@ -314,4 +315,85 @@ func TestAddAfterSendPanics(t *testing.T) {
 		}
 	}()
 	b.Publish(gocent.PublishRequest{Channel: "news", Data: data})
+}
+
+// Replied is false exactly when the error is set and is not the error of
+// failed parts: the request failed as a whole. Checked for every way a
+// broadcast or a batch is sent, through every kind of outcome.
+func TestRepliedMatchesError(t *testing.T) {
+	broadcastReplied := func(err error) bool {
+		_, ok := errors.AsType[*gocent.BroadcastFailedChannelsError](err)
+		return err == nil || ok
+	}
+	batchReplied := func(err error) bool {
+		_, ok := errors.AsType[*gocent.BatchFailedCommandsError](err)
+		return err == nil || ok
+	}
+	type outcome struct {
+		name        string
+		channels    []string
+		data        jsontext.Value
+		unavailable int64
+	}
+	outcomes := []outcome{
+		{"every channel", []string{"a", "b"}, data, 0},
+		{"some channels failed", []string{"a", "bad"}, data, 0},
+		{"every channel failed", []string{"bad", "full"}, data, 0},
+		{"refused as a whole", []string{"reject-all"}, data, 0},
+		{"no reply", []string{"a"}, data, 100},
+		{"invalid", []string{"a"}, nil, 0},
+	}
+	for _, o := range outcomes {
+		t.Run(o.name, func(t *testing.T) {
+			f := newFake(t)
+			f.unavailable.Store(o.unavailable)
+			c := newClient(t, f)
+			req := gocent.BroadcastRequest{Channels: o.channels, Data: o.data}
+
+			res, err := c.Broadcast(t.Context(), req)
+			if res.Replied != broadcastReplied(err) {
+				t.Errorf("Broadcast: Replied = %v with %v", res.Replied, err)
+			}
+			if !res.Replied && len(res.Failed()) != len(o.channels) {
+				t.Errorf("Broadcast failed as a whole: Failed() has %d channels, want %d", len(res.Failed()), len(o.channels))
+			}
+
+			res, err = c.BroadcastWithRetry(t.Context(), req, gocent.BroadcastRetryOptions{MaxAttempts: 2, OnAttemptErr: constant(time.Millisecond)})
+			if res.Replied != broadcastReplied(err) {
+				t.Errorf("BroadcastWithRetry: Replied = %v with %v", res.Replied, err)
+			}
+
+			b := c.NewBatch(gocent.BatchOptions{})
+			p := b.Broadcast(req)
+			sent, sendErr := b.Send(t.Context())
+			if sent.Replied != batchReplied(sendErr) {
+				t.Errorf("Send: Replied = %v with %v", sent.Replied, sendErr)
+			}
+			if fe, ok := errors.AsType[*gocent.BatchFailedCommandsError](sendErr); ok && len(sent.Failed()) != len(fe.Failed) {
+				t.Errorf("Send: Failed() has %d commands, the error %d", len(sent.Failed()), len(fe.Failed))
+			}
+			// Failed means the same on both results: the parts which did not
+			// succeed - every one, each with the error, when the request
+			// failed as a whole.
+			if !sent.Replied {
+				if failed := sent.Failed(); len(failed) != 1 || failed[0].Err != sendErr { //nolint:errorlint // the same error
+					t.Errorf("Send failed as a whole: Failed() = %+v, want the command with %v", failed, sendErr)
+				}
+			}
+			res, err = p.Result()
+			if res.Replied != broadcastReplied(err) {
+				t.Errorf("broadcast in a batch: Replied = %v with %v", res.Replied, err)
+			}
+		})
+	}
+
+	f := newFake(t)
+	c := newClient(t, f)
+	b := c.NewBatch(gocent.BatchOptions{})
+	if res, err := b.Send(t.Context()); err != nil || !res.Replied {
+		t.Errorf("empty batch: Replied = %v, %v", res.Replied, err)
+	}
+	if res, err := b.Send(t.Context()); !errors.Is(err, gocent.ErrBatchSent) || res.Replied {
+		t.Errorf("sent twice: Replied = %v, %v", res.Replied, err)
+	}
 }

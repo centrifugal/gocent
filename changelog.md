@@ -17,41 +17,70 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   and replies that are not Centrifugo's are `*gocent.DecodeError`.
 * **Broadcast and batch report each part.** They return an error unless every
   channel or command succeeded; when some failed, it is a
-  `*gocent.BroadcastError` or `*gocent.BatchError` saying which. Every part
-  always has an outcome: `res.Channels` holds one entry per requested
-  channel, and every batch command its `Pending`. Code which handles failed
-  parts on its own uses `gocent.WholeFailure(err)`, which keeps only an error
-  of the request as a whole.
+  `*gocent.BroadcastFailedChannelsError` or `*gocent.BatchFailedCommandsError`
+  saying which. Every part always has an outcome: `res.Channels` holds one entry
+  per requested channel, and every batch command its `Pending`. Both results
+  answer the same two questions: `Replied` - did Centrifugo carry the request
+  out and reply for every part, or did it fail as a whole - and `Failed()`, the
+  parts which failed. `Batch.Send` returns a `BatchResult` with them.
 * **Typed batches.** `client.NewBatch(opts)` gives a `Batch` with a method per
   command, each returning a `Pending` holding that command's typed result.
 * **Automatic batching.** `Config.AutoBatch` sends concurrent calls together
   once `MaxInFlight` requests are in flight, with no delay otherwise.
 * **Retries.** `gocent.Retryable(err)` tells whether retrying a call may
   succeed. It follows `Error.Temporary`, which Centrifugo sets on errors from a
-  temporary condition, such as the new `ErrTooManyRequests`, and treats
-  network failures, timeouts and HTTP 429 or 5xx as retryable too. A
-  retryable error does not mean nothing was done: retry publications with
-  the same `IdempotencyKey`. `Client.BroadcastWithRetry` retries a broadcast:
-  only the channels which may still succeed, with one `IdempotencyKey` for all
-  its attempts - made for the call when the request has none - the attempts'
-  results merged, and growing, randomized waits between them.
+  temporary condition, such as the new `ErrTooManyRequests`, and treats network
+  failures, timeouts and HTTP 429 or 5xx as retryable too. A retryable error
+  does not mean nothing was done: retry publications with the same
+  `IdempotencyKey`. `Client.BroadcastWithRetry` retries a broadcast: only the
+  channels which may still succeed, with one `IdempotencyKey` for all its
+  attempts - made for the call when the request has none - the attempts' results
+  merged. `BroadcastRetryOptions.MaxAttempts` bounds the attempts - two by
+  default, so one retry. `BroadcastRetryOptions.OnAttemptErr` is called after
+  each failed attempt which will be retried, with the channels to retry and
+  their errors: it waits before the retry, logs or counts it, or returns an
+  error to stop.
+  By default it waits `gocent.ExponentialBackoff(100ms, 5s)(attempt)`.
+  `ExponentialBackoff` gives the wait after a failed attempt, for any retry
+  loop, and `gocent.Wait` waits until a context ends.
   `BroadcastResult.IdempotencyKey` names the key used, for a retry later.
   `Attempts`, on the result and on each channel, and `BroadcastResult.Failed()`
-  tell what happened; `RetryOptions.OnRetry` is called before each retry,
-  with the call's context and the channels it retries with their errors. `BroadcastError.RetryableChannels()` gives the
-  channels to retry for a loop of your own.
+  tell what happened.
+  `BroadcastFailedChannelsError.RetryableChannels()` gives the channels to retry
+  for a loop of your own. `BroadcastRetryOptions.AttemptTimeout` bounds each
+  attempt, while the context bounds the call. `HTTPError.Header` holds the
+  response's headers: a proxy's request ID, or a `Retry-After`.
+* **Shutdown.** `client.Close(ctx)` refuses new calls with `gocent.ErrClosed`
+  and waits for those in progress, calls queued for an automatic batch
+  included.
+* **Observability without dependencies.** `Config.OnRequest` is told of
+  every request - method, commands, failed commands, automatic batch or not,
+  duration, status, error - and `Config.BatchContext` gives an automatic
+  batch's request a context made from its callers', for a span linked to
+  each caller's.
 * **Bearer token authentication.** `Config.BearerTokenFunc` sends a token
   with every request as `Authorization: Bearer`, for Centrifugo PRO's JWKS
   authentication of the API.
 * **Configuration is validated.** `New` returns an error for a missing or
   malformed `APIEndpoint`, and contradictory settings.
-* **Safer defaults.** A default HTTP client with a connection pool, and a
-  per-request timeout when the context has none. Redirects are not followed:
+* **Safer defaults.** A default HTTP client with a connection pool - at most
+  256 connections to the server, all kept while idle, so bursts of calls do
+  not open and close connections - and a per-request timeout when the context
+  has none. Redirects are not followed:
   Centrifugo's API never redirects, and following one would send the API key
   to wherever it points. A redirect is an `HTTPError` naming the likely
   cause, a wrong `APIEndpoint`.
 * **Async consumers.** `APIMethod()` on every request gives the method name for
   building events from a request.
+* **Proxy handlers.** The new `proxy` package serves Centrifugo's HTTP proxy:
+  the request and result types of every proxy type, generated from
+  Centrifugo's `proxy.proto`, and `proxy.Handlers` making an `http.Handler`
+  for each - connect,
+  refresh, subscribe, publish, RPC, sub refresh, map publish and remove,
+  shared poll refresh, and Centrifugo PRO's cache empty and channel state
+  notifications. A function returns a result, or a `*proxy.Error` or
+  `*proxy.Disconnect` for the client; the handler decodes the request and
+  encodes the answer Centrifugo expects.
 
 ### Migrating from v3
 
@@ -75,8 +104,8 @@ Change the import path to `github.com/centrifugal/gocent/v4`, then:
 | `WithDisconnect`, `WithDisconnectClientWhitelist` | `Disconnect`, `Whitelist` fields |
 | `WithRecoverSince(&pos)`, `WithSince(&pos)` | `RecoverSince: pos`, `Since: pos` - a value, not a pointer |
 | `WithPresence(true)`, `WithJoinLeave(true)`, `WithPosition(true)`, `WithRecover(true)` | `Override: gocent.SubscribeOptionOverride{Presence: gocent.Bool(true)}`, with the fields `Presence`, `JoinLeave`, `ForcePositioning`, `ForceRecovery` - Centrifugo takes these only as overrides of the channel's options |
-| `data []byte`, `json.RawMessage` in subscribe options | `jsontext.Value` - convert with `jsontext.Value(b)`; it must be valid JSON, with no key repeated in an object, or the call fails with `gocent.ErrInvalidRequest` before anything is sent |
-| `p := c.Pipe()`, `err := p.AddPublish(...)`, `replies, err := c.SendPipe(ctx, p)` | `b := c.NewBatch(gocent.BatchOptions{})`, `pub := b.Publish(...)`, `err := b.Send(ctx)`, `res, err := pub.Result()` |
+| `data []byte`, `json.RawMessage` in subscribe options | `jsontext.Value`, which takes a `[]byte` or a `json.RawMessage` as is - since Go 1.27 `json.RawMessage` is the same type; it must be valid JSON, with no key repeated in an object, or the call fails with `gocent.ErrInvalidRequest` before anything is sent |
+| `p := c.Pipe()`, `err := p.AddPublish(...)`, `replies, err := c.SendPipe(ctx, p)` | `b := c.NewBatch(gocent.BatchOptions{})`, `pub := b.Publish(...)`, `_, err := b.Send(ctx)`, `res, err := pub.Result()` |
 | `p.Reset()` to reuse a pipe | a new `NewBatch`: a batch is sent once |
 | `ErrPipeEmpty` | none: sending an empty batch does nothing and returns nil |
 | `*gocent.Error`, `err.(*gocent.Error)` | unchanged, and `errors.Is(err, gocent.ErrUnknownChannel)` now matches by code |
@@ -86,13 +115,13 @@ Change the import path to `github.com/centrifugal/gocent/v4`, then:
 Behaviour to check when migrating:
 
 * **Failed channels and commands are errors now.** In v3, `Broadcast` and
-  `SendPipe` returned `err == nil` when single channels or commands failed,
-  and the caller had to inspect every reply. In v4 they return an error
-  unless everything succeeded - a `*gocent.BroadcastError` or
-  `*gocent.BatchError` when Centrifugo carried the request out and some parts
-  failed. Code which checked each reply keeps working: `res.Channels` still
-  holds every channel's outcome and every `Pending` its command's. Code which
-  only checked `err` now sees failures it used to miss. See the examples
+  `SendPipe` returned `err == nil` when single channels or commands failed, and
+  the caller had to inspect every reply. In v4 they return an error unless
+  everything succeeded - a `*gocent.BroadcastFailedChannelsError` or
+  `*gocent.BatchFailedCommandsError` when Centrifugo carried the request out and
+  some parts failed. Code which checked each reply keeps working: `res.Channels`
+  still holds every channel's outcome and every `Pending` its command's. Code
+  which only checked `err` now sees failures it used to miss. See the examples
   below, and [MIGRATING.md](MIGRATING.md#failed-channels-are-errors-now) for
   why, and for keeping v3's behaviour where failed channels are expected.
 * **Batches are ordered unless asked otherwise.** `BatchOptions{}` runs the
@@ -137,7 +166,7 @@ In v4 the error tells which case it is:
 
 ```go
 res, err := c.Broadcast(ctx, gocent.BroadcastRequest{Channels: []string{"a", "b"}, Data: data})
-be, partial := errors.AsType[*gocent.BroadcastError](err)
+be, partial := errors.AsType[*gocent.BroadcastFailedChannelsError](err)
 switch {
 case err == nil:
 	// Published into every channel.
@@ -154,10 +183,10 @@ default:
 ```
 
 * `errors.Is(err, ...)` answers for the broadcast as a whole: it does not look
-  into a `*BroadcastError`, so one unknown channel of many does not make
-  `errors.Is(err, gocent.ErrUnknownChannel)` true. Each channel's error is in
-  `be.Failed`: `errors.Is(f.Err, gocent.ErrUnknownChannel)`. The same holds
-  for a `*BatchError` and its commands.
+  into a `*BroadcastFailedChannelsError`, so one unknown channel of many does
+  not make `errors.Is(err, gocent.ErrUnknownChannel)` true. Each channel's error
+  is in `be.Failed`: `errors.Is(f.Err, gocent.ErrUnknownChannel)`. The same
+  holds for a `*BatchFailedCommandsError` and its commands.
 * After a timeout or a network error Centrifugo may still have published. Set
   `IdempotencyKey` to retry the whole broadcast safely: channels which already
   have the publication do not get it again.
@@ -185,8 +214,8 @@ b := c.NewBatch(gocent.BatchOptions{})
 pub := b.Publish(gocent.PublishRequest{Channel: "a", Data: data})
 stats := b.PresenceStats(gocent.PresenceStatsRequest{Channel: "a"})
 
-err := b.Send(ctx)
-if err = gocent.WholeFailure(err); err != nil {
+res, err := b.Send(ctx)
+if !res.Replied {
 	return err // no command got a reply
 }
 // Each command's own outcome - also when others failed:
@@ -205,17 +234,17 @@ Corner cases:
   `gocent.ErrInvalidRequest` and naming the command (`gocent: batch command #1: ...`).
   Nothing is sent, and every `Pending` returns that error.
 * **A broadcast in a batch** behaves as `Client.Broadcast`: its `Pending`
-  holds every channel's outcome with a `*BroadcastError`, and a broadcast
-  which failed in any channel counts as a failed command in the
-  `*BatchError`.
+  holds every channel's outcome with a `*BroadcastFailedChannelsError`, and a
+  broadcast which failed in any channel counts as a failed command in the
+  `*BatchFailedCommandsError`.
 * **A batch is sent once.** `Send` again returns `gocent.ErrBatchSent`, and
   adding a command to a sent batch panics: to retry, build a new batch.
   `Result` before `Send` returns `gocent.ErrBatchNotSent`.
-* **Retry a failed batch as a whole**: build it again with the same
-  `IdempotencyKey`s, leaving out the commands which failed for good
-  (`gocent.Retryable` is false for their error). Publications which happened
-  are not repeated, even one reported as failed. Without a key a publication
-  is repeated.
+* **Retry a failed batch** by building a new one, with the same
+  `IdempotencyKey`s, from the commands `BatchResult.Failed()` lists with a
+  retryable error - every command when the batch failed as a whole.
+  Publications which happened are not repeated, even one reported as failed.
+  Without a key a publication is repeated.
 * **An empty batch** sends nothing, and `Send` returns nil - v3 returned
   `ErrPipeEmpty`.
 

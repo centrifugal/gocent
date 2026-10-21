@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// schema is what the generator needs from api.proto: its messages and the
+// schema is what the generator needs from a proto file: its messages and the
 // methods of its service, each with the comment written above it.
 type schema struct {
 	messages []*message
@@ -34,10 +34,14 @@ type method struct {
 	name     string
 	request  string
 	response string
+	// streaming is set for a method streaming its request or response:
+	// one only GRPC can call.
+	streaming bool
 }
 
-// api.proto uses a small part of the proto3 language: top-level messages with
-// scalar, message, repeated and map fields, and one service. The parser accepts
+// api.proto and proxy.proto use a small part of the proto3 language: top-level
+// messages with scalar, message, repeated and map fields, and one service whose
+// methods may stream. The parser accepts
 // exactly that and rejects anything else, so that a construct it does not
 // understand - a oneof, an enum, a nested message - fails the generation rather
 // than being dropped from the SDK without a word.
@@ -47,11 +51,12 @@ var (
 	reMapField     = regexp.MustCompile(`^map\s*<\s*(\w+)\s*,\s*(\w+)\s*>\s+(\w+)\s*=\s*\d+\s*;$`)
 	reReserved     = regexp.MustCompile(`^reserved\s+[\d\s,to]+;$`)
 	reServiceOpen  = regexp.MustCompile(`^service\s+\w+\s*\{$`)
-	reRPC          = regexp.MustCompile(`^rpc\s+(\w+)\s*\(\s*(\w+)\s*\)\s*returns\s*\(\s*(\w+)\s*\)\s*\{\s*\}$`)
+	reRPC          = regexp.MustCompile(`^rpc\s+(\w+)\s*\(\s*(stream\s+)?(\w+)\s*\)\s*returns\s*\(\s*(stream\s+)?(\w+)\s*\)\s*(?:\{\s*\}|;)$`)
 	reTopLevelSkip = regexp.MustCompile(`^(syntax|package|option)\b.*;$`)
 )
 
-func parse(r io.Reader) (*schema, error) {
+// parse reads a proto file; name is how errors refer to it.
+func parse(r io.Reader, name string) (*schema, error) {
 	s := &schema{byName: map[string]*message{}}
 	sc := bufio.NewScanner(r)
 	var (
@@ -61,7 +66,7 @@ func parse(r io.Reader) (*schema, error) {
 		inService bool
 	)
 	fail := func(format string, args ...any) error {
-		return fmt.Errorf("api.proto:%d: %s", lineNo, fmt.Sprintf(format, args...))
+		return fmt.Errorf("%s:%d: %s", name, lineNo, fmt.Sprintf(format, args...))
 	}
 	for sc.Scan() {
 		lineNo++
@@ -115,7 +120,7 @@ func parse(r io.Reader) (*schema, error) {
 			if m == nil {
 				return nil, fail("unsupported service declaration: %q", line)
 			}
-			s.methods = append(s.methods, &method{name: m[1], request: m[2], response: m[3]})
+			s.methods = append(s.methods, &method{name: m[1], request: m[3], response: m[5], streaming: m[2] != "" || m[4] != ""})
 		default:
 			if line == "}" {
 				current = nil
@@ -140,29 +145,29 @@ func parse(r io.Reader) (*schema, error) {
 		return nil, err
 	}
 	if current != nil || inService {
-		return nil, fmt.Errorf("api.proto: unexpected end of file")
+		return nil, fmt.Errorf("%s: unexpected end of file", name)
 	}
-	if err := s.check(); err != nil {
+	if err := s.check(name); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
 // check verifies every message type a field or method refers to is declared.
-func (s *schema) check() error {
+func (s *schema) check(name string) error {
 	for _, m := range s.messages {
 		for _, f := range m.fields {
 			if _, scalar := scalarTypes[f.typ]; !scalar && s.byName[f.typ] == nil {
-				return fmt.Errorf("api.proto: %s.%s has unknown type %s", m.name, f.name, f.typ)
+				return fmt.Errorf("%s: %s.%s has unknown type %s", name, m.name, f.name, f.typ)
 			}
 			if f.mapKey != "" && f.mapKey != "string" {
-				return fmt.Errorf("api.proto: %s.%s: only string map keys are supported", m.name, f.name)
+				return fmt.Errorf("%s: %s.%s: only string map keys are supported", name, m.name, f.name)
 			}
 		}
 	}
 	for _, rpc := range s.methods {
 		if s.byName[rpc.request] == nil || s.byName[rpc.response] == nil {
-			return fmt.Errorf("api.proto: rpc %s refers to an undeclared message", rpc.name)
+			return fmt.Errorf("%s: rpc %s refers to an undeclared message", name, rpc.name)
 		}
 	}
 	return nil

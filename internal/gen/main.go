@@ -1,8 +1,9 @@
 // Command gen writes api_gen.go from api.proto: the request and result types of
 // every Centrifugo server API method, and the Client and Batch methods sending
-// them.
+// them. With -mode proxy it writes the proxy package's types from proxy.proto
+// instead: the requests, results and responses of Centrifugo's proxy protocol.
 //
-// It runs through go generate in the package directory:
+// It runs through go generate in each package directory:
 //
 //	go generate ./...
 //
@@ -15,6 +16,7 @@ import (
 	"fmt"
 	"go/format"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -23,24 +25,33 @@ import (
 func main() {
 	in := flag.String("in", "api.proto", "proto file to read")
 	out := flag.String("out", "api_gen.go", "Go file to write")
+	mode := flag.String("mode", "api", `"api" for the server API, "proxy" for the proxy protocol`)
 	flag.Parse()
-	if err := run(*in, *out); err != nil {
+	if err := run(*in, *out, *mode); err != nil {
 		fmt.Fprintln(os.Stderr, "gen:", err)
 		os.Exit(1)
 	}
 }
 
-func run(in, out string) error {
+func run(in, out, mode string) error {
+	gen := generate
+	switch mode {
+	case "api":
+	case "proxy":
+		gen = generateProxy
+	default:
+		return fmt.Errorf("unknown mode %q", mode)
+	}
 	f, err := os.Open(in) // #nosec G304 -- path given by go generate
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	s, err := parse(f)
+	s, err := parse(f, filepath.Base(in))
 	if err != nil {
 		return err
 	}
-	src, err := generate(s)
+	src, err := gen(s)
 	if err != nil {
 		return err
 	}

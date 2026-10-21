@@ -20,10 +20,14 @@ FUZZTIME ?= 30s
 # Statement coverage below this fails `make cover`.
 COVERAGE_MIN ?= 90
 
-# The Centrifugo release `make sync-proto` takes api.proto from: a tag, such
-# as v6.10.1. There is no default, so that nothing is synced from an
-# unreleased branch by accident.
+# The Centrifugo release `make sync-proto` takes api.proto and proxy.proto
+# from: a tag, such as v6.10.1. There is no default, so that nothing is synced
+# from an unreleased branch by accident.
 CENTRIFUGO_REF ?=
+# Or a branch, such as master, set instead of CENTRIFUGO_REF on purpose: for
+# work which needs Centrifugo changes not released yet. Sync from a tag again
+# before releasing gocent.
+CENTRIFUGO_BRANCH ?=
 
 # The Centrifugo `make test-integration` talks to. testdata/centrifugo.json
 # configures one to match.
@@ -59,27 +63,32 @@ vet: ## Run go vet, with and without the integration tag
 	$(GO) vet -tags integration ./...
 
 .PHONY: generate
-generate: ## Regenerate api_gen.go from api.proto
+generate: ## Regenerate api_gen.go and proxy/proxy_gen.go from their protos
 	$(GO) generate ./...
 
 .PHONY: sync-proto
-sync-proto: ## Copy api.proto from Centrifugo at CENTRIFUGO_REF (a tag) and regenerate
-	@test -n "$(CENTRIFUGO_REF)" || { echo "set CENTRIFUGO_REF to a Centrifugo tag, e.g. make sync-proto CENTRIFUGO_REF=v6.10.1"; exit 1; }
-	@curl -fsSL https://raw.githubusercontent.com/centrifugal/centrifugo/$(CENTRIFUGO_REF)/internal/apiproto/api.proto -o api.proto.new || { rm -f api.proto.new; echo "no api.proto at Centrifugo $(CENTRIFUGO_REF)"; exit 1; }
-	@grep -q '^service CentrifugoApi' api.proto.new || { rm -f api.proto.new; echo "the file at Centrifugo $(CENTRIFUGO_REF) is not its api.proto"; exit 1; }
-	@mv api.proto.new api.proto
+sync-proto: ## Copy api.proto and proxy.proto from Centrifugo at CENTRIFUGO_REF (a tag) or CENTRIFUGO_BRANCH, and regenerate
+	@if [ -n "$(CENTRIFUGO_REF)" ] && [ -n "$(CENTRIFUGO_BRANCH)" ]; then echo "set CENTRIFUGO_REF or CENTRIFUGO_BRANCH, not both"; exit 1; fi
+	@if [ -z "$(CENTRIFUGO_REF)$(CENTRIFUGO_BRANCH)" ]; then echo "set CENTRIFUGO_REF to a Centrifugo tag, e.g. make sync-proto CENTRIFUGO_REF=v6.10.1 - or CENTRIFUGO_BRANCH=master for unreleased changes"; exit 1; fi
+	@ref="$(CENTRIFUGO_REF)$(CENTRIFUGO_BRANCH)"; \
+	base=https://raw.githubusercontent.com/centrifugal/centrifugo/$$ref/internal; \
+	curl -fsSL $$base/apiproto/api.proto -o api.proto.new || { rm -f api.proto.new; echo "no api.proto at Centrifugo $$ref"; exit 1; }; \
+	curl -fsSL $$base/proxyproto/proxy.proto -o proxy.proto.new || { rm -f api.proto.new proxy.proto.new; echo "no proxy.proto at Centrifugo $$ref"; exit 1; }; \
+	grep -q '^service CentrifugoApi' api.proto.new || { rm -f api.proto.new proxy.proto.new; echo "the file at Centrifugo $$ref is not its api.proto"; exit 1; }; \
+	grep -q '^service CentrifugoProxy' proxy.proto.new || { rm -f api.proto.new proxy.proto.new; echo "the file at Centrifugo $$ref is not its proxy.proto"; exit 1; }; \
+	mv api.proto.new api.proto; mkdir -p proxy; mv proxy.proto.new proxy/proxy.proto
 	$(GO) generate ./...
-	@echo "api.proto is Centrifugo $(CENTRIFUGO_REF)'s: review git diff, then make check"
+	@echo "api.proto and proxy/proxy.proto are Centrifugo $(CENTRIFUGO_REF)$(CENTRIFUGO_BRANCH)'s: review git diff, then make check"
 
 .PHONY: generate-check
-generate-check: ## Fail if api_gen.go is not what api.proto generates
-	@cp api_gen.go api_gen.go.orig
-	@$(GO) generate ./... || { mv api_gen.go.orig api_gen.go; exit 1; }
-	@if ! cmp -s api_gen.go api_gen.go.orig; then \
-		mv api_gen.go.orig api_gen.go; \
-		echo "api_gen.go is stale: run make generate"; exit 1; fi
-	@rm api_gen.go.orig
-	@echo "api_gen.go is current"
+generate-check: ## Fail if api_gen.go or proxy/proxy_gen.go is not what its proto generates
+	@for f in api_gen.go proxy/proxy_gen.go; do cp $$f $$f.orig; done
+	@$(GO) generate ./... || { for f in api_gen.go proxy/proxy_gen.go; do mv $$f.orig $$f; done; exit 1; }
+	@stale=; for f in api_gen.go proxy/proxy_gen.go; do \
+		if ! cmp -s $$f $$f.orig; then stale="$$stale $$f"; mv $$f.orig $$f; else rm $$f.orig; fi; \
+	done; \
+	if [ -n "$$stale" ]; then echo "stale:$$stale - run make generate"; exit 1; fi
+	@echo "api_gen.go and proxy/proxy_gen.go are current"
 
 .PHONY: no-deps
 no-deps: ## Assert the package has no dependencies, no cgo and no unsafe
@@ -96,15 +105,30 @@ no-deps: ## Assert the package has no dependencies, no cgo and no unsafe
 # written by the same generator, and TestEveryMethodReachesItsEndpoint checks
 # every one of them reaches its endpoint and batch command.
 cover: ## Measure coverage of the hand-written code and fail below COVERAGE_MIN
-	$(GO) test -count=1 -covermode=atomic -coverprofile=coverage.all.out .
-	@grep -v '/api_gen.go:' coverage.all.out > coverage.out && rm coverage.all.out
+	$(GO) test -count=1 -covermode=atomic -coverprofile=coverage.all.out . ./proxy
+	@grep -vE '/(api_gen|proxy_gen)\.go:' coverage.all.out > coverage.out && rm coverage.all.out
 	@$(GO) tool cover -func=coverage.out | tail -1
 	@pct=$$($(GO) tool cover -func=coverage.out | tail -1 | grep -oE '[0-9.]+%' | tr -d '%'); \
 	awk -v p="$$pct" -v m="$(COVERAGE_MIN)" 'BEGIN { if (p < m) { print "coverage " p "% is below " m "%"; exit 1 } }'
 
 .PHONY: fuzz
-fuzz: ## Fuzz reply decoding for FUZZTIME
-	$(GO) test -count=1 -run '^$$' -fuzz FuzzReplies -fuzztime $(FUZZTIME) .
+# The fuzz targets `make fuzz` runs, as package:target, each for FUZZTIME: go
+# test fuzzes one target at a time.
+FUZZ_TARGETS = .:FuzzReplies .:FuzzBroadcastWithRetry .:FuzzExponentialBackoff ./proxy:FuzzHandler
+
+fuzz: ## Fuzz reply decoding, broadcast retries, backoff and proxy requests, each for FUZZTIME
+	@set -e; for t in $(FUZZ_TARGETS); do \
+		pkg=$${t%%:*}; target=$${t#*:}; \
+		echo "$$pkg $$target"; \
+		$(GO) test -count=1 -run '^$$' -fuzz "^$$target\$$" -fuzztime $(FUZZTIME) $$pkg; \
+	done
+
+# How many rounds `make stress` runs; `go test` runs 200.
+STRESS_ROUNDS ?= 5000
+
+.PHONY: stress
+stress: ## Run the AutoBatch stress test for STRESS_ROUNDS rounds, with the race detector
+	GOCENT_STRESS_ROUNDS=$(STRESS_ROUNDS) $(GO) test -count=1 -race -run '^TestAutoBatchStress$$' -timeout 30m .
 
 .PHONY: bench
 bench: ## Run the benchmarks

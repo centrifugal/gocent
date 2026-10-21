@@ -32,17 +32,26 @@ import (
 // unidirectional HTTP stream for a real connection, and no namespace named
 // "unknown". CI configures the same through environment variables.
 
+// testAddr is the API endpoint of the Centrifugo the tests talk to.
+func testAddr() string {
+	if addr := os.Getenv("GOCENT_TEST_ADDR"); addr != "" {
+		return addr
+	}
+	return "http://localhost:8100/api"
+}
+
+// testAPIKey is its API key.
+func testAPIKey() string {
+	if key := os.Getenv("GOCENT_TEST_API_KEY"); key != "" {
+		return key
+	}
+	return "api_key"
+}
+
 func realClient(t *testing.T, ab gocent.AutoBatch) *gocent.Client {
 	t.Helper()
-	addr := os.Getenv("GOCENT_TEST_ADDR")
-	if addr == "" {
-		addr = "http://localhost:8100/api"
-	}
-	key := os.Getenv("GOCENT_TEST_API_KEY")
-	if key == "" {
-		key = "api_key"
-	}
-	c, err := gocent.New(gocent.Config{APIEndpoint: addr, APIKey: key, AutoBatch: ab})
+	addr := testAddr()
+	c, err := gocent.New(gocent.Config{APIEndpoint: addr, APIKey: testAPIKey(), AutoBatch: ab})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,12 +105,12 @@ func TestIntegrationBroadcast(t *testing.T) {
 		Channels: []string{a, "unknown:x", b},
 		Data:     jsontext.Value(`{"text":"hello"}`),
 	})
-	var be *gocent.BroadcastError
+	var be *gocent.BroadcastFailedChannelsError
 	if !errors.As(err, &be) {
 		t.Fatalf("Broadcast: %v", err)
 	}
-	if gocent.WholeFailure(err) != nil {
-		t.Errorf("WholeFailure(%v) is not nil: some channels got a reply", err)
+	if !res.Replied {
+		t.Errorf("Replied is false for %v: Centrifugo replied for every channel", err)
 	}
 	if len(be.Failed) != 1 || be.Failed[0].Channel != "unknown:x" {
 		t.Fatalf("failed channels %+v", be.Failed)
@@ -129,7 +138,7 @@ func TestIntegrationBroadcastRetry(t *testing.T) {
 		IdempotencyKey: "broadcast-retry",
 	}
 	first, err := c.Broadcast(t.Context(), req)
-	var be *gocent.BroadcastError
+	var be *gocent.BroadcastFailedChannelsError
 	if !errors.As(err, &be) {
 		t.Fatalf("Broadcast: %v", err)
 	}
@@ -165,10 +174,10 @@ func TestIntegrationBroadcastWithRetry(t *testing.T) {
 	res, err := c.BroadcastWithRetry(t.Context(), gocent.BroadcastRequest{
 		Channels: []string{a, "unknown:x", b},
 		Data:     jsontext.Value(`{"text":"hello"}`),
-	}, gocent.RetryOptions{Backoff: 10 * time.Millisecond})
-	be, ok := errors.AsType[*gocent.BroadcastError](err)
+	}, gocent.BroadcastRetryOptions{})
+	be, ok := errors.AsType[*gocent.BroadcastFailedChannelsError](err)
 	if !ok || len(be.Failed) != 1 || be.Failed[0].Channel != "unknown:x" || gocent.Retryable(err) {
-		t.Fatalf("got %v, want a BroadcastError for unknown:x only, not retryable", err)
+		t.Fatalf("got %v, want a BroadcastFailedChannelsError for unknown:x only, not retryable", err)
 	}
 	if res.Channels[0].Err != nil || res.Channels[0].Result.Offset != 1 || res.Channels[2].Result.Offset != 1 {
 		t.Errorf("result %+v", res.Channels)
@@ -201,8 +210,8 @@ func TestIntegrationBatch(t *testing.T) {
 	stats := b.PresenceStats(gocent.PresenceStatsRequest{Channel: ch})
 	hist := b.History(gocent.HistoryRequest{Channel: ch, Limit: -1})
 
-	err := b.Send(t.Context())
-	var batchErr *gocent.BatchError
+	_, err := b.Send(t.Context())
+	var batchErr *gocent.BatchFailedCommandsError
 	if !errors.As(err, &batchErr) || len(batchErr.Failed) != 1 || batchErr.Failed[0].Index != 1 {
 		t.Fatalf("Send: %v", err)
 	}
