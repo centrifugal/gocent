@@ -174,8 +174,10 @@ func TestOnRequest(t *testing.T) {
 	}
 	for i, got := range infos {
 		w := want[i]
+		// A Duration of zero is possible: Windows' clock is coarse enough for a
+		// request to the fake server to take no measurable time.
 		if got.Method != w.Method || got.Commands != w.Commands || got.Failed != w.Failed || got.AutoBatch || got.StatusCode != w.StatusCode ||
-			got.Duration <= 0 || (w.Err == nil) != (got.Err == nil) {
+			got.Duration < 0 || (w.Err == nil) != (got.Err == nil) {
 			t.Errorf("request %d: %+v, want %+v", i, got, w)
 		}
 	}
