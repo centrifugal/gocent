@@ -533,7 +533,7 @@ JSON fails at signing.
 | `audience`, `issuer` | `aud`, `iss` | |
 | `info` / `b64info` | `info` / `b64info` | |
 | `channels` / `subs` (connection) | `channels` / `subs` | Not both: Centrifugo ignores `channels` when `subs` is set |
-| `meta` (connection) | `meta` | Never sent to the client |
+| `meta` (connection) | `meta` | Centrifugo never sends it to clients, but the token carries it, readable by the client: docs warn against secrets in it |
 | `caps`, `labels` (connection, PRO) | `caps`, `labels` | |
 | `channel` (subscription) | `channel` | Required |
 | `data` / `b64data`, `override`, `allow`, `server_tags_filter` (subscription) | same names | `allow` and `server_tags_filter`: PRO |
