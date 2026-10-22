@@ -148,8 +148,8 @@ boolean or null. Every SDK takes and returns them the same way:
    `$data = ['text' => 'hi']` in PHP. This is the usual way to publish.
 2. **Every SDK also takes raw JSON, marked by a type of its own,** and sends
    it verbatim - not decoded and encoded again: Python
-   `RawJSON(b'{"text":"hi"}')`, JavaScript `JSON.rawJSON('{"text":"hi"}')`,
-   Go `jsontext.Value` - the table below names each. It is for JSON the
+   `RawJSON(b'{"text":"hi"}')`, JavaScript `rawJSON('{"text":"hi"}')`, Go
+   `jsontext.Value` - the table below names each. It is for JSON the
    application already has - from a database, a queue, a cache - and for
    encoding with a library or rules of the application's own (a faster
    encoder, dates, decimals): encode, then pass the result as raw JSON. An
@@ -163,34 +163,37 @@ boolean or null. Every SDK takes and returns them the same way:
 5. **Invalid JSON is never sent**: raw JSON is checked to be valid, and a
    native value the encoder cannot represent fails with `InvalidRequest`
    before sending - NaN and infinities included, which some encoders write
-   anyway, as `NaN` or as `null`, though JSON has no such numbers.
-6. **Payloads come back as the language is used to**: as the type the table
-   names for replies - the decoded native value in Python, JavaScript, PHP,
-   Ruby, Dart and Elixir (`pub.data["text"]`); the language's JSON type in the
-   others, for the application to decode into its own types. The same holds
-   for what the SDK receives in the proxy.
-7. **Where one field cannot take both a native value and raw JSON** - Go,
-   Rust, Swift - the SDK takes raw JSON only, and encoding a value is one call
-   of the JSON library the table names.
+   anyway, as `NaN`, `"NaN"` or `null`, though JSON has no such numbers.
+6. **A payload which came back can go out again as it is.** Replies - and
+   what the SDK receives in the proxy - hold payloads in the type the table
+   names, which requests take as they are and send as the same JSON value:
+   republishing a publication from history, or answering a publish proxy with
+   the client's data, changes nothing. Dynamic languages give the decoded
+   native value (`pub.data["text"]`), parsing the reply in one go as they
+   must; the others give a JSON type, which costs nothing to send on and one
+   call to decode into the application's own types.
+7. **Go, Rust and Swift take raw JSON only,** by choice: one type in and out,
+   and encoding a value is one call of the language's JSON library.
 
-| Language | JSON library | Native value in requests | Raw JSON | Payloads in replies and proxy requests | To mind |
-|---|---|---|---|---|---|
-| Go | `encoding/json/v2` | - (rule 7: `json.Marshal(v)`) | `jsontext.Value` | `jsontext.Value` | |
-| Python | `json` | `Any` JSON-compatible: `dict`, `list`, `str`, `int`, `float`, `bool`, `None` | `RawJSON` of the SDK, holding `bytes` or `str` | decoded `Any` | encode with `allow_nan=False`: by default `json.dumps` writes `NaN` |
-| JavaScript, TypeScript | `JSON` | `unknown` JSON-compatible: objects, arrays, `string`, `number`, `boolean`, `null` | `JSON.rawJSON(text)` (Node.js 21+, Chrome 114+); elsewhere the SDK's `rawJSON(text)` | decoded `unknown` | `JSON.stringify` writes NaN and infinities as `null` and drops `undefined`: refuse non-finite numbers; integers past 2^53 lose precision when decoded - say so in the docs |
-| PHP | `ext-json` | `mixed`: arrays, scalars, `null`, `stdClass`, `JsonSerializable` | `RawJson` of the SDK, holding a `string` | `json_decode($json, true)`: associative arrays | `JSON_THROW_ON_ERROR`; `JSON_PRESERVE_ZERO_FRACTION`, so `1.0` stays a float; `[]` encodes as an array - an empty object is `new \stdClass()` |
-| Ruby | `json` | `Hash`, `Array`, `String`, `Integer`, `Float`, `true`, `false`, `nil` | `JSON::Fragment` (json 2.10+) | `JSON.parse`: `Hash` with `String` keys | |
-| Java | Jackson | `Object`: POJO, `Map`, `List`, `JsonNode` | `com.fasterxml.jackson.databind.util.RawValue` | `JsonNode` | refuse non-finite numbers |
-| Kotlin | kotlinx.serialization | `JsonElement` (`buildJsonObject`, `Json.encodeToJsonElement`) | `JsonUnquotedLiteral(text)` | `JsonElement` | |
-| C# | System.Text.Json | `object?`: POCO, anonymous type, `JsonNode` | `RawJson` of the SDK, written with `Utf8JsonWriter.WriteRawValue` | `JsonElement` | |
-| Rust | serde_json | - (rule 7: `serde_json::value::to_raw_value(&v)`) | `Box<serde_json::value::RawValue>` (feature `raw_value`) | `Box<RawValue>` | serde_json writes NaN and infinities as `null`: refuse non-finite numbers |
-| Swift | Foundation `Codable` | - (rule 7: `JSONEncoder().encode(v)`) | `Data` | `Data` | |
-| Dart | `dart:convert` | `Object?`: `Map<String, dynamic>`, `List`, `num`, `String`, `bool`, `null` | `RawJson` of the SDK, holding a `String` | decoded `Object?` | |
-| Elixir | Jason | maps, lists, strings, numbers, booleans, `nil` | `Jason.Fragment.new(iodata)` | decoded terms, maps with string keys | |
+| Language | JSON library | Requests take | Raw JSON | Replies give | Decode into own type | To mind |
+|---|---|---|---|---|---|---|
+| Go | `encoding/json/v2` | raw JSON only (rule 7): `json.Marshal(v)` | `jsontext.Value` | `jsontext.Value` | `json.Unmarshal(v, &x)` | |
+| Python | `json` | `dict`, `list`, `str`, `int`, `float`, `bool`, `None`, or raw JSON | `RawJSON` of the SDK, holding `bytes` or `str` | decoded values | `Model.model_validate(data)` (pydantic) | encode with `allow_nan=False`: by default `json.dumps` writes `NaN` |
+| JavaScript, TypeScript | `JSON` | objects, arrays, `string`, `number`, `bigint`, `boolean`, `null`, or raw JSON | `rawJSON(text)` of the SDK - `JSON.rawJSON` takes primitives only | decoded values; integers past 2^53 as `bigint` | a cast, or a schema library | `JSON.stringify` writes NaN and infinities as `null` and drops `undefined`: refuse non-finite numbers. Encode a `bigint` as a number (`JSON.rawJSON(v.toString())`); decode integers past 2^53 from the reviver's `context.source` (Node.js 21+, Chrome 114+, Firefox 135+, Safari 18.4+) - older runtimes round them, which the docs say |
+| PHP | `ext-json` | arrays, `stdClass`, scalars, `null`, `JsonSerializable`, or raw JSON | `RawJson` of the SDK, holding a `string` | objects: `json_decode($json, false)` | a DTO's constructor | `JSON_THROW_ON_ERROR`, `JSON_PRESERVE_ZERO_FRACTION`. Objects, not associative arrays: arrays turn `{}` and `{"0":"a"}` into JSON arrays when sent on. An empty object in a request is `new \stdClass()` - `[]` is an array |
+| Ruby | `json` 2.10+ (bundled from Ruby 4.0; a gem dependency before) | `Hash`, `Array`, `String`, `Integer`, `Float`, `true`, `false`, `nil`, or raw JSON | `JSON::Fragment` | `JSON.parse`: `Hash` with `String` keys | `Model.new(**h.transform_keys(&:to_sym))` | |
+| Java | Jackson, internal to the SDK | POJOs, `Map`, `List`, scalars, or raw JSON | `RawJson` of the SDK, holding the text | `RawJson`: `toString()` is the JSON | `raw.decode(Foo.class)` | Never Jackson types in the API: Jackson 3 moved them from `com.fasterxml.jackson` to `tools.jackson`, and an application uses one or the other. Disable `WRITE_NAN_AS_STRINGS`, which writes NaN as `"NaN"` by default |
+| Kotlin | kotlinx.serialization 1.10+ | `JsonElement` (`buildJsonObject`, `Json.encodeToJsonElement(v)`) | `JsonUnquotedLiteral(text)` | `JsonElement` - numbers keep their text | `Json.decodeFromJsonElement<Foo>(e)` | |
+| C# | System.Text.Json | POCOs, anonymous types, `JsonNode`, `JsonElement`, or raw JSON | `RawJson` of the SDK, written with `Utf8JsonWriter.WriteRawValue` | `JsonElement` which outlives the reply (`Deserialize<JsonElement>`, or `Clone()` from a `JsonDocument`) | `element.Deserialize<Foo>()` | |
+| Rust | serde_json, feature `raw_value` | raw JSON only (rule 7): `serde_json::value::to_raw_value(&v)` | `Box<RawValue>` | `Box<RawValue>` | `serde_json::from_str::<Foo>(raw.get())` | serde_json writes NaN and infinities as `null`, which the SDK cannot tell from a null: the docs say so |
+| Swift | Foundation `Codable` | raw JSON only (rule 7): `JSONEncoder().encode(v)` | `Data` | `Data` | `JSONDecoder().decode(Foo.self, from: data)` | |
+| Dart | `dart:convert` | `Map<String, dynamic>`, `List`, `num`, `String`, `bool`, `null`, or raw JSON | `RawJson` of the SDK, holding a `String` | decoded `Object?` | `Foo.fromJson(map)` | on the web, integers past 2^53 lose precision: the docs say so |
+| Elixir | `JSON` (Elixir 1.18+) | maps, lists, strings, numbers, booleans, `nil`, or raw JSON | `RawJSON` struct of the SDK, encoded through `JSON.Encoder` as its text | decoded terms, maps with string keys | a struct, or an Ecto embedded schema | |
 
 A language not listed follows the closest row: its standard or dominant JSON
-library, native values where a field can take them, its library's raw JSON
-type, or the SDK's own when there is none.
+library, kept out of the SDK's API when it has rival major versions; native
+values in and out where the language is dynamic, its JSON type where it is
+not; and a raw JSON type of the SDK's own where the library has none.
 
 ### 3.5 Validation before sending
 
@@ -560,8 +563,8 @@ deadline ending with the proxy's timeout) and returning a result or an error.
   cannot be encoded fails the request with 500, reported to `on_error`:
   Centrifugo answers the client with a temporary internal error, and for
   refresh and sub refresh asks again a minute later.
-- Payloads follow section 3.4: a request's arrive as the language is used
-  to, and a result takes a native value or raw JSON.
+- Payloads follow section 3.4: a request's arrive in the type its table
+  names for replies, and a result takes them back as they are.
 - Binary mode (`binary_encoding`): payloads arrive in the `b64` fields and
   `encoding` is `"binary"`; a result MAY answer with either form.
 - Docs MUST say to keep proxy endpoints reachable by Centrifugo only: anyone
@@ -577,8 +580,9 @@ An SDK MUST have:
   and every API method reaching its endpoint and batch command.
 - Payloads (section 3.4): a native value and raw JSON send the same value;
   raw JSON is sent verbatim; a string is a JSON string; bytes, NaN and invalid
-  raw JSON are refused before sending; replies return payloads as the
-  language is used to.
+  raw JSON are refused before sending; a payload from a reply sent back
+  unchanged is the same JSON value - `{}`, `{"0":"a"}`, an integer past 2^53
+  and a float with a zero fraction included.
 - Automatic batching under random concurrency, with a race detector where the
   language has one.
 - Integration tests of every OSS method against the `centrifugo/centrifugo`
