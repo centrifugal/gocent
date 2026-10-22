@@ -286,3 +286,23 @@ func TestExpiry(t *testing.T) {
 		t.Error("contradicting subscription expiry signed")
 	}
 }
+
+// The vectors of spec.md, section 15.1, which every SDK reproduces.
+func TestSpecVectors(t *testing.T) {
+	key := HMAC([]byte("client_secret"))
+	iat, exp := time.Unix(1700000000, 0), time.Unix(1700003600, 0)
+	conn, err := Connection(key, ConnectionClaims{User: "42", ExpiresAt: exp, IssuedAt: iat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsImV4cCI6MTcwMDAwMzYwMCwiaWF0IjoxNzAwMDAwMDAwfQ.HKZwmcYmHVbRESuYd4swVgAH7gg41giR57F_K5FEmEY"; conn != want {
+		t.Errorf("connection token %s, want %s", conn, want)
+	}
+	sub, err := Subscription(key, SubscriptionClaims{User: "42", Channel: "news", ExpiresAt: exp, IssuedAt: iat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsImV4cCI6MTcwMDAwMzYwMCwiaWF0IjoxNzAwMDAwMDAwLCJjaGFubmVsIjoibmV3cyJ9.v_Quw-azNV1qFjm9ZQnkp6QBtK6LmtFxY74YcUHlJcA"; sub != want {
+		t.Errorf("subscription token %s, want %s", sub, want)
+	}
+}

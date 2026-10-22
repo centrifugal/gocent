@@ -131,7 +131,7 @@
 //
 // # Tracing and metrics
 //
-// gocent has no hooks of its own: every request goes through the
+// gocent depends on no tracing library: every request goes through the
 // [http.Client] in Config.HTTPClient, so tracing and metrics come from its
 // transport. With OpenTelemetry, wrap the transport of the default client:
 //

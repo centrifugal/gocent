@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -905,5 +906,48 @@ func TestDefaultHTTPClientConnections(t *testing.T) {
 	}
 	if got := opened.Load(); got != limit {
 		t.Errorf("second burst opened %d more connections: the idle ones were not kept", got-limit)
+	}
+}
+
+// A payload which came back can go out again as it is: one from a History
+// reply, published again, is sent as the same JSON - the cases other
+// languages' decoders change included (spec.md, section 3.4).
+func TestPayloadRoundTrip(t *testing.T) {
+	const payload = `{"empty":{},"keys":{"0":"a"},"big":12345678901234567890,"float":1.0,"neg":-0}`
+	var mu sync.Mutex
+	var published string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/history":
+			_, _ = io.WriteString(w, `{"result":{"publications":[{"data":`+payload+`,"offset":1}],"offset":1,"epoch":"e"}}`)
+		case "/api/publish":
+			var req struct {
+				Data jsontext.Value `json:"data"`
+			}
+			if err := json.UnmarshalRead(r.Body, &req); err != nil {
+				t.Error(err)
+			}
+			mu.Lock()
+			published = string(req.Data)
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"result":{}}`)
+		}
+	}))
+	defer srv.Close()
+	c, err := gocent.New(gocent.Config{APIEndpoint: srv.URL + "/api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := c.History(t.Context(), gocent.HistoryRequest{Channel: "news", Limit: -1})
+	if err != nil || len(h.Publications) != 1 {
+		t.Fatalf("history: %+v, %v", h, err)
+	}
+	if _, err = c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: h.Publications[0].Data}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if published != payload {
+		t.Errorf("published %s, want %s", published, payload)
 	}
 }

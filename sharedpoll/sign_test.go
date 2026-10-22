@@ -50,3 +50,21 @@ func TestSignTimes(t *testing.T) {
 		t.Errorf("exp %s, want %d", parts[1], exp.Unix())
 	}
 }
+
+// The vectors of spec.md, section 15.1, which every SDK reproduces.
+func TestSpecVectors(t *testing.T) {
+	iat := time.Unix(1700000000, 0)
+	for _, v := range []struct {
+		user, channel string
+		keys          []string
+		exp           time.Time
+		want          string
+	}{
+		{"42", "poll:prices", []string{"AAPL", "GOOG"}, time.Unix(1700003600, 0), "1700000000:1700003600:c61dbf52085a6973537e71644fa30a3bbfc29a52d7ce9f1b7618531596ce587d"},
+		{"", "poll:prices", nil, time.Time{}, "1700000000:0:92dd64af5612afde06cad03bb63435d951e037cb55a087af05c2a1399abade0e"},
+	} {
+		if got := signAt([]byte("shared_poll_secret"), v.user, v.channel, v.keys, v.exp, iat); got != v.want {
+			t.Errorf("%q %v: %s, want %s", v.user, v.keys, got, v.want)
+		}
+	}
+}

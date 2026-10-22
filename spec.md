@@ -88,11 +88,11 @@ the fix.
 |---|---|---|
 | `api_endpoint` | Base URL of the API, `http://localhost:8000/api` | Absolute `http`/`https` URL with a host; no query, fragment or credentials; a trailing `/` is dropped; a path ending in a method name (`/api/publish`) is refused with a hint |
 | `api_endpoint_func` | Returns the base URL per request, for discovered addresses | Exactly one of the two is set; its result is validated per request |
-| `api_key` | Sent as `X-API-Key` | No control characters |
+| `api_key` | Sent as `X-API-Key` | No control characters but tab |
 | `bearer_token_func` | Returns a token sent as `Authorization: Bearer <token>`, per request | Not together with `api_key`: Centrifugo PRO judges a request with a bearer token by the token alone. An empty token or one with control characters fails the call before sending |
 | `http_client` | The HTTP client | Default: section 3.2 |
 | `request_timeout` | Bounds a call without a deadline of its own | Default 10 s; negative refused |
-| `header` | Extra headers on every request | MUST refuse `X-API-Key`, `Authorization`, `Content-Type`, invalid names and values with control characters; `User-Agent` replaces the SDK's own; `Host` sets the request's host |
+| `header` | Extra headers on every request | MUST refuse `X-API-Key`, `Authorization`, `Content-Type`, invalid names and values with control characters but tab; `User-Agent` replaces the SDK's own; `Host`, with exactly one non-empty value, sets the request's host |
 | `auto_batch` | Section 8 | |
 | `on_request` | Section 10 | |
 | `batch_context` | Section 10 | |
@@ -128,7 +128,8 @@ call.
   However a request times out, the SDK MUST report it as the language's one
   timeout error (gocent: `errors.Is(err, context.DeadlineExceeded)`).
 - Replies are decoded as strictly as requests are encoded: case-sensitive
-  names. A reply which is not a Centrifugo reply is a `DecodeError`.
+  names. A reply which is not JSON of the reply's shape - an HTML page, say -
+  is a `DecodeError`.
 
 ### 3.3 Methods
 
@@ -163,7 +164,9 @@ not list is decided the same way:
    `data={"text": "hi"}` in Python, `data: {text: "hi"}` in JavaScript,
    `$data = ['text' => 'hi']` in PHP. This is the usual way to publish.
 2. **Every SDK also takes raw JSON, marked by a type of its own,** and sends
-   it verbatim - not decoded and encoded again: Python
+   it as the same JSON value, number text kept - not decoded into the
+   language's values and encoded again; an encoder MAY drop insignificant
+   whitespace and normalize string escapes, as Go's does: Python
    `RawJSON(b'{"text":"hi"}')`, JavaScript `rawJSON('{"text":"hi"}')`, Go
    `jsontext.Value` - the table below names each. It is for JSON the
    application already has - from a database, a queue, a cache - and for
@@ -278,10 +281,10 @@ Every other rule stays Centrifugo's to check: the SDK MUST NOT copy them.
 
 `close(deadline)` MUST refuse new calls with a `Closed` error and wait for the
 calls in progress - requests on their way, calls queued for an automatic
-batch, batches whose callers left, a broadcast retry (which stops at its next
-attempt). It returns the deadline's error if that ends first, leaving the rest
-to go on, and MAY be called again. With its own HTTP client the SDK then
-closes idle connections.
+batch, batches whose callers left, and a broadcast retry's attempt in flight:
+the retry stops at its next attempt, which fails with `Closed`. It returns
+the deadline's error if that ends first, leaving the rest to go on, and MAY be
+called again. With its own HTTP client the SDK then closes idle connections.
 
 ## 4. Errors
 
@@ -292,8 +295,8 @@ closes idle connections.
 | `Error` | Centrifugo refused the request or failed to carry it out | `code` (stable), `message` (for people, not compared), `temporary` |
 | `HTTPError` | The request did not reach the API method | `status_code`, `body` (start of it), `header` (always present: request IDs, `Retry-After`) |
 | `DecodeError` | The reply is not Centrifugo's - usually a wrong endpoint | the cause |
-| `InvalidRequest` | Not sent: sections 3.4 and 3.5 | method, problem, cause |
-| `InvalidConfig` | Client not created: section 3.1 | field, fix |
+| `InvalidRequest` | Not sent: sections 3.4 and 3.5 | its message names the method and problem; the cause, when there is one, is wrapped |
+| `InvalidConfig` | Client not created: section 3.1 | its message names the field and the fix |
 | `Closed` | Call after `close` | |
 | `BatchSent` / `BatchNotSent` | Batch misuse: section 7.2 | |
 | network / timeout | From the transport, wrapped | the cause |
@@ -313,7 +316,8 @@ closes idle connections.
 
 ### 4.2 Transport error mode
 
-With `http_api.error_mode: transport`, Centrifugo answers a failed call with
+With `http_api.error_mode: transport` - or the `X-Centrifugo-Error-Mode:
+transport` header on a request - Centrifugo answers a failed call with
 an HTTP status and the error alone as the body. The SDK MUST return the same
 `Error` as in a 200 reply when the status is one Centrifugo maps errors to -
 400, 404, 409, 416, 429, 500 - and the body is `{"code": N, ...}` with N ≥ 100.
@@ -405,8 +409,11 @@ should go to.
   returns.
 - A command the client can tell is invalid fails the whole batch before
   sending, naming its index.
-- A batch is sent once, whatever happened: sending again returns `BatchSent`.
-  An empty batch does nothing and succeeds.
+- A batch is sent once, whatever happened: sending again returns `BatchSent`,
+  and adding a command to a sent batch is a programming error the SDK refuses
+  loudly (gocent panics). An empty batch does nothing and succeeds - but
+  returns `Closed` from a closed client. A batch is not safe for concurrent
+  use.
 - A reply count different from the command count is a `DecodeError`.
 
 ### 7.3 Broadcast with retry
@@ -429,7 +436,10 @@ should go to.
   alone when it already holds the other, a deadline say. Default: wait
   `exponential_backoff(100 ms, 5 s)(attempt)`;
 - a failure no retry can fix - a 401, an invalid request - stops it without
-  calling `on_attempt_err`.
+  calling `on_attempt_err`, and no attempt starts once the call's deadline has
+  ended;
+- a negative `max_attempts` or `attempt_timeout` fails it with
+  `InvalidRequest` before any attempt: every channel failed, 0 attempts.
 
 ## 8. Automatic batching
 
@@ -446,7 +456,8 @@ out.
 - Refused at creation: negative values; `max_batch_size` without
   `max_in_flight`; `max_batch_size` of 1.
 - An automatic batch always goes to `/api/batch`, even with one command, so
-  that replies have one shape.
+  that replies have one shape, and with `parallel: true`: its calls were made
+  concurrently, so they have no order to keep.
 - Every call gets exactly its own reply: its command's result or error, or the
   error of the batch request which carried it. A batch request failing as a
   whole fails every call in it; no call is retried alone.
@@ -454,8 +465,9 @@ out.
   reads its request again.
 - A call whose deadline ends while queued leaves without its command being
   sent. A batch runs on its own, never on a caller's context, until the latest
-  deadline of its calls (`request_timeout` for a call without one), so each
-  call keeps its own deadline. A reply arriving as a caller's deadline ends is
+  deadline of its calls (`request_timeout` for a call without one), and never
+  less than `request_timeout` from when it is sent, so each call keeps its own
+  deadline. A reply arriving as a caller's deadline ends is
   returned, not a timeout.
 - Calls made one after another keep their order: each waits for its reply.
 - Callers' context values reach a batch only through `batch_context`.
@@ -473,13 +485,17 @@ same way by every writer.
 
 ## 10. Observability
 
-- `on_request(context, info)` is called after every HTTP request with:
+- `on_request(context, info)` is called after every request with - also one
+  which failed before reaching the network, as when the endpoint function, the
+  token function or encoding failed - synchronously, the call waiting for it:
   `method` ("batch" for batches), `commands`, `failed` (commands answered with
   an error; a broadcast failing in some channels is not counted), `auto_batch`,
   `duration` (from before getting the endpoint and credentials to the reply
   read; MAY be zero on a coarse clock), `status_code` (0 without a reply),
-  `err` (the request's own error, nil when Centrifugo's reply was read). A
-  broadcast retry reports each attempt, an automatic batch once.
+  `err` (the request's own error, nil when Centrifugo's reply was read; in the
+  transport error mode, the error of the request's one command, which `failed`
+  then does not count). A broadcast retry reports each attempt, an automatic
+  batch once.
 - `batch_context(batch_context, callers)` makes an automatic batch's request
   context from its callers' - for a tracing span linking every caller's span.
 - Tracing and metrics otherwise come from the HTTP client's transport; the SDK
@@ -492,7 +508,7 @@ same way by every writer.
 
 | Key | Algorithm | Centrifugo option |
 |---|---|---|
-| HMAC secret | HS256 | `client.token.hmac_secret_key` |
+| HMAC secret, not empty | HS256 | `client.token.hmac_secret_key` |
 | RSA private key | RS256 | `client.token.rsa_public_key` |
 | ECDSA private key | ES256 / ES384 / ES512 for P-256 / P-384 / P-521; other curves refused | `client.token.ecdsa_public_key` |
 | Ed25519 private key | EdDSA | `client.token.ed25519_public_key` (Centrifugo releases after #1288), or JWKS |
@@ -536,7 +552,8 @@ above.
 "sig"` (Centrifugo skips keys without it), `alg`, and `n`/`e`, `crv`/`x`/`y`
 or `crv: "Ed25519"`/`x`, base64url unpadded, EC coordinates at the curve's
 size. It MUST refuse: no keys, an HMAC key, a key without an ID, an ID used
-twice.
+twice. A JWKS endpoint built from keys it refuses fails when it is built, not
+when it is called.
 
 A JWKS endpoint answers `GET` and `HEAD` with `Content-Type:
 application/json` and `Cache-Control: public, max-age=300`.
@@ -571,7 +588,8 @@ their connection token.
 ## 12. Endpoints for client SDKs
 
 Endpoints the `getToken` and `getSignature` callbacks of client SDKs call,
-around an application function deciding who gets what:
+around an application function deciding who gets what - required when the
+endpoint is built:
 
 - Success: a JSON object, `Content-Type: application/json`, `Cache-Control:
   no-store`.
@@ -618,8 +636,9 @@ deadline ending with the proxy's timeout) and returning a result or an error.
 | shared poll refresh, channel state (PRO) | result, `ProxyError` (a failure) |
 | refresh, sub refresh, cache empty (PRO) | result only (refresh and sub refresh end through the result's `expired`) |
 
-- A handler takes `POST` only (405 with `Allow` otherwise), reads up to 16 MiB,
-  and answers a malformed request with 400.
+- A handler takes `POST` only (405 with `Allow` otherwise), reads up to 16 MiB
+  (configurable), and answers a malformed request with 400. Its function is
+  required when the handler is built.
 - It answers with exactly one of result, error and disconnect: Centrifugo
   takes a response with none as accepting the request as sent.
 - `ProxyError{code, message, temporary}` - codes in [400, 1999] - rejects the
@@ -645,7 +664,8 @@ An SDK MUST have:
   `replied` agreeing with the error for every way a broadcast or batch is sent,
   and every API method reaching its endpoint and batch command.
 - Payloads (section 3.4): a native value and raw JSON send the same value;
-  raw JSON is sent verbatim; a string is a JSON string; bytes, NaN and invalid
+  raw JSON is sent as the same JSON value, number text kept; a string is a
+  JSON string; bytes, NaN and invalid
   raw JSON are refused before sending; a payload from a reply sent back
   unchanged is the same JSON value - `{}`, `{"0":"a"}`, an integer past 2^53
   and a float with a zero fraction included.
