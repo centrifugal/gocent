@@ -152,7 +152,7 @@ closes idle connections.
 | Kind | Meaning | Contents |
 |---|---|---|
 | `Error` | Centrifugo refused the request or failed to carry it out | `code` (stable), `message` (for people, not compared), `temporary` |
-| `HTTPError` | The request did not reach the API method | `status_code`, `body` (start of it), `header` (never empty: request IDs, `Retry-After`) |
+| `HTTPError` | The request did not reach the API method | `status_code`, `body` (start of it), `header` (always present: request IDs, `Retry-After`) |
 | `DecodeError` | The reply is not Centrifugo's - usually a wrong endpoint | the cause |
 | `InvalidRequest` | Not sent: section 3.4 | method, problem, cause |
 | `InvalidConfig` | Client not created: section 3.1 | field, fix |
@@ -170,7 +170,8 @@ closes idle connections.
 - Error messages SHOULD carry hints: a redirect - check http or https in the
   endpoint; a 404 for a PRO-only method - the server is likely Centrifugo OSS;
   any other 404 - is the endpoint the API base URL; a 401 - check the
-  credentials.
+  credentials. In a batch, a PRO-only command sent to Centrifugo OSS fails
+  with code 104 (not found) instead of a 404.
 
 ### 4.2 Transport error mode
 
@@ -286,7 +287,8 @@ should go to.
 - `on_attempt_err(attempt)` is called after each failed attempt a retry may
   fix, except the last, with the attempt number, its error, the channels to
   retry, the result so far and the key. It waits, logs or stops by returning
-  an error; the call then returns both errors joined. Default: wait
+  an error; the call then returns both errors joined - or the broadcast's
+  alone when it already holds the other, a deadline say. Default: wait
   `exponential_backoff(100 ms, 5 s)(attempt)`;
 - a failure no retry can fix - a 401, an invalid request - stops it without
   calling `on_attempt_err`.
