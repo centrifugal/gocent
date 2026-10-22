@@ -247,6 +247,15 @@ function encode(value) {
   `1.5` stay numbers, and so does every integer a `number` holds exactly. The
   docs say that IDs past 2^53 come back as `bigint`, which does not mix with
   `number` in arithmetic.
+- Without `JSON.rawJSON`, a `bigint` in a request fails with
+  `InvalidRequest` before sending (rule 5), naming the runtimes which have it.
+- Decoding big integers is on, not an option: exact comes first, and a new
+  SDK has no applications whose types it would change. (centrifuge-js, the
+  client SDK, has them, and makes it its `bigIntegers` option.) An
+  application which sends a payload on with a `JSON.stringify` of its own -
+  `res.json(pub.data)` - gets a `TypeError` for a `bigint` in it: loud, where
+  a rounded integer would be wrong silently. The docs show the replacer,
+  `(k, v) => typeof v === "bigint" ? JSON.rawJSON(String(v)) : v`.
 - `JSON.rawJSON` takes primitives only, so the SDK's own `rawJSON` for an
   object or array is spliced in by the SDK: written as a unique placeholder
   string by `JSON.stringify`, then replaced by its text, checked to be valid
