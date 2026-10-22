@@ -5,7 +5,6 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -793,65 +792,6 @@ func TestRedirectIsNotFollowed(t *testing.T) {
 	}
 	if reached.Load() != 1 {
 		t.Error("the client's own CheckRedirect was not used")
-	}
-}
-
-// A payload which repeats a key is sent as given - whether to accept it is
-// Centrifugo's to decide - and a reply holding one is read: a publication
-// someone else made with a repeated key does not break History.
-func TestRepeatedKeyInPayload(t *testing.T) {
-	const repeated = `{"a":1,"a":2}`
-	var mu sync.Mutex
-	var bodies []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		mu.Lock()
-		bodies = append(bodies, string(b))
-		mu.Unlock()
-		switch r.URL.Path {
-		case "/api/history":
-			_, _ = io.WriteString(w, `{"result":{"publications":[{"data":`+repeated+`,"offset":1}],"offset":1,"epoch":"e"}}`)
-		case "/api/batch":
-			_, _ = io.WriteString(w, `{"replies":[{"publish":{}}]}`)
-		default:
-			_, _ = io.WriteString(w, `{"result":{}}`)
-		}
-	}))
-	defer srv.Close()
-	c, err := gocent.New(gocent.Config{APIEndpoint: srv.URL + "/api"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := gocent.PublishRequest{Channel: "news", Data: jsontext.Value(repeated)}
-	if _, err = c.Publish(t.Context(), req); err != nil {
-		t.Fatalf("publish: %v", err)
-	}
-	b := c.NewBatch(gocent.BatchOptions{})
-	b.Publish(req)
-	if _, err = b.Send(t.Context()); err != nil {
-		t.Fatalf("batch: %v", err)
-	}
-	h, err := c.History(t.Context(), gocent.HistoryRequest{Channel: "news", Limit: -1})
-	if err != nil {
-		t.Fatalf("history: %v", err)
-	}
-	if len(h.Publications) != 1 || string(h.Publications[0].Data) != repeated {
-		t.Errorf("history publications %+v", h.Publications)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	for i, body := range bodies[:2] {
-		if !strings.Contains(body, repeated) {
-			t.Errorf("request %d sent %s, want the data as given", i, body)
-		}
-	}
-
-	cmd, err := gocent.NewCommand(req)
-	if err != nil || !strings.Contains(string(cmd.Payload), repeated) {
-		t.Errorf("NewCommand: %s, %v", cmd.Payload, err)
-	}
-	if _, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: jsontext.Value(`{"a":`)}); !errors.Is(err, gocent.ErrInvalidRequest) {
-		t.Errorf("invalid JSON: %v, want ErrInvalidRequest", err)
 	}
 }
 

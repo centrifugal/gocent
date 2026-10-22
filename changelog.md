@@ -127,7 +127,7 @@ Change the import path to `github.com/centrifugal/gocent/v4`, then:
 | `WithDisconnect`, `WithDisconnectClientWhitelist` | `Disconnect`, `Whitelist` fields |
 | `WithRecoverSince(&pos)`, `WithSince(&pos)` | `RecoverSince: pos`, `Since: pos` - a value, not a pointer |
 | `WithPresence(true)`, `WithJoinLeave(true)`, `WithPosition(true)`, `WithRecover(true)` | `Override: gocent.SubscribeOptionOverride{Presence: gocent.Bool(true)}`, with the fields `Presence`, `JoinLeave`, `ForcePositioning`, `ForceRecovery` - Centrifugo takes these only as overrides of the channel's options |
-| `data []byte`, `json.RawMessage` in subscribe options | `jsontext.Value`, which takes a `[]byte` or a `json.RawMessage` as is - since Go 1.27 `json.RawMessage` is the same type; it must be valid JSON, with no key repeated in an object, or the call fails with `gocent.ErrInvalidRequest` before anything is sent |
+| `data []byte`, `json.RawMessage` in subscribe options | `jsontext.Value`, which takes a `[]byte` or a `json.RawMessage` as is - since Go 1.27 `json.RawMessage` is the same type; it must be valid JSON, or the call fails with `gocent.ErrInvalidRequest` before anything is sent |
 | `p := c.Pipe()`, `err := p.AddPublish(...)`, `replies, err := c.SendPipe(ctx, p)` | `b := c.NewBatch(gocent.BatchOptions{})`, `pub := b.Publish(...)`, `_, err := b.Send(ctx)`, `res, err := pub.Result()` |
 | `p.Reset()` to reuse a pipe | a new `NewBatch`: a batch is sent once |
 | `ErrPipeEmpty` | none: sending an empty batch does nothing and returns nil |

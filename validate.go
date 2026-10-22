@@ -63,10 +63,9 @@ func (r *PublishRequest) validate() error {
 	return validateData("publish", r.Data)
 }
 
-// validateData checks a payload to publish is valid JSON. Whether an object
-// in it may repeat a key is Centrifugo's to decide.
+// validateData checks a payload to publish is valid JSON.
 func validateData(method string, data jsontext.Value) error {
-	if len(data) == 0 || data.IsValid(jsonOptions) {
+	if len(data) == 0 || data.IsValid() {
 		return nil
 	}
 	return invalidRequest(method, "Data is not valid JSON")

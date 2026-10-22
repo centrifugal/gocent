@@ -129,8 +129,7 @@ call.
   However a request times out, the SDK MUST report it as the language's one
   timeout error (gocent: `errors.Is(err, context.DeadlineExceeded)`).
 - Replies are decoded as strictly as requests are encoded: case-sensitive
-  names, repeated keys in payloads allowed both ways (section 3.4). A reply
-  which is not a Centrifugo reply is a `DecodeError`.
+  names. A reply which is not a Centrifugo reply is a `DecodeError`.
 
 ### 3.3 Methods
 
@@ -150,10 +149,9 @@ A request the client can tell is wrong MUST NOT be sent, and fails with an
 - `broadcast`: no `channels`; an empty channel name (naming its index);
   neither `data` nor `b64data`.
 
-Every other rule stays Centrifugo's to check: the SDK MUST NOT copy them. That
-includes JSON objects repeating a key in a payload: the SDK MUST send such a
-payload as given, and MUST read a reply holding one - a publication someone
-else made - rather than fail.
+Every other rule stays Centrifugo's to check: the SDK MUST NOT copy them. JSON
+is encoded and decoded with the language's standard JSON library and its
+defaults, with no rules of the SDK's own.
 
 ### 3.5 Shutdown
 
@@ -382,8 +380,7 @@ A key MAY carry a key ID, written as the token header's `kid`. A JWT is
 `base64url(header).base64url(claims).base64url(signature)`, unpadded, header
 `{"alg": ..., "typ": "JWT", "kid": ...}` (`kid` only when set). ECDSA
 signatures are `r || s`, each padded to the curve's size. A payload in the
-claims which is not valid JSON fails at signing; one repeating a key is
-signed as given.
+claims which is not valid JSON fails at signing.
 
 ### 11.2 Connection and subscription claims
 
@@ -510,7 +507,6 @@ deadline ending with the proxy's timeout) and returning a result or an error.
   cannot be encoded fails the request with 500, reported to `on_error`:
   Centrifugo answers the client with a temporary internal error, and for
   refresh and sub refresh asks again a minute later.
-- Payloads repeating a key pass through as given, in requests and results.
 - Binary mode (`binary_encoding`): payloads arrive in the `b64` fields and
   `encoding` is `"binary"`; a result MAY answer with either form.
 - Docs MUST say to keep proxy endpoints reachable by Centrifugo only: anyone

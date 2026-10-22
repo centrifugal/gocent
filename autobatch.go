@@ -141,7 +141,7 @@ func sendAlone[W any](ctx context.Context, b *batcher, req request) (W, error) {
 func encodeCommand(req request) (jsontext.Value, error) {
 	var cmd command
 	req.addTo(&cmd)
-	encoded, err := json.Marshal(&cmd, jsonOptions)
+	encoded, err := json.Marshal(&cmd)
 	if err != nil {
 		return nil, encodingError(req.APIMethod(), err)
 	}

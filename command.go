@@ -58,7 +58,7 @@ func NewCommand(req Request) (Command, error) {
 	if err := validateRequest(r); err != nil {
 		return Command{}, err
 	}
-	payload, err := json.Marshal(r, jsonOptions)
+	payload, err := json.Marshal(r)
 	if err != nil {
 		return Command{}, encodingError(r.APIMethod(), err)
 	}

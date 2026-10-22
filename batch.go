@@ -187,7 +187,7 @@ func (b *Batch) failedAsWhole(err error) BatchResult {
 // returns its error naming it - or err, if no single command fails alone.
 func (b *Batch) unencodable(err error) error {
 	for i := range b.commands {
-		if _, cmdErr := json.Marshal(&b.commands[i], jsonOptions); cmdErr != nil {
+		if _, cmdErr := json.Marshal(&b.commands[i]); cmdErr != nil {
 			return &commandInvalidError{index: i, err: encodingError(b.methods[i], cmdErr)}
 		}
 	}

@@ -295,19 +295,3 @@ func TestMaxRequestBytes(t *testing.T) {
 		t.Errorf("over the limit: status %d, want 400", status)
 	}
 }
-
-// Data repeating a key - from a client, or the application's - passes
-// through as given: whether to accept it is Centrifugo's to decide.
-func TestRepeatedKeyInPayload(t *testing.T) {
-	const repeated = `{"a":1,"a":2}`
-	h := proxy.Handlers{}.Publish(func(_ *http.Request, req proxy.PublishRequest) (proxy.PublishResult, error) {
-		if string(req.Data) != repeated {
-			t.Errorf("request data %s", req.Data)
-		}
-		return proxy.PublishResult{Data: req.Data}, nil
-	})
-	status, body := post(t, h, `{"channel":"news","data":`+repeated+`}`)
-	if status != http.StatusOK || !strings.Contains(body, repeated) {
-		t.Errorf("status %d, body %s", status, body)
-	}
-}

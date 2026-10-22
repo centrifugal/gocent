@@ -286,16 +286,3 @@ func TestExpiry(t *testing.T) {
 		t.Error("contradicting subscription expiry signed")
 	}
 }
-
-// Info repeating a key is signed as given: whether to accept it is
-// Centrifugo's to decide. Invalid JSON still fails here.
-func TestRepeatedKeyInClaims(t *testing.T) {
-	tok, err := Connection(HMAC([]byte("k")), ConnectionClaims{User: "42", NoExpiry: true, Info: jsontext.Value(`{"a":1,"a":2}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(strings.Split(tok, ".")[1])
-	if err != nil || !strings.Contains(string(raw), `"info":{"a":1,"a":2}`) {
-		t.Errorf("claims %s, %v", raw, err)
-	}
-}
