@@ -69,11 +69,10 @@ its README.
   tri-state - absent leaves the server's setting alone, which `false` cannot
   say - and MUST be represented as optional (a pointer, `None`, `undefined`),
   with a helper to make one (gocent: `gocent.Bool(true)`).
-- Payload fields (`bytes` in the protos: data, info, meta) are raw JSON in the
-  API and the proxy. The SDK MUST keep them as raw JSON, and accept bytes or
-  an already-encoded value, so that applications encode them as they like.
+- Payload fields (`bytes` in the protos: data, info, meta) are JSON values in
+  the API and the proxy: section 3.4 says how an SDK takes and returns them.
 - A method whose comment says "Centrifugo PRO only" MUST be marked so in the
-  SDK's docs, and known to the client for the 404 hint (section 5).
+  SDK's docs, and known to the client for the 404 hint (section 4.1).
 - `broadcast` is written by hand (section 7): its result is per channel.
 
 ## 3. The API client
@@ -138,7 +137,62 @@ request and returning its result, plus a batch method (section 7). The request
 type MUST tell its API method name (gocent: `APIMethod()`; Python:
 `api_method`).
 
-### 3.4 Validation before sending
+### 3.4 Payloads
+
+Payloads - `data`, `info`, `meta` and the like, in requests, replies, token
+claims and the proxy - are JSON values: an object, array, string, number,
+boolean or null. Every SDK takes and returns them the same way:
+
+1. **A payload takes the language's native value, encoded by the SDK**:
+   `data={"text": "hi"}` in Python, `data: {text: "hi"}` in JavaScript,
+   `$data = ['text' => 'hi']` in PHP. This is the usual way to publish.
+2. **Every SDK also takes raw JSON, marked by a type of its own,** and sends
+   it verbatim - not decoded and encoded again: Python
+   `RawJSON(b'{"text":"hi"}')`, JavaScript `JSON.rawJSON('{"text":"hi"}')`,
+   Go `jsontext.Value` - the table below names each. It is for JSON the
+   application already has - from a database, a queue, a cache - and for
+   encoding with a library or rules of the application's own (a faster
+   encoder, dates, decimals): encode, then pass the result as raw JSON. An
+   SDK therefore has no option to plug in a JSON encoder.
+3. **A string is a JSON string**, never raw JSON: `data="hello"` publishes
+   `"hello"`. Only the raw JSON type marks raw JSON.
+4. **Binary data goes in the `b64` fields only** (`b64data`, `b64info`),
+   base64-encoded. Bytes given as a JSON payload are refused, not guessed at -
+   unless bytes are the language's raw JSON type, as in Go. An SDK MAY take
+   bytes for a `b64` field and encode them itself.
+5. **Invalid JSON is never sent**: raw JSON is checked to be valid, and a
+   native value the encoder cannot represent fails with `InvalidRequest`
+   before sending - NaN and infinities included, which some encoders write
+   anyway, as `NaN` or as `null`, though JSON has no such numbers.
+6. **Payloads come back as the language is used to**: as the type the table
+   names for replies - the decoded native value in Python, JavaScript, PHP,
+   Ruby, Dart and Elixir (`pub.data["text"]`); the language's JSON type in the
+   others, for the application to decode into its own types. The same holds
+   for what the SDK receives in the proxy.
+7. **Where one field cannot take both a native value and raw JSON** - Go,
+   Rust, Swift - the SDK takes raw JSON only, and encoding a value is one call
+   of the JSON library the table names.
+
+| Language | JSON library | Native value in requests | Raw JSON | Payloads in replies and proxy requests | To mind |
+|---|---|---|---|---|---|
+| Go | `encoding/json/v2` | - (rule 7: `json.Marshal(v)`) | `jsontext.Value` | `jsontext.Value` | |
+| Python | `json` | `Any` JSON-compatible: `dict`, `list`, `str`, `int`, `float`, `bool`, `None` | `RawJSON` of the SDK, holding `bytes` or `str` | decoded `Any` | encode with `allow_nan=False`: by default `json.dumps` writes `NaN` |
+| JavaScript, TypeScript | `JSON` | `unknown` JSON-compatible: objects, arrays, `string`, `number`, `boolean`, `null` | `JSON.rawJSON(text)` (Node.js 21+, Chrome 114+); elsewhere the SDK's `rawJSON(text)` | decoded `unknown` | `JSON.stringify` writes NaN and infinities as `null` and drops `undefined`: refuse non-finite numbers; integers past 2^53 lose precision when decoded - say so in the docs |
+| PHP | `ext-json` | `mixed`: arrays, scalars, `null`, `stdClass`, `JsonSerializable` | `RawJson` of the SDK, holding a `string` | `json_decode($json, true)`: associative arrays | `JSON_THROW_ON_ERROR`; `JSON_PRESERVE_ZERO_FRACTION`, so `1.0` stays a float; `[]` encodes as an array - an empty object is `new \stdClass()` |
+| Ruby | `json` | `Hash`, `Array`, `String`, `Integer`, `Float`, `true`, `false`, `nil` | `JSON::Fragment` (json 2.10+) | `JSON.parse`: `Hash` with `String` keys | |
+| Java | Jackson | `Object`: POJO, `Map`, `List`, `JsonNode` | `com.fasterxml.jackson.databind.util.RawValue` | `JsonNode` | refuse non-finite numbers |
+| Kotlin | kotlinx.serialization | `JsonElement` (`buildJsonObject`, `Json.encodeToJsonElement`) | `JsonUnquotedLiteral(text)` | `JsonElement` | |
+| C# | System.Text.Json | `object?`: POCO, anonymous type, `JsonNode` | `RawJson` of the SDK, written with `Utf8JsonWriter.WriteRawValue` | `JsonElement` | |
+| Rust | serde_json | - (rule 7: `serde_json::value::to_raw_value(&v)`) | `Box<serde_json::value::RawValue>` (feature `raw_value`) | `Box<RawValue>` | serde_json writes NaN and infinities as `null`: refuse non-finite numbers |
+| Swift | Foundation `Codable` | - (rule 7: `JSONEncoder().encode(v)`) | `Data` | `Data` | |
+| Dart | `dart:convert` | `Object?`: `Map<String, dynamic>`, `List`, `num`, `String`, `bool`, `null` | `RawJson` of the SDK, holding a `String` | decoded `Object?` | |
+| Elixir | Jason | maps, lists, strings, numbers, booleans, `nil` | `Jason.Fragment.new(iodata)` | decoded terms, maps with string keys | |
+
+A language not listed follows the closest row: its standard or dominant JSON
+library, native values where a field can take them, its library's raw JSON
+type, or the SDK's own when there is none.
+
+### 3.5 Validation before sending
 
 A request the client can tell is wrong MUST NOT be sent, and fails with an
 `InvalidRequest` error naming the method and problem:
@@ -151,7 +205,7 @@ A request the client can tell is wrong MUST NOT be sent, and fails with an
 
 Every other rule stays Centrifugo's to check: the SDK MUST NOT copy them.
 
-### 3.5 Shutdown
+### 3.6 Shutdown
 
 `close(deadline)` MUST refuse new calls with a `Closed` error and wait for the
 calls in progress - requests on their way, calls queued for an automatic
@@ -169,7 +223,7 @@ closes idle connections.
 | `Error` | Centrifugo refused the request or failed to carry it out | `code` (stable), `message` (for people, not compared), `temporary` |
 | `HTTPError` | The request did not reach the API method | `status_code`, `body` (start of it), `header` (always present: request IDs, `Retry-After`) |
 | `DecodeError` | The reply is not Centrifugo's - usually a wrong endpoint | the cause |
-| `InvalidRequest` | Not sent: section 3.4 | method, problem, cause |
+| `InvalidRequest` | Not sent: sections 3.4 and 3.5 | method, problem, cause |
 | `InvalidConfig` | Client not created: section 3.1 | field, fix |
 | `Closed` | Call after `close` | |
 | `BatchSent` / `BatchNotSent` | Batch misuse: section 7.2 | |
@@ -340,7 +394,7 @@ out.
 ## 9. Commands for async consumers
 
 `new_command(req)` returns `{method, payload}`: the API method and the request
-as JSON. It MUST validate the request as a call would (section 3.4), so that a
+as JSON. It MUST validate the request as a call would (section 3.5), so that a
 command Centrifugo could not run fails when written rather than in a consumer
 which drops it. Encoded as JSON it is the `{"method": ..., "payload": ...}`
 message consumers take whole (Kafka, NATS JetStream). Docs MUST say that a
@@ -377,8 +431,9 @@ same way by every writer.
 A key MAY carry a key ID, written as the token header's `kid`. A JWT is
 `base64url(header).base64url(claims).base64url(signature)`, unpadded, header
 `{"alg": ..., "typ": "JWT", "kid": ...}` (`kid` only when set). ECDSA
-signatures are `r || s`, each padded to the curve's size. A payload in the
-claims which is not valid JSON fails at signing.
+signatures are `r || s`, each padded to the curve's size. Payloads in the
+claims - `info`, `data`, `meta` - follow section 3.4; one which is not valid
+JSON fails at signing.
 
 ### 11.2 Connection and subscription claims
 
@@ -505,6 +560,8 @@ deadline ending with the proxy's timeout) and returning a result or an error.
   cannot be encoded fails the request with 500, reported to `on_error`:
   Centrifugo answers the client with a temporary internal error, and for
   refresh and sub refresh asks again a minute later.
+- Payloads follow section 3.4: a request's arrive as the language is used
+  to, and a result takes a native value or raw JSON.
 - Binary mode (`binary_encoding`): payloads arrive in the `b64` fields and
   `encoding` is `"binary"`; a result MAY answer with either form.
 - Docs MUST say to keep proxy endpoints reachable by Centrifugo only: anyone
@@ -518,6 +575,10 @@ An SDK MUST have:
   error kind, the transport error mode, redirects, hints, the timeout story,
   `replied` agreeing with the error for every way a broadcast or batch is sent,
   and every API method reaching its endpoint and batch command.
+- Payloads (section 3.4): a native value and raw JSON send the same value;
+  raw JSON is sent verbatim; a string is a JSON string; bytes, NaN and invalid
+  raw JSON are refused before sending; replies return payloads as the
+  language is used to.
 - Automatic batching under random concurrency, with a race detector where the
   language has one.
 - Integration tests of every OSS method against the `centrifugo/centrifugo`
