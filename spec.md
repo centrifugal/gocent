@@ -5,10 +5,26 @@ Centrifugo, as opposed to a client SDK in browsers and apps - provides, and
 how it behaves. gocent is its reference implementation: where this document
 and gocent disagree, it is a bug in one of them, to be fixed in both.
 
-The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119. Names
-are given in a neutral form (`api_endpoint`, `broadcast_with_retry`); each SDK
-spells them the way its language does (`APIEndpoint` in Go, `api_endpoint` in
-Python, `apiEndpoint` in TypeScript), and keeps the same words.
+The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
+
+Conventions:
+
+- **Names** are given in a neutral form (`api_endpoint`,
+  `broadcast_with_retry`); each SDK spells them the way its language does
+  (`APIEndpoint` in Go, `api_endpoint` in Python, `apiEndpoint` in
+  TypeScript), and keeps the same words.
+- **Idioms are the language's.** A "deadline", "cancellation" or "context" is
+  the language's own way to bound and cancel a call: `context.Context` in Go;
+  an `AbortSignal` and a timeout option in JavaScript; task cancellation and
+  timeouts in Python's asyncio, a timeout argument in synchronous Python. An
+  "error" is an error value or an exception, whichever the language uses, and
+  "matches" is its way to test one (`errors.Is`, `isinstance`, `instanceof`).
+  `batch_context` and context values exist only where the language has
+  request-scoped context.
+- **Numbers are gocent's.** Defaults and limits given here - timeouts, pool
+  sizes, body limits, cache lifetimes, retry waits - are gocent's: an SDK
+  SHOULD use them, and MAY differ where its platform suggests otherwise,
+  saying so in its docs.
 
 ## 1. Scope
 
@@ -102,9 +118,10 @@ call.
   a burst does not open connections only to close them; idle ones closed after
   50 s, before load balancers commonly close theirs. It MUST NOT be the
   language's process-wide default client when that keeps few connections.
-- Every response body MUST be closed, and drained up to a bound (64 KiB), so
-  connections are reused. A body of an unexpected status is read up to 4 KiB
-  for a Centrifugo error, and 512 bytes of it kept for the `HTTPError`.
+- Every response body MUST be closed, and drained up to a bound (gocent:
+  64 KiB), so connections are reused. A body of an unexpected status is read
+  up to 4 KiB for a Centrifugo error, and 512 bytes of it kept for the
+  `HTTPError`.
 - A request body MUST NOT be reused or pooled while the transport may still
   read it.
 - One timeout story: every request has exactly one deadline - the caller's,
