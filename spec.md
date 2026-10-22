@@ -141,7 +141,23 @@ type MUST tell its API method name (gocent: `APIMethod()`; Python:
 
 Payloads - `data`, `info`, `meta` and the like, in requests, replies, token
 claims and the proxy - are JSON values: an object, array, string, number,
-boolean or null. Every SDK takes and returns them the same way:
+boolean or null.
+
+The rule: an SDK carries a payload exactly. Whatever comes out of it can go
+back in unchanged, as the same JSON value, and taking a payload in or giving
+it out costs the application as little as its language allows. Where the
+choices pull apart, they are settled in this order:
+
+1. **Exact** - a payload is never changed on the way: not `{}` into `[]`,
+   not an integer past 2^53, not `1.0` into `1`, not NaN into `null`.
+2. **Stable** - the SDK's API holds no type tying applications to one major
+   version of a dependency.
+3. **Idiomatic** - the types are those the language's developers already
+   use; a type of the SDK's own only where the language has none.
+4. **Convenient** - the least code at the call site.
+
+The rules below, and the table, follow from it; a language the table does
+not list is decided the same way:
 
 1. **A payload takes the language's native value, encoded by the SDK**:
    `data={"text": "hi"}` in Python, `data: {text: "hi"}` in JavaScript,
@@ -179,7 +195,7 @@ boolean or null. Every SDK takes and returns them the same way:
 |---|---|---|---|---|---|---|
 | Go | `encoding/json/v2` | raw JSON only (rule 7): `json.Marshal(v)` | `jsontext.Value` | `jsontext.Value` | `json.Unmarshal(v, &x)` | |
 | Python | `json` | `dict`, `list`, `str`, `int`, `float`, `bool`, `None`, or raw JSON | `RawJSON` of the SDK, holding `bytes` or `str` | decoded values | `Model.model_validate(data)` (pydantic) | encode with `allow_nan=False`: by default `json.dumps` writes `NaN` |
-| JavaScript, TypeScript | `JSON` | objects, arrays, `string`, `number`, `bigint`, `boolean`, `null`, or raw JSON | `rawJSON(text)` of the SDK - `JSON.rawJSON` takes primitives only | decoded values; integers past 2^53 as `bigint` | a cast, or a schema library | `JSON.stringify` writes NaN and infinities as `null` and drops `undefined`: refuse non-finite numbers. Encode a `bigint` as a number (`JSON.rawJSON(v.toString())`); decode integers past 2^53 from the reviver's `context.source` (Node.js 21+, Chrome 114+, Firefox 135+, Safari 18.4+) - older runtimes round them, which the docs say |
+| JavaScript, TypeScript | `JSON` | objects, arrays, `string`, `number`, `bigint`, `boolean`, `null`, or raw JSON | `rawJSON(text)` of the SDK - `JSON.rawJSON` takes primitives only | decoded values; integers past 2^53 as `bigint` | a cast, or a schema library | `JSON.stringify` writes NaN and infinities as `null` and drops `undefined`: refuse non-finite numbers. Integers past 2^53: the note below the table |
 | PHP | `ext-json` | arrays, `stdClass`, scalars, `null`, `JsonSerializable`, or raw JSON | `RawJson` of the SDK, holding a `string` | objects: `json_decode($json, false)` | a DTO's constructor | `JSON_THROW_ON_ERROR`, `JSON_PRESERVE_ZERO_FRACTION`. Objects, not associative arrays: arrays turn `{}` and `{"0":"a"}` into JSON arrays when sent on. An empty object in a request is `new \stdClass()` - `[]` is an array |
 | Ruby | `json` 2.10+ (bundled from Ruby 4.0; a gem dependency before) | `Hash`, `Array`, `String`, `Integer`, `Float`, `true`, `false`, `nil`, or raw JSON | `JSON::Fragment` | `JSON.parse`: `Hash` with `String` keys | `Model.new(**h.transform_keys(&:to_sym))` | |
 | Java | Jackson, internal to the SDK | POJOs, `Map`, `List`, scalars, or raw JSON | `RawJson` of the SDK, holding the text | `RawJson`: `toString()` is the JSON | `raw.decode(Foo.class)` | Never Jackson types in the API: Jackson 3 moved them from `com.fasterxml.jackson` to `tools.jackson`, and an application uses one or the other. Disable `WRITE_NAN_AS_STRINGS`, which writes NaN as `"NaN"` by default |
@@ -194,6 +210,47 @@ A language not listed follows the closest row: its standard or dominant JSON
 library, kept out of the SDK's API when it has rival major versions; native
 values in and out where the language is dynamic, its JSON type where it is
 not; and a raw JSON type of the SDK's own where the library has none.
+
+**JavaScript: integers past 2^53.** A `number` holds integers exactly only up
+to 2^53, so a JavaScript SDK decodes larger ones as `bigint`, and encodes a
+`bigint` as a JSON number:
+
+```js
+const integerLiteral = /^-?\d+$/;
+function decode(text) {
+  // An integer past 2^53 has 16 digits or more: most replies skip the reviver.
+  if (!hasSourceText || !/\d{16}/.test(text)) return JSON.parse(text);
+  return JSON.parse(text, (key, value, ctx) =>
+    typeof value === "number" && !Number.isSafeInteger(value) && integerLiteral.test(ctx.source)
+      ? BigInt(ctx.source) // the original digits, not the rounded number
+      : value);
+}
+
+function encode(value) {
+  return JSON.stringify(value, (key, v) => {
+    if (typeof v === "bigint") return JSON.rawJSON(v.toString());
+    if (typeof v === "number" && !Number.isFinite(v)) throw new TypeError(`${key}: ${v} is not a JSON number`);
+    return v;
+  });
+}
+```
+
+- The reviver's third argument holds each primitive's source text, and
+  `JSON.rawJSON` writes a primitive's text verbatim: Chrome and Edge 114+,
+  Firefox 135+, Safari 18.4+, Node.js 21+, Deno 1.33+, Bun 1.1.43+, and
+  edge runtimes on V8.
+- `hasSourceText` is found once, at startup:
+  `JSON.parse("1", (k, v, ctx) => ...)` sees whether `ctx.source` is `"1"`.
+  Without it the SDK decodes with plain `JSON.parse`, and integers past 2^53
+  round as they always did; the docs say so.
+- Only integer literals outside the safe range become `bigint`: `1e300` and
+  `1.5` stay numbers, and so does every integer a `number` holds exactly. The
+  docs say that IDs past 2^53 come back as `bigint`, which does not mix with
+  `number` in arithmetic.
+- `JSON.rawJSON` takes primitives only, so the SDK's own `rawJSON` for an
+  object or array is spliced in by the SDK: written as a unique placeholder
+  string by `JSON.stringify`, then replaced by its text, checked to be valid
+  JSON.
 
 ### 3.5 Validation before sending
 
