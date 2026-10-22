@@ -61,10 +61,10 @@ type ConnectionClaims struct {
 	// its options. Set Channels or Subs, not both: Centrifugo ignores
 	// Channels when Subs is set.
 	Subs map[string]SubscribeOptions
-	// Meta is custom data attached to the connection, as JSON. Centrifugo
-	// never sends it to clients, but the token carries it, readable by the
-	// client holding the token: put nothing secret in it - the connect proxy's
-	// meta never reaches the client.
+	// Meta is custom data attached to the connection, as JSON. It is not
+	// visible to other clients: Centrifugo never sends it. But the token
+	// carries it, visible to the user owning the token: put nothing in it that
+	// user must not see - the connect proxy's meta never reaches the client.
 	Meta jsontext.Value
 	// Caps are capabilities granting the connection operations in channels.
 	// Centrifugo PRO only.
