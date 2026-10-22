@@ -155,7 +155,7 @@ Behaviour to check when migrating:
   namespace with `publication_grouping_disabled` keeps the strict order.
 * **Invalid requests are not sent.** A publication or broadcast without a
   channel or data, a broadcast with an empty channel name, or data which is
-  not valid JSON or repeats a key in an object, fails before sending with an
+  not valid JSON, fails before sending with an
   error wrapping `gocent.ErrInvalidRequest`; in a batch it fails the whole
   batch.
 * **A failed broadcast still has every channel.** v3 returned no responses

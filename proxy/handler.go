@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -32,6 +33,11 @@ type Handlers struct {
 }
 
 const defaultMaxRequestBytes = 16 << 20
+
+// allowRepeatedNames lets an object repeat a name, in requests and results:
+// payloads carry what clients and the application send, and whether one may
+// repeat a key is Centrifugo's to decide.
+var allowRepeatedNames = jsontext.AllowDuplicateNames(true)
 
 // answers says which of error and disconnect a proxy type's response can
 // carry: those Centrifugo acts on.
@@ -73,7 +79,7 @@ func serve[Req, Res, Resp any](h Handlers, name string, f func(*http.Request, Re
 			return
 		}
 		var req Req
-		if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, limit), &req); err != nil {
+		if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, limit), &req, allowRepeatedNames); err != nil {
 			fail(w, r, http.StatusBadRequest, fmt.Errorf("proxy: malformed %s request: %w", name, err))
 			return
 		}
@@ -98,7 +104,7 @@ func serve[Req, Res, Resp any](h Handlers, name string, f func(*http.Request, Re
 				return
 			}
 		}
-		body, err := json.Marshal(resp)
+		body, err := json.Marshal(resp, allowRepeatedNames)
 		if err != nil {
 			// A payload which is not valid JSON, say: Centrifugo could not
 			// use the response.

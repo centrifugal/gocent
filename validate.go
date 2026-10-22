@@ -8,8 +8,8 @@ import (
 
 // ErrInvalidRequest is wrapped by the error for a request the client can tell
 // is wrong without sending it: one which cannot be encoded - a payload which
-// is not valid JSON, or which repeats a key in an object, in any request - or
-// a publication without a channel or data. Such a request is never sent.
+// is not valid JSON, in any request - or a publication without a channel or
+// data. Such a request is never sent.
 //
 // Only rules which hold for every Centrifugo are checked here; everything
 // else Centrifugo checks itself, and reports as [ErrBadRequest].
@@ -63,15 +63,11 @@ func (r *PublishRequest) validate() error {
 	return validateData("publish", r.Data)
 }
 
-// validateData checks a payload to publish. Besides valid JSON, an object in
-// it may not repeat a key: parsers do not agree which of the values counts,
-// so subscribers could read different data out of the same publication.
+// validateData checks a payload to publish is valid JSON. Whether an object
+// in it may repeat a key is Centrifugo's to decide.
 func validateData(method string, data jsontext.Value) error {
-	switch {
-	case len(data) == 0 || data.IsValid():
+	if len(data) == 0 || data.IsValid(jsonOptions) {
 		return nil
-	case data.IsValid(jsontext.AllowDuplicateNames(true)):
-		return invalidRequest(method, "Data repeats a key in an object")
 	}
 	return invalidRequest(method, "Data is not valid JSON")
 }

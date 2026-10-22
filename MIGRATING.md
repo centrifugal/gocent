@@ -296,7 +296,7 @@ What else changes for code written against v3's `Broadcast`:
   `*BroadcastFailedChannelsError` or not - not by the number of entries.
 - **Some broadcasts are refused before sending,** with an error wrapping
   `gocent.ErrInvalidRequest`: no channels, an empty channel name among them,
-  no data, or data which is not valid JSON or repeats a key in an object. v3
+  no data, or data which is not valid JSON. v3
   sent them, and Centrifugo answered with an error.
 - **Match errors by code, not by message.** `Error.Code` is a `uint32` now,
   and messages changed: v3's `unknown channel: 102` is

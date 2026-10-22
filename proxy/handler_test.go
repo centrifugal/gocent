@@ -166,11 +166,10 @@ func TestBadRequests(t *testing.T) {
 		t.Errorf("GET: %d, Allow %q", w.Code, w.Header().Get("Allow"))
 	}
 	for name, body := range map[string]string{
-		"empty":          ``,
-		"not JSON":       `<html>`,
-		"duplicate name": `{"user":"1","user":"2"}`,
-		"wrong type":     `{"user":42}`,
-		"too large":      `{"data":"` + strings.Repeat("x", 17<<20) + `"}`,
+		"empty":      ``,
+		"not JSON":   `<html>`,
+		"wrong type": `{"user":42}`,
+		"too large":  `{"data":"` + strings.Repeat("x", 17<<20) + `"}`,
 	} {
 		if status, _ := post(t, ok, body); status != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400", name, status)
@@ -294,5 +293,21 @@ func TestMaxRequestBytes(t *testing.T) {
 	}
 	if status, _ := post(t, h, `{"data":"`+strings.Repeat("x", 80)+`"}`); status != http.StatusBadRequest {
 		t.Errorf("over the limit: status %d, want 400", status)
+	}
+}
+
+// Data repeating a key - from a client, or the application's - passes
+// through as given: whether to accept it is Centrifugo's to decide.
+func TestRepeatedKeyInPayload(t *testing.T) {
+	const repeated = `{"a":1,"a":2}`
+	h := proxy.Handlers{}.Publish(func(_ *http.Request, req proxy.PublishRequest) (proxy.PublishResult, error) {
+		if string(req.Data) != repeated {
+			t.Errorf("request data %s", req.Data)
+		}
+		return proxy.PublishResult{Data: req.Data}, nil
+	})
+	status, body := post(t, h, `{"channel":"news","data":`+repeated+`}`)
+	if status != http.StatusOK || !strings.Contains(body, repeated) {
+		t.Errorf("status %d, body %s", status, body)
 	}
 }

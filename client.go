@@ -570,7 +570,7 @@ func (c *Client) post(ctx context.Context, method string, body, out any, status 
 	// returns - when the server replies before reading it all, or to retry
 	// the request - so it must stay untouched for as long as the request
 	// lives, which only the garbage collector knows.
-	encoded, err := json.Marshal(body)
+	encoded, err := json.Marshal(body, jsonOptions)
 	if err != nil {
 		return encodingError(method, err)
 	}
@@ -616,7 +616,7 @@ func (c *Client) post(ctx context.Context, method string, body, out any, status 
 		}
 		return httpErr
 	}
-	if err := json.UnmarshalRead(resp.Body, out); err != nil {
+	if err := json.UnmarshalRead(resp.Body, out, jsonOptions); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			// The body stopped arriving because the context ended.
 			return fmt.Errorf("gocent: %s: %w", method, ctxErr)

@@ -294,8 +294,9 @@ func sign(key Key, claims any) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("token: %w", err)
 	}
-	// Invalid JSON in Info, Data or Meta fails here, not in Centrifugo.
-	p, err := json.Marshal(claims)
+	// Invalid JSON in Info, Data or Meta fails here, not in Centrifugo. An
+	// object repeating a key is Centrifugo's to accept or refuse.
+	p, err := json.Marshal(claims, jsontext.AllowDuplicateNames(true))
 	if err != nil {
 		return "", fmt.Errorf("token: %w", err)
 	}

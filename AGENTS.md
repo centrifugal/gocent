@@ -97,10 +97,12 @@ passes; if you find yourself about to break one, stop and say so instead.
    sending, and one which cannot be - a `jsontext.Value` which is not valid
    JSON, a string which is not UTF-8 - fails with an error wrapping
    `ErrInvalidRequest`. Publish and broadcast also check the few rules every
-   Centrifugo shares (a channel, some data, no key repeated in an object of
-   the data). Replies are decoded as strictly as requests are encoded. A batch with an invalid command
+   Centrifugo shares (a channel, some data). A batch with an invalid command
    sends nothing, and its error names the command. Every other rule stays the
-   server's to check: the client does not copy them.
+   server's to check: the client does not copy them - an object repeating a
+   key included, which requests send and replies return as given
+   (`jsonOptions`). Replies are otherwise decoded as strictly as requests are
+   encoded.
 
 ## The SDK spec
 
