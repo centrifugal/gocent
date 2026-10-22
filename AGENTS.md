@@ -102,6 +102,15 @@ passes; if you find yourself about to break one, stop and say so instead.
    sends nothing, and its error names the command. Every other rule stays the
    server's to check: the client does not copy them.
 
+## The SDK spec
+
+[sdk_spec.md](sdk_spec.md) is the language-neutral spec other Centrifugo
+server SDKs follow, with gocent as its reference implementation. A change to
+behaviour it describes - configuration rules, the error model, retries,
+batching, tokens, endpoints, proxy answers - changes the spec in the same
+commit. Its vectors are computed with gocent: recompute them if signing
+changes.
+
 ## Running things
 
 Everything goes through the Makefile; CI runs the same targets.
