@@ -316,8 +316,7 @@ called again. With its own HTTP client the SDK then closes idle connections.
 
 ### 4.2 Transport error mode
 
-With `http_api.error_mode: transport` - or the `X-Centrifugo-Error-Mode:
-transport` header on a request - Centrifugo answers a failed call with
+With `http_api.error_mode: transport`, Centrifugo answers a failed call with
 an HTTP status and the error alone as the body. The SDK MUST return the same
 `Error` as in a 200 reply when the status is one Centrifugo maps errors to -
 400, 404, 409, 416, 429, 500 - and the body is `{"code": N, ...}` with N ≥ 100.
