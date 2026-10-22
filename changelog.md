@@ -60,7 +60,12 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   each caller's.
 * **Bearer token authentication.** `Config.BearerTokenFunc` sends a token
   with every request as `Authorization: Bearer`, for Centrifugo PRO's JWKS
-  authentication of the API.
+  authentication of the API. `token.APITokens` signs such tokens and reuses
+  each for half its lifetime - its `Token` method is the `BearerTokenFunc` -
+  and `token.API` signs one. They refuse claims without an audience or scope,
+  or without an expiry: sign API tokens with keys of their own, and have
+  Centrifugo require an audience or scope only they carry, or any user could
+  call the API with their connection token.
 * **Configuration is validated.** `New` returns an error for a missing or
   malformed `APIEndpoint`, and contradictory settings.
 * **Safer defaults.** A default HTTP client with a connection pool - at most
@@ -77,12 +82,15 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   `APIMethod()` on every request gives the method name alone.
 * **Tokens.** The new `token` package signs connection and subscription
   tokens with Centrifugo's claims - `token.Connection`, `token.Subscription` -
-  with HMAC, RSA, ECDSA or Ed25519 keys - Centrifugo PRO's claims included:
-  capabilities, labels, server-side tag filters - and `token.Handlers` serves the
+  with HMAC, RSA, ECDSA or Ed25519 keys (Ed25519 verified by Centrifugo
+  through JWKS) - Centrifugo PRO's claims included: capabilities, labels,
+  server-side tag filters - and `token.Handlers` serves the
   endpoints the `getToken` callbacks of client SDKs call: `{"token": ...}`,
-  never cached, 403 for `token.ErrUnauthorized`. `token.JWKS` and
-  `Handlers.JWKS` publish RSA, ECDSA and Ed25519 public keys as a JSON Web Key
-  Set for Centrifugo's JWKS endpoint, for key rotation.
+  never cached, 403 for `token.ErrUnauthorized`. Every token states its
+  expiry: `ExpiresAt`, or `NoExpiry` for a token accepted forever.
+  `token.JWKS` and `Handlers.JWKS` publish RSA, ECDSA and Ed25519 public keys
+  as a JSON Web Key Set for Centrifugo's JWKS endpoint, for key rotation:
+  `_examples/jwks-rotation` is a backend rotating keys by activation time.
 * **Shared poll signatures.** The new `sharedpoll` package signs the keys a
   client may track - `sharedpoll.Sign` - and `sharedpoll.Handlers` serves the
   endpoint centrifuge-js's `getSignature` calls: keys left out are revoked,
