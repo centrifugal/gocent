@@ -149,9 +149,7 @@ A request the client can tell is wrong MUST NOT be sent, and fails with an
 - `broadcast`: no `channels`; an empty channel name (naming its index);
   neither `data` nor `b64data`.
 
-Every other rule stays Centrifugo's to check: the SDK MUST NOT copy them. JSON
-is encoded and decoded with the language's standard JSON library and its
-defaults, with no rules of the SDK's own.
+Every other rule stays Centrifugo's to check: the SDK MUST NOT copy them.
 
 ### 3.5 Shutdown
 
