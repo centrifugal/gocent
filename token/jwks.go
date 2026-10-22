@@ -40,6 +40,10 @@ type jwk struct {
 // it does not know - at most every few seconds, from whichever instance
 // answers - so a key signing before every instance publishes it gets tokens
 // refused until the next fetch. See _examples/jwks-rotation.
+//
+// Publish the keys of client tokens and of the server API tokens of
+// Centrifugo PRO - see [API] - at separate endpoints: a token signed with any
+// key of a set passes Centrifugo's signature check.
 func JWKS(keys ...Key) (jsontext.Value, error) {
 	if len(keys) == 0 {
 		return nil, errors.New("token: a JWKS without keys")

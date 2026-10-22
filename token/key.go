@@ -107,7 +107,9 @@ func Ed25519(private ed25519.PrivateKey) Key {
 }
 
 // WithKeyID returns the key with kid set as the "kid" of the tokens it signs:
-// the ID of its public key in the JWKS Centrifugo verifies with.
+// the ID of its public key in the JWKS Centrifugo verifies with. Never give
+// the ID of a key to another: Centrifugo caches keys by ID, and would refuse
+// the other key's tokens until its cache expires.
 func (k Key) WithKeyID(kid string) Key {
 	k.kid = kid
 	return k

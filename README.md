@@ -274,6 +274,30 @@ is called for every request, so return a cached token, as an
 `oauth2.TokenSource` does. Leave both unset when mutual TLS, configured in
 `HTTPClient`, or a proxy authenticates instead.
 
+To sign the tokens yourself, `token.APITokens` issues them and reuses each for
+half its lifetime:
+
+```go
+apiTokens := &token.APITokens{
+	Key:    apiKey, // its own key - never one of the client tokens
+	Claims: token.APIClaims{Audience: "centrifugo-api", Scope: []string{"centrifugo:api"}},
+}
+client, err := gocent.New(gocent.Config{
+	APIEndpoint:     "https://centrifugo.example.com/api",
+	BearerTokenFunc: apiTokens.Token,
+})
+```
+
+Centrifugo PRO accepts a token signed with any key of `http_api.jwks.endpoint`,
+and checks the audience, issuer and scope only when configured to. So keep API
+tokens apart from the connection and subscription tokens your users hold - or
+any user can call the server API with their connection token:
+
+- publish the API keys with `h.JWKS(apiKeys...)` at an endpoint of their own,
+  not the one of `client.token.jwks_public_endpoint`;
+- set `http_api.jwks.audience` and `http_api.jwks.scope` to values only API
+  tokens carry - `token.API` refuses claims with neither.
+
 Rejected credentials make every call fail with an `*HTTPError` matching
 `gocent.ErrUnauthorized`.
 

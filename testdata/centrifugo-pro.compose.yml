@@ -80,6 +80,12 @@ services:
       CENTRIFUGO_PUSH_NOTIFICATIONS_WEBPUSH_VAPID_PUBLIC_KEY: BJ16Mnup_xun6oJ4UW1JfCgY1QA5zeEoFqZ0VUbuu5ZXJkhsH2f7PGLcvhkJ_OAgFBDzkda_1LykKzXcVe99elg
       CENTRIFUGO_PUSH_NOTIFICATIONS_WEBPUSH_VAPID_PRIVATE_KEY: TqaHuW-sLvwKJlREuBvmg_UvWuqFZuuEYoYU6WWXJrc
       CENTRIFUGO_PUSH_NOTIFICATIONS_WEBPUSH_SUBJECT: mailto:test@example.com
+      # Bearer tokens of the API token test, which serves their keys on port
+      # 3101 of the host. The API key is accepted too, for the other tests.
+      CENTRIFUGO_HTTP_API_JWKS_ENABLED: "true"
+      CENTRIFUGO_HTTP_API_JWKS_ENDPOINT: http://host.docker.internal:3101/api_jwks
+      CENTRIFUGO_HTTP_API_JWKS_AUDIENCE: centrifugo-api
+      CENTRIFUGO_HTTP_API_JWKS_SCOPE: centrifugo:api
       # Commands written by the async consumer test: gocent.NewCommand.
       CENTRIFUGO_CONSUMERS: >-
         [{"name":"gocent_commands","enabled":true,"type":"redis_stream","redis_stream":{"address":["redis://redis:6379"],"streams":["gocent_commands"],"consumer_group":"centrifugo"}}]

@@ -47,6 +47,14 @@ type Config struct {
 	// With AutoBatch, a batch request is not any one caller's: its context
 	// has the callers' values only through BatchContext, so a token should
 	// not depend on them.
+	//
+	// [github.com/centrifugal/gocent/v4/token.APITokens] signs and caches
+	// such tokens. Centrifugo PRO accepts a token signed with any key of its
+	// JWKS endpoint, checking audience, issuer and scope only when configured
+	// to: sign API tokens with keys of their own, never published for client
+	// tokens, and have Centrifugo require an audience or scope only API
+	// tokens carry - otherwise any user can call the API with their
+	// connection token.
 	BearerTokenFunc func(ctx context.Context) (string, error)
 
 	// HTTPClient sends the requests. When nil, [DefaultHTTPClient] is used,

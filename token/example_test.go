@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/centrifugal/gocent/v4"
 	"github.com/centrifugal/gocent/v4/token"
 )
 
@@ -80,4 +81,37 @@ func ExampleJWKS() {
 			return token.Connection(current, token.ConnectionClaims{User: user, ExpiresAt: time.Now().Add(time.Hour)})
 		}))
 	log.Fatal(http.ListenAndServe("127.0.0.1:3000", mux)) //nolint:gosec // an example
+}
+
+// A gocent.Client calling the server API of Centrifugo PRO with tokens from
+// APITokens. The API keys are published at an endpoint of their own, never
+// the one of client.token.jwks_public_endpoint, and Centrifugo requires an
+// audience and a scope only API tokens carry: otherwise a user's connection
+// token would pass as an API token.
+func ExampleAPITokens() {
+	_, apiPrivate, _ := ed25519.GenerateKey(nil)
+	apiKey := token.Ed25519(apiPrivate).WithKeyID("api-2026-10")
+
+	// Centrifugo PRO: "http_api": {"jwks": {"enabled": true,
+	//   "endpoint": "http://backend:3000/centrifugo/api_jwks",
+	//   "audience": "centrifugo-api", "scope": "centrifugo:api"}}
+	mux := http.NewServeMux()
+	mux.Handle("/centrifugo/api_jwks", token.Handlers{}.JWKS(apiKey))
+	go func() { log.Fatal(http.ListenAndServe("127.0.0.1:3000", mux)) }() //nolint:gosec // an example
+
+	apiTokens := &token.APITokens{
+		Key:    apiKey,
+		Claims: token.APIClaims{Audience: "centrifugo-api", Scope: []string{"centrifugo:api"}},
+	}
+	client, err := gocent.New(gocent.Config{
+		APIEndpoint:     "http://centrifugo:8000/api",
+		BearerTokenFunc: apiTokens.Token,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, err = client.Publish(context.Background(), gocent.PublishRequest{Channel: "news", Data: jsontext.Value(`{"text":"hello"}`)})
+	if err != nil {
+		log.Fatal(err)
+	}
 }
