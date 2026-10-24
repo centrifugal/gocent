@@ -3,7 +3,10 @@
   "http_api": {"key": "api_key"},
   "log": {"level": "error"},
   "client": {
-    "token": {"hmac_secret_key": "client_secret"},
+    "token": {
+      "hmac_secret_key": "client_secret",
+      "ed25519_public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAgTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q=\n-----END PUBLIC KEY-----\n"
+    },
     "proxy": {
       "connect": {"enabled": true, "endpoint": "http://host.docker.internal:3100/connect", "timeout": "3s"},
       "refresh": {"enabled": true, "endpoint": "http://host.docker.internal:3100/refresh", "timeout": "3s"}

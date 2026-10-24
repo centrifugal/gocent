@@ -4,12 +4,15 @@ package gocent_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/jsontext"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -19,6 +22,7 @@ import (
 	"time"
 
 	"github.com/centrifugal/gocent/v4"
+	"github.com/centrifugal/gocent/v4/token"
 )
 
 // These tests run against a real Centrifugo:
@@ -28,9 +32,9 @@ import (
 // The server is found through GOCENT_TEST_ADDR and GOCENT_TEST_API_KEY, which
 // default to http://localhost:8100/api and "api_key", which is what
 // testdata/centrifugo.json configures: history and presence for channels
-// without a namespace, a "map" and a "poll" namespace, client tokens and the
-// unidirectional HTTP stream for a real connection, and no namespace named
-// "unknown". CI configures the same through environment variables.
+// without a namespace, a "map" and a "poll" namespace, HMAC and Ed25519
+// client tokens and the unidirectional HTTP stream for a real connection, and
+// no namespace named "unknown". CI configures the same through environment variables.
 
 // testAddr is the API endpoint of the Centrifugo the tests talk to.
 func testAddr() string {
@@ -328,27 +332,32 @@ func connect(t *testing.T, user, info string) <-chan struct{} {
 	claims := enc.EncodeToString([]byte(`{"sub":"` + user + `","exp":` + strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10) + `,"info":` + info + `}`))
 	mac := hmac.New(sha256.New, []byte("client_secret"))
 	mac.Write([]byte(header + "." + claims))
-	token := header + "." + claims + "." + enc.EncodeToString(mac.Sum(nil))
-
-	addr := os.Getenv("GOCENT_TEST_ADDR")
-	if addr == "" {
-		addr = "http://localhost:8100/api"
+	closed, err := connectWithToken(t, header+"."+claims+"."+enc.EncodeToString(mac.Sum(nil)))
+	if err != nil {
+		t.Fatal(err)
 	}
+	return closed
+}
+
+// connectWithToken opens a connection with tok, like connect, or returns
+// why Centrifugo refused it.
+func connectWithToken(t *testing.T, tok string) (<-chan struct{}, error) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	// The test's own Centrifugo, from GOCENT_TEST_ADDR.
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(addr, "/api")+"/connection/uni_http_stream", strings.NewReader(`{"token":"`+token+`"}`)) //nolint:gosec // see above
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(testAddr(), "/api")+"/connection/uni_http_stream", strings.NewReader(`{"token":"`+tok+`"}`)) //nolint:gosec // see above
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp, err := http.DefaultClient.Do(req) //nolint:gosec // the test's own Centrifugo
 	if err != nil {
-		t.Fatalf("connecting: %v", err)
+		return nil, fmt.Errorf("connecting: %w", err)
 	}
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	lines := bufio.NewScanner(resp.Body)
 	if !lines.Scan() || !strings.Contains(lines.Text(), `"connect"`) {
-		t.Fatalf("connecting: got %q", lines.Text())
+		return nil, fmt.Errorf("connecting: got %q", lines.Text())
 	}
 	closed := make(chan struct{})
 	go func() {
@@ -356,7 +365,43 @@ func connect(t *testing.T, user, info string) <-chan struct{} {
 		for lines.Scan() {
 		}
 	}()
-	return closed
+	return closed, nil
+}
+
+// A connection token signed by token.Ed25519 is verified with
+// client.token.ed25519_public_key, the public key of the seed below, set in
+// testdata/centrifugo.json and CI (Centrifugo v6.10.2+). A token signed with
+// another Ed25519 key is refused.
+func TestIntegrationEd25519Token(t *testing.T) {
+	c := realClient(t, gocent.AutoBatch{})
+	newKey := func(seed byte) token.Key {
+		return token.Ed25519(ed25519.NewKeyFromSeed(bytes.Repeat([]byte{seed}, ed25519.SeedSize)))
+	}
+	user := "user-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	claims := token.ConnectionClaims{User: user, ExpiresAt: time.Now().Add(time.Hour)}
+
+	tok, err := token.Connection(newKey(2), claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = connectWithToken(t, tok); err != nil {
+		t.Fatal(err)
+	}
+	ch := uniqueChannel(t)
+	if _, err = c.Subscribe(t.Context(), gocent.SubscribeRequest{User: user, Channel: ch}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	p, err := c.Presence(t.Context(), gocent.PresenceRequest{Channel: ch})
+	if err != nil || len(p.Presence) != 1 {
+		t.Fatalf("Presence: %+v, %v", p, err)
+	}
+
+	if tok, err = token.Connection(newKey(3), claims); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = connectWithToken(t, tok); err == nil {
+		t.Error("a token signed with another key connected")
+	}
 }
 
 func TestIntegrationConnection(t *testing.T) {
