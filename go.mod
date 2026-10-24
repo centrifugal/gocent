@@ -1,3 +1,3 @@
-module github.com/centrifugal/gocent/v3
+module github.com/centrifugal/gocent/v4
 
-go 1.16
+go 1.27.0

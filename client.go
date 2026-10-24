@@ -1,429 +1,723 @@
-// Package gocent is a Go language client for Centrifugo real-time messaging server HTTP API.
 package gocent
 
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
+	"sync"
 	"time"
 )
 
-var (
-	// ErrMalformedResponse can be returned when server replied with invalid response.
-	ErrMalformedResponse = errors.New("malformed response returned from server")
-	// ErrPipeEmpty returned when no commands found in Pipe.
-	ErrPipeEmpty = errors.New("no commands in pipe")
+// Config configures a [Client]. [New] validates it and reports every mistake
+// it can see before any request is made.
+type Config struct {
+	// APIEndpoint is the base URL of Centrifugo's HTTP API, for example
+	// "http://localhost:8000/api". Each method is sent to APIEndpoint plus
+	// its name, such as "/publish". Exactly one of APIEndpoint and
+	// APIEndpointFunc must be set.
+	APIEndpoint string
+
+	// APIEndpointFunc returns the base URL for each request, for when
+	// Centrifugo's address is discovered rather than fixed. It must be safe
+	// for concurrent use. Exactly one of APIEndpoint and APIEndpointFunc must
+	// be set. With AutoBatch, a batch request is not any one caller's: its
+	// context has the callers' values only through BatchContext.
+	APIEndpointFunc func(ctx context.Context) (string, error)
+
+	// APIKey is sent with every request in the X-API-Key header. Leave it
+	// and BearerTokenFunc unset when requests are authenticated some other
+	// way - mutual TLS set up in HTTPClient, a proxy - or not at all.
+	APIKey string
+
+	// BearerTokenFunc returns the token sent with every request as
+	// "Authorization: Bearer <token>", for Centrifugo PRO's JWKS
+	// authentication of the API. It is called for each request, with that
+	// request's context, so it should return a cached token and refresh it
+	// before it expires - as an oauth2.TokenSource does. It must be safe for
+	// concurrent use. An error from it fails the call before anything is
+	// sent, and the error wraps it. It may not be set together with APIKey:
+	// Centrifugo PRO judges a request with a bearer token by the token alone.
+	// With AutoBatch, a batch request is not any one caller's: its context
+	// has the callers' values only through BatchContext, so a token should
+	// not depend on them.
+	//
+	// [github.com/centrifugal/gocent/v4/token.APITokens] signs and caches
+	// such tokens. Centrifugo PRO accepts a token signed with any key of its
+	// JWKS endpoint, checking audience, issuer and scope only when configured
+	// to: sign API tokens with keys of their own, never published for client
+	// tokens, and have Centrifugo require an audience or scope only API
+	// tokens carry - otherwise any user can call the API with their
+	// connection token.
+	BearerTokenFunc func(ctx context.Context) (string, error)
+
+	// HTTPClient sends the requests. When nil, [DefaultHTTPClient] is used,
+	// with a connection pool sized for concurrent use. http.DefaultClient is
+	// never used: it keeps few connections to a host. To customize the client
+	// - a transport for tracing, TLS settings - start from
+	// DefaultHTTPClient() and change what you need: a client built from
+	// scratch, or on http.DefaultTransport, keeps only 2 idle connections per
+	// host, so concurrent calls open and close connections all the time.
+	//
+	// Redirects are not followed: Centrifugo's API never redirects, so one
+	// means APIEndpoint is wrong - http where a proxy wants https, say - and
+	// following it would send the API key to wherever it points, and turn a
+	// publication into a GET without a body. The redirect is returned as an
+	// [HTTPError]. A client with a CheckRedirect of its own is left to it;
+	// otherwise New uses a copy of the client which refuses redirects.
+	//
+	// However a request times out - its context's deadline, RequestTimeout,
+	// or a timeout of this client's own, such as http.Client.Timeout - the
+	// error matches errors.Is(err, context.DeadlineExceeded).
+	HTTPClient *http.Client
+
+	// RequestTimeout bounds each request whose context has no deadline of
+	// its own. A context deadline always takes precedence. Zero means 10
+	// seconds.
+	RequestTimeout time.Duration
+
+	// Header holds extra headers sent with every request, for a proxy in
+	// front of Centrifugo for example. It may not set X-API-Key,
+	// Authorization or Content-Type. A User-Agent set here replaces
+	// gocent's own, and a Host is sent as the request's host instead of the
+	// one of APIEndpoint.
+	Header http.Header
+
+	// AutoBatch sends calls made concurrently in batches. See [AutoBatch].
+	AutoBatch AutoBatch
+
+	// OnRequest, when set, is called after every HTTP request to the API,
+	// with the request's context and what happened: for metrics and tracing
+	// without a dependency of gocent's. A retried broadcast calls it for
+	// each attempt, an automatic batch once for the batch. It is called in
+	// the goroutine which made the request, and the call waits for it.
+	OnRequest func(ctx context.Context, info RequestInfo)
+
+	// BatchContext, when set, makes the context of an automatic batch's
+	// request from the contexts of the calls it carries - for a tracing
+	// span linked to each caller's span, say. Without it, a batch's request
+	// runs on a context of its own, which carries no caller's values.
+	//
+	// ctx is the batch's own context, with its deadline: derive the result
+	// from it. callers are the contexts of the calls in the batch, in the
+	// order they queued; use only their values - some may be done already,
+	// their callers gone. The request keeps ctx's deadline whatever the
+	// result's.
+	BatchContext func(ctx context.Context, callers []context.Context) context.Context
+}
+
+// RequestInfo describes one HTTP request to Centrifugo's API, for
+// Config.OnRequest.
+type RequestInfo struct {
+	// Method is the API method the request went to: "publish", say, or
+	// "batch" for a batch.
+	Method string
+	// Commands is how many commands the request carried: 1, or a batch's
+	// size.
+	Commands int
+	// Failed is how many of them Centrifugo answered with an error. A
+	// broadcast which failed in some of its channels is not counted: its
+	// command was answered, channel by channel.
+	Failed int
+	// AutoBatch is true for a batch [AutoBatch] made of concurrent calls.
+	AutoBatch bool
+	// Duration is how long the request took, from before getting its
+	// endpoint and credentials to its reply read.
+	Duration time.Duration
+	// StatusCode is the HTTP status of the reply, 0 when there was none.
+	StatusCode int
+	// Err is the error of the request as a whole: the network, a timeout,
+	// an HTTP error status, a reply which is not Centrifugo's, or - in
+	// Centrifugo's transport error mode - the error of the request's only
+	// command. Nil when Centrifugo's reply was read: the commands' own
+	// outcomes are in Failed.
+	Err error
+}
+
+// AutoBatch lets the client send concurrent calls together, as one batch
+// request, once enough of them are in flight. The zero value disables it.
+//
+// Nothing waits for a batch to fill. While fewer than MaxInFlight requests are
+// in flight, every call is sent at once, alone, exactly as without AutoBatch.
+// Only a call made when MaxInFlight requests are already in flight waits - and
+// it waits for one of them to finish, not for a timer. Then all the calls
+// waiting at that moment go out together as a single batch. The busier the
+// client, the larger the batches, and the fewer requests Centrifugo handles
+// for the same work.
+//
+// Every call gets its own command's reply: its own result, or its own error.
+// Calls made one after another keep their order: a call waits for its reply,
+// so the next one can only join a later batch. The calls sharing a batch were
+// made concurrently, with no order between them, and Centrifugo runs them in
+// parallel.
+//
+// Calls sharing a batch share its request, though. When the batch request
+// itself fails - the network, the credentials, a body too large for
+// Centrifugo or a proxy in front of it - every call in it fails with that
+// error. Keep payloads well within the body limit, or send large ones from a
+// client without AutoBatch. Each call keeps its own deadline in a batch: the
+// batch request lasts until the latest deadline of the calls in it, and a
+// call without one gets RequestTimeout, as when sent alone. A call which
+// times out before its batch's request ends may still be carried out - as
+// after any timeout - so retry a publication only with an IdempotencyKey;
+// BroadcastWithRetry does. The values of a
+// caller's context reach a batch request only through Config.BatchContext:
+// without it, BearerTokenFunc, APIEndpointFunc, OnRequest and an HTTP
+// transport which reads them, for tracing say, see none.
+type AutoBatch struct {
+	// MaxInFlight is how many requests may be in flight at once before calls
+	// start to wait and be batched. Zero disables AutoBatch.
+	//
+	// A smaller value batches more: calls are batched only once this many
+	// requests are in flight, so a value above the concurrency the load needs
+	// leaves nearly every call sent alone. A small value such as 8 suits most
+	// applications.
+	MaxInFlight int
+
+	// MaxBatchSize caps how many calls one batch carries. Zero means 1000.
+	MaxBatchSize int
+}
+
+const (
+	defaultRequestTimeout = 10 * time.Second
+	defaultMaxBatchSize   = 1000
+
+	// Bodies of unexpected responses are read up to this many bytes for the
+	// error, then drained and discarded up to maxDrainBytes so the connection
+	// can be reused.
+	maxErrorBodyBytes = 512
+	// A Centrifugo error in the body of an HTTP error status is read up to
+	// this many bytes: its message can be longer than the diagnostic excerpt.
+	maxAPIErrorBytes = 4 << 10
+	maxDrainBytes    = 64 << 10
 )
 
-// ErrStatusCode can be returned in case request to server resulted in wrong status code.
-type ErrStatusCode struct {
-	Code int
-	Body []byte
+// DefaultHTTPClient returns the HTTP client a [Client] uses when
+// Config.HTTPClient is nil. It keeps connections alive, at most 256 to a
+// host, and its pool keeps all of them while idle: concurrent calls reuse
+// them, and a burst of calls never opens connections only to close them
+// afterwards. A call made while all 256 are busy waits for one, within its
+// context's deadline; for more concurrent calls than that, see [AutoBatch].
+// An idle connection is closed after 50 seconds, before load balancers
+// commonly close theirs, so that a call does not pick one which is being
+// closed under it.
+//
+// It sets no timeouts of its own - each request's context bounds the whole
+// request, connecting included, so a request has exactly one deadline. Each
+// call returns a new client with its own connection pool.
+func DefaultHTTPClient() *http.Client {
+	return &http.Client{
+		CheckRedirect: refuseRedirect,
+		Transport: &http.Transport{
+			Proxy:               http.ProxyFromEnvironment,
+			DialContext:         (&net.Dialer{KeepAlive: 30 * time.Second}).DialContext,
+			ForceAttemptHTTP2:   true,
+			MaxIdleConns:        256,
+			MaxIdleConnsPerHost: 256,
+			MaxConnsPerHost:     256,
+			IdleConnTimeout:     50 * time.Second,
+		},
+	}
 }
 
-func (e ErrStatusCode) Error() string {
-	return fmt.Sprintf("wrong status code: %d, body: %s", e.Code, string(e.Body))
+// refuseRedirect makes an http.Client return a redirect as the response
+// instead of following it: see Config.HTTPClient.
+func refuseRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
-// Config of client.
-type Config struct {
-	// Addr is Centrifugo API endpoint.
-	Addr string
-	// GetAddr when set will be used before every API call to extract
-	// Centrifugo API endpoint. In this case Addr field of Config will be
-	// ignored. Nil value means using static Config.Addr field.
-	GetAddr func() (string, error)
-	// Key is Centrifugo API key.
-	Key string
-	// HTTPClient is a custom HTTP client to be used.
-	// If nil DefaultHTTPClient will be used.
-	HTTPClient *http.Client
-}
-
-// Client is API client for project registered in server.
+// Client calls Centrifugo's HTTP server API. It is safe for concurrent use,
+// and meant to be created once and shared.
 type Client struct {
-	endpoint    string
-	getEndpoint func() (string, error)
-	apiKey      string
-	httpClient  *http.Client
+	addr     string
+	addrFunc func(context.Context) (string, error)
+	token    func(context.Context) (string, error)
+	header   http.Header
+	host     string
+	http     *http.Client
+	timeout  time.Duration
+	batcher  *batcher
+
+	onRequest    func(context.Context, RequestInfo)
+	batchContext func(context.Context, []context.Context) context.Context
+	// ownHTTP is set when the HTTP client is gocent's own, which Close may
+	// release the idle connections of.
+	ownHTTP bool
+	calls   calls
 }
 
-// DefaultHTTPClient will be used by default for HTTP requests.
-var DefaultHTTPClient = &http.Client{Transport: &http.Transport{
-	MaxIdleConnsPerHost: 100,
-}, Timeout: time.Second}
+// ErrClosed is returned by a call made after [Client.Close].
+var ErrClosed = errors.New("gocent: client closed")
 
-// New returns initialized client instance based on provided config.
-func New(c Config) *Client {
-	var httpClient *http.Client
-	if c.HTTPClient != nil {
-		httpClient = c.HTTPClient
-	} else {
-		httpClient = DefaultHTTPClient
+// calls counts the calls in progress, so that Close can wait for them.
+type calls struct {
+	mu      sync.Mutex
+	closed  bool
+	active  int
+	drained chan struct{} // closed once the client is closed and active is 0
+}
+
+// enter counts a call in, unless the client is closed.
+func (c *calls) enter() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return ErrClosed
 	}
-	return &Client{
-		endpoint:    c.Addr,
-		getEndpoint: c.GetAddr,
-		apiKey:      c.Key,
-		httpClient:  httpClient,
+	c.active++
+	return nil
+}
+
+// add counts in work which goes on for calls already counted - an
+// automatic batch which outlives its callers - closed or not.
+func (c *calls) add() {
+	c.mu.Lock()
+	c.active++
+	c.mu.Unlock()
+}
+
+func (c *calls) leave() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.active--
+	if c.closed && c.active == 0 && c.drained != nil {
+		close(c.drained)
+		c.drained = nil
 	}
 }
 
-// SetHTTPClient allows to set custom http Client to use for requests. Not goroutine-safe.
-func (c *Client) SetHTTPClient(httpClient *http.Client) {
-	c.httpClient = httpClient
+// close stops new calls and returns a channel closed once none is left.
+func (c *calls) close() <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	done := make(chan struct{})
+	if c.active == 0 {
+		close(done)
+		return done
+	}
+	if c.drained == nil {
+		c.drained = make(chan struct{})
+	}
+	waiting := c.drained
+	go func() {
+		<-waiting
+		close(done)
+	}()
+	return done
 }
 
-// Pipe allows to create new Pipe to send several commands in one HTTP request.
-func (c *Client) Pipe() *Pipe {
-	return &Pipe{
-		commands: make([]Command, 0),
+// Close stops the client: calls made from now on return [ErrClosed], and
+// Close waits for the calls in progress to end - requests on their way,
+// calls queued for an automatic batch, batches sent for callers who left. A
+// broadcast being retried stops at its next attempt. It returns ctx's error
+// when ctx ends first; the calls left go on then. With the default HTTP
+// client it then closes its idle connections. Close may be called again: it
+// waits as the first one did.
+//
+// Call it when the application shuts down - on SIGTERM in Kubernetes, say -
+// so that what was accepted is sent before the process exits.
+func (c *Client) Close(ctx context.Context) error {
+	select {
+	case <-c.calls.close():
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-}
-
-// Publish allows to publish data to channel.
-func (c *Client) Publish(ctx context.Context, channel string, data []byte, opts ...PublishOption) (PublishResult, error) {
-	pipe := c.Pipe()
-	err := pipe.AddPublish(channel, data, opts...)
-	if err != nil {
-		return PublishResult{}, err
-	}
-	result, err := c.SendPipe(ctx, pipe)
-	if err != nil {
-		return PublishResult{}, err
-	}
-	resp := result[0]
-	if resp.Error != nil {
-		return PublishResult{}, resp.Error
-	}
-	return decodePublish(resp.Result)
-}
-
-// Broadcast allows to broadcast the same data into many channels..
-func (c *Client) Broadcast(ctx context.Context, channels []string, data []byte, opts ...PublishOption) (BroadcastResult, error) {
-	pipe := c.Pipe()
-	err := pipe.AddBroadcast(channels, data, opts...)
-	if err != nil {
-		return BroadcastResult{}, err
-	}
-	result, err := c.SendPipe(ctx, pipe)
-	if err != nil {
-		return BroadcastResult{}, err
-	}
-	resp := result[0]
-	if resp.Error != nil {
-		return BroadcastResult{}, resp.Error
-	}
-	return decodeBroadcast(resp.Result)
-}
-
-// Subscribe allow subscribing user to a channel (using server-side subscriptions).
-func (c *Client) Subscribe(ctx context.Context, channel, user string, opts ...SubscribeOption) error {
-	pipe := c.Pipe()
-	err := pipe.AddSubscribe(channel, user, opts...)
-	if err != nil {
-		return err
-	}
-	result, err := c.SendPipe(ctx, pipe)
-	if err != nil {
-		return err
-	}
-	resp := result[0]
-	if resp.Error != nil {
-		return resp.Error
+	if c.ownHTTP {
+		c.http.CloseIdleConnections()
 	}
 	return nil
 }
 
-// Unsubscribe allows to unsubscribe user from channel.
-func (c *Client) Unsubscribe(ctx context.Context, channel, user string, opts ...UnsubscribeOption) error {
-	pipe := c.Pipe()
-	err := pipe.AddUnsubscribe(channel, user, opts...)
-	if err != nil {
-		return err
+// New returns a Client for cfg, or an error wrapping [ErrInvalidConfig] that
+// names what is wrong with it.
+func New(cfg Config) (*Client, error) {
+	c := &Client{
+		addrFunc:     cfg.APIEndpointFunc,
+		token:        cfg.BearerTokenFunc,
+		http:         cfg.HTTPClient,
+		timeout:      cfg.RequestTimeout,
+		onRequest:    cfg.OnRequest,
+		batchContext: cfg.BatchContext,
 	}
-	result, err := c.SendPipe(ctx, pipe)
-	if err != nil {
-		return err
+	invalid := func(format string, args ...any) error {
+		return fmt.Errorf("%w: %s", ErrInvalidConfig, fmt.Sprintf(format, args...))
 	}
-	resp := result[0]
-	if resp.Error != nil {
-		return resp.Error
-	}
-	return nil
-}
 
-// Disconnect allows to close all connections of user to server.
-func (c *Client) Disconnect(ctx context.Context, user string, opts ...DisconnectOption) error {
-	pipe := c.Pipe()
-	err := pipe.AddDisconnect(user, opts...)
-	if err != nil {
-		return err
-	}
-	result, err := c.SendPipe(ctx, pipe)
-	if err != nil {
-		return err
-	}
-	resp := result[0]
-	if resp.Error != nil {
-		return resp.Error
-	}
-	return nil
-}
-
-// Presence returns channel presence information.
-func (c *Client) Presence(ctx context.Context, channel string) (PresenceResult, error) {
-	pipe := c.Pipe()
-	err := pipe.AddPresence(channel)
-	if err != nil {
-		return PresenceResult{}, err
-	}
-	result, err := c.SendPipe(ctx, pipe)
-	if err != nil {
-		return PresenceResult{}, err
-	}
-	resp := result[0]
-	if resp.Error != nil {
-		return PresenceResult{}, resp.Error
-	}
-	return decodePresence(resp.Result)
-}
-
-// PresenceStats returns short channel presence information (only counters).
-func (c *Client) PresenceStats(ctx context.Context, channel string) (PresenceStatsResult, error) {
-	pipe := c.Pipe()
-	err := pipe.AddPresenceStats(channel)
-	if err != nil {
-		return PresenceStatsResult{}, err
-	}
-	result, err := c.SendPipe(ctx, pipe)
-	if err != nil {
-		return PresenceStatsResult{}, err
-	}
-	resp := result[0]
-	if resp.Error != nil {
-		return PresenceStatsResult{}, resp.Error
-	}
-	return decodePresenceStats(resp.Result)
-}
-
-// History returns channel history.
-func (c *Client) History(ctx context.Context, channel string, opts ...HistoryOption) (HistoryResult, error) {
-	pipe := c.Pipe()
-	err := pipe.AddHistory(channel, opts...)
-	if err != nil {
-		return HistoryResult{}, err
-	}
-	result, err := c.SendPipe(ctx, pipe)
-	if err != nil {
-		return HistoryResult{}, err
-	}
-	resp := result[0]
-	if resp.Error != nil {
-		return HistoryResult{}, resp.Error
-	}
-	return decodeHistory(resp.Result)
-}
-
-// HistoryRemove removes channel history.
-func (c *Client) HistoryRemove(ctx context.Context, channel string) error {
-	pipe := c.Pipe()
-	err := pipe.AddHistoryRemove(channel)
-	if err != nil {
-		return err
-	}
-	result, err := c.SendPipe(ctx, pipe)
-	if err != nil {
-		return err
-	}
-	resp := result[0]
-	if resp.Error != nil {
-		return resp.Error
-	}
-	return nil
-}
-
-// Channels returns information about active channels (with one or more subscribers) on server.
-func (c *Client) Channels(ctx context.Context, opts ...ChannelsOption) (ChannelsResult, error) {
-	pipe := c.Pipe()
-	err := pipe.AddChannels(opts...)
-	if err != nil {
-		return ChannelsResult{}, err
-	}
-	result, err := c.SendPipe(ctx, pipe)
-	if err != nil {
-		return ChannelsResult{}, err
-	}
-	resp := result[0]
-	if resp.Error != nil {
-		return ChannelsResult{}, resp.Error
-	}
-	return decodeChannels(resp.Result)
-}
-
-// Info returns information about server nodes.
-func (c *Client) Info(ctx context.Context) (InfoResult, error) {
-	pipe := c.Pipe()
-	err := pipe.AddInfo()
-	if err != nil {
-		return InfoResult{}, err
-	}
-	result, err := c.SendPipe(ctx, pipe)
-	if err != nil {
-		return InfoResult{}, err
-	}
-	resp := result[0]
-	if resp.Error != nil {
-		return InfoResult{}, resp.Error
-	}
-	return decodeInfo(resp.Result)
-}
-
-func decodePublish(result []byte) (PublishResult, error) {
-	var r PublishResult
-	err := json.Unmarshal(result, &r)
-	if err != nil {
-		return PublishResult{}, err
-	}
-	return r, nil
-}
-
-func decodeBroadcast(result []byte) (BroadcastResult, error) {
-	var r BroadcastResult
-	err := json.Unmarshal(result, &r)
-	if err != nil {
-		return BroadcastResult{}, err
-	}
-	return r, nil
-}
-
-// decodeHistory allows to decode history reply result to get a slice of messages.
-func decodeHistory(result []byte) (HistoryResult, error) {
-	var r HistoryResult
-	err := json.Unmarshal(result, &r)
-	if err != nil {
-		return HistoryResult{}, err
-	}
-	return r, nil
-}
-
-// decodeChannels allows to decode channels command reply result to get a slice of channels.
-func decodeChannels(result []byte) (ChannelsResult, error) {
-	var r ChannelsResult
-	err := json.Unmarshal(result, &r)
-	if err != nil {
-		return ChannelsResult{}, err
-	}
-	return r, nil
-}
-
-// decodeInfo allows to decode info command response result.
-func decodeInfo(result []byte) (InfoResult, error) {
-	var info InfoResult
-	err := json.Unmarshal(result, &info)
-	if err != nil {
-		return InfoResult{}, err
-	}
-	return info, nil
-}
-
-// decodePresence allows to decode presence reply result to get a map of clients.
-func decodePresence(result []byte) (PresenceResult, error) {
-	var r PresenceResult
-	err := json.Unmarshal(result, &r)
-	if err != nil {
-		return PresenceResult{}, err
-	}
-	return r, nil
-}
-
-// decodePresenceStats allows to decode presence stats reply result to get a map of clients.
-func decodePresenceStats(result []byte) (PresenceStatsResult, error) {
-	var r PresenceStatsResult
-	err := json.Unmarshal(result, &r)
-	if err != nil {
-		return PresenceStatsResult{}, err
-	}
-	return r, nil
-}
-
-// SendPipe sends Commands collected in Pipe to Centrifugo. Using this method you
-// should manually inspect all replies.
-func (c *Client) SendPipe(ctx context.Context, pipe *Pipe) ([]Reply, error) {
-	if len(pipe.commands) == 0 {
-		return nil, ErrPipeEmpty
-	}
-	result, err := c.send(ctx, pipe.commands)
-	if err != nil {
-		return nil, err
-	}
-	if len(result) != len(pipe.commands) {
-		return nil, ErrMalformedResponse
-	}
-	return result, nil
-}
-
-func (c *Client) send(ctx context.Context, commands []Command) ([]Reply, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-
-	for _, cmd := range commands {
-		err := enc.Encode(cmd)
+	switch {
+	case cfg.APIEndpoint == "" && cfg.APIEndpointFunc == nil:
+		return nil, invalid("APIEndpoint is required, for example http://localhost:8000/api")
+	case cfg.APIEndpoint != "" && cfg.APIEndpointFunc != nil:
+		return nil, invalid("set APIEndpoint or APIEndpointFunc, not both")
+	case cfg.APIEndpoint != "":
+		addr, err := checkAddr(cfg.APIEndpoint)
 		if err != nil {
-			return nil, err
+			return nil, invalid("APIEndpoint: %v", err)
+		}
+		c.addr = addr
+	}
+
+	switch {
+	case cfg.APIKey != "" && cfg.BearerTokenFunc != nil:
+		return nil, invalid("set APIKey or BearerTokenFunc, not both: a request with a bearer token is judged by the token alone")
+	case !validHeaderValue(cfg.APIKey):
+		return nil, invalid("APIKey contains a line break or another control character")
+	}
+
+	c.header = make(http.Header, len(cfg.Header)+3)
+	for k, v := range cfg.Header {
+		switch http.CanonicalHeaderKey(k) {
+		case "X-Api-Key":
+			return nil, invalid("Header may not set X-API-Key; use APIKey")
+		case "Authorization":
+			return nil, invalid("Header may not set Authorization; use BearerTokenFunc")
+		case "Content-Type":
+			return nil, invalid("Header may not set Content-Type")
+		}
+		if !validHeaderName(k) {
+			return nil, invalid("Header name %q is not a valid HTTP header name", k)
+		}
+		for _, value := range v {
+			if !validHeaderValue(value) {
+				return nil, invalid("Header %s has a value with a line break or another control character", http.CanonicalHeaderKey(k))
+			}
+		}
+		if http.CanonicalHeaderKey(k) == "Host" {
+			// net/http sends a request's Host field, never a Host header.
+			if len(v) != 1 || v[0] == "" {
+				return nil, invalid("Header Host must have exactly one non-empty value")
+			}
+			c.host = v[0]
+			continue
+		}
+		c.header[http.CanonicalHeaderKey(k)] = append([]string(nil), v...)
+	}
+	c.header.Set("Content-Type", "application/json")
+	if c.header.Get("User-Agent") == "" {
+		c.header.Set("User-Agent", "gocent/v4")
+	}
+	if cfg.APIKey != "" {
+		c.header.Set("X-API-Key", cfg.APIKey)
+	}
+
+	switch {
+	case c.timeout < 0:
+		return nil, invalid("RequestTimeout is negative")
+	case c.timeout == 0:
+		c.timeout = defaultRequestTimeout
+	}
+	switch {
+	case c.http == nil:
+		c.http = DefaultHTTPClient()
+		c.ownHTTP = true
+	case c.http.CheckRedirect == nil:
+		hc := *c.http
+		hc.CheckRedirect = refuseRedirect
+		c.http = &hc
+	}
+
+	ab := cfg.AutoBatch
+	switch {
+	case ab.MaxInFlight < 0:
+		return nil, invalid("AutoBatch.MaxInFlight is negative")
+	case ab.MaxBatchSize < 0:
+		return nil, invalid("AutoBatch.MaxBatchSize is negative")
+	case ab.MaxInFlight == 0 && ab.MaxBatchSize != 0:
+		return nil, invalid("AutoBatch options are set but AutoBatch.MaxInFlight is zero, which disables it")
+	case ab.MaxBatchSize == 1:
+		return nil, invalid("AutoBatch.MaxBatchSize of 1 never batches; use 2 or more")
+	case ab.MaxInFlight > 0:
+		size := ab.MaxBatchSize
+		if size == 0 {
+			size = defaultMaxBatchSize
+		}
+		c.batcher = &batcher{client: c, maxInFlight: ab.MaxInFlight, maxBatch: size}
+	}
+	return c, nil
+}
+
+// checkAddr rejects addresses which would send requests somewhere other than
+// the intended API, and returns it without a trailing slash.
+func checkAddr(addr string) (string, error) {
+	u, err := url.Parse(addr)
+	if err != nil {
+		// Not the *url.Error itself: that is what a failed HTTP request
+		// returns too, and Retryable takes it for the network's.
+		if urlErr, ok := errors.AsType[*url.Error](err); ok {
+			err = urlErr.Err
+		}
+		return "", fmt.Errorf("%q is not a valid URL: %w", addr, err)
+	}
+	switch {
+	case u.Scheme != "http" && u.Scheme != "https":
+		return "", fmt.Errorf("%q must be an absolute http:// or https:// URL", addr)
+	case u.Host == "":
+		return "", fmt.Errorf("%q has no host", addr)
+	case u.RawQuery != "" || u.Fragment != "" || u.User != nil:
+		return "", fmt.Errorf("%q must not have a query, fragment or credentials; use APIKey", addr)
+	}
+	path := strings.TrimRight(u.Path, "/")
+	if i := strings.LastIndexByte(path, '/'); i >= 0 {
+		if _, isMethod := methodNames[path[i+1:]]; isMethod {
+			return "", fmt.Errorf("%q ends with the method %q; APIEndpoint is the API base URL, such as http://localhost:8000/api", addr, path[i+1:])
 		}
 	}
+	u.Path = path
+	return u.String(), nil
+}
 
-	var endpoint string
+// request is implemented by every request type: it names its method and knows
+// its place in a batch.
+type request interface {
+	APIMethod() string
+	addTo(*command)
+}
 
-	if c.getEndpoint != nil {
-		e, err := c.getEndpoint()
-		if err != nil {
-			return nil, err
+// response is the envelope every method replies with.
+type response[T any] struct {
+	Error  *Error `json:"error,omitzero"`
+	Result *T     `json:"result,omitzero"`
+}
+
+// invoke sends req and returns its result. W is the result as it is decoded
+// off the wire; get finds it in a batch reply.
+func invoke[W any](ctx context.Context, c *Client, req request, get func(*reply) *W) (W, error) {
+	if err := validateRequest(req); err != nil {
+		var zero W
+		return zero, err
+	}
+	if err := c.calls.enter(); err != nil {
+		var zero W
+		return zero, err
+	}
+	defer c.calls.leave()
+	if c.batcher != nil {
+		return batched(ctx, c.batcher, req, get)
+	}
+	return send(ctx, c, req, func(r *response[W]) (W, error) {
+		if r.Error != nil {
+			var zero W
+			return zero, r.Error
 		}
-		endpoint = e
-	} else {
-		endpoint = c.endpoint
-	}
+		return deref(r.Result), nil
+	})
+}
 
-	req, err := http.NewRequest(http.MethodPost, endpoint, &buf)
+// send posts req to its method's endpoint and decodes the reply.
+func send[W any](ctx context.Context, c *Client, req request, done func(*response[W]) (W, error)) (W, error) {
+	var resp response[W]
+	var zero W
+	info := RequestInfo{Method: req.APIMethod(), Commands: 1}
+	start := time.Now()
+	err := c.post(ctx, info.Method, req, &resp, &info.StatusCode)
+	if err == nil && resp.Error != nil {
+		info.Failed = 1
+	}
+	c.reportRequest(ctx, info, start, err)
 	if err != nil {
-		return nil, err
+		return zero, err
 	}
-	req = req.WithContext(ctx)
+	return done(&resp)
+}
 
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "apikey "+c.apiKey)
+// reportRequest tells Config.OnRequest about a request which started at
+// start and ended with err.
+func (c *Client) reportRequest(ctx context.Context, info RequestInfo, start time.Time, err error) {
+	if c.onRequest == nil {
+		return
 	}
-	req.Header.Set("Content-Type", "application/json")
+	info.Duration = time.Since(start)
+	info.Err = err
+	c.onRequest(ctx, info)
+}
 
-	resp, err := c.httpClient.Do(req)
+// post sends body to the method's endpoint and decodes the reply into out.
+func (c *Client) post(ctx context.Context, method string, body, out any, status *int) error {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+		defer cancel()
+	}
+	base := c.addr
+	if c.addrFunc != nil {
+		addr, err := c.addrFunc(ctx)
+		if err != nil {
+			return fmt.Errorf("gocent: APIEndpointFunc: %w", err)
+		}
+		if base, err = checkAddr(addr); err != nil {
+			return fmt.Errorf("gocent: APIEndpointFunc: %w", err)
+		}
+	}
+	var auth string
+	if c.token != nil {
+		token, err := c.token(ctx)
+		if err != nil {
+			return fmt.Errorf("gocent: bearer token: %w", err)
+		}
+		if token == "" || !validHeaderValue(token) {
+			return errors.New("gocent: bearer token: BearerTokenFunc returned an empty token or one with a line break or another control character")
+		}
+		auth = "Bearer " + token
+	}
+
+	// The body is not pooled: the transport may go on reading it after Do
+	// returns - when the server replies before reading it all, or to retry
+	// the request - so it must stay untouched for as long as the request
+	// lives, which only the garbage collector knows.
+	encoded, err := json.Marshal(body)
 	if err != nil {
-		return nil, err
+		return encodingError(method, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
 
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/"+method, bytes.NewReader(encoded))
+	if err != nil {
+		return fmt.Errorf("gocent: %w", err)
+	}
+	// Each request has headers of its own: a cookie jar adds to them, and so
+	// may an HTTP transport of the caller's - against the RoundTripper
+	// contract, but a shared map written concurrently is a crash.
+	req.Header = c.header.Clone()
+	if auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+	if c.host != "" {
+		req.Host = c.host
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return transportError(method, err)
+	}
+	*status = resp.StatusCode
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrainBytes))
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, ErrStatusCode{resp.StatusCode, respBody}
-	}
-
-	var replies []Reply
-
-	dec := json.NewDecoder(resp.Body)
-	for {
-		var rep Reply
-		if err := dec.Decode(&rep); err == io.EOF {
-			break
-		} else if err != nil {
-			return nil, err
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxAPIErrorBytes))
+		if apiErr := transportModeError(resp.StatusCode, b); apiErr != nil {
+			return apiErr
 		}
-		replies = append(replies, rep)
+		if len(b) > maxErrorBodyBytes {
+			b = b[:maxErrorBodyBytes]
+		}
+		httpErr := &HTTPError{
+			StatusCode: resp.StatusCode,
+			Body:       bytes.TrimSpace(b),
+			Header:     resp.Header,
+		}
+		if methodNames[method] {
+			httpErr.proMethod = method
+		}
+		return httpErr
 	}
+	if err := json.UnmarshalRead(resp.Body, out); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			// The body stopped arriving because the context ended.
+			return fmt.Errorf("gocent: %s: %w", method, ctxErr)
+		}
+		if isTimeout(err) {
+			return transportError(method, err)
+		}
+		return &DecodeError{Err: err}
+	}
+	return nil
+}
 
-	return replies, err
+// transportModeError returns the Centrifugo error in the body of a reply with
+// an HTTP error status, or nil if it holds none.
+//
+// With http_api.error_mode "transport", or the X-Centrifugo-Error-Mode header,
+// Centrifugo replies to a failed call with an HTTP status and the error alone
+// as the body - the same error as in a 200 reply. Only the statuses Centrifugo
+// maps its errors to are taken for one: a proxy or gateway in front of it may
+// answer with a JSON body of the same shape - a 503 with {"code":503}, say -
+// which is an HTTPError all the same. Any code from 100 up is kept, known or
+// not: Centrifugo adds codes over time. Except a code which is an HTTP error
+// status, from 400 to 599 - {"code":429} from a rate limiting gateway: no
+// Centrifugo API error has such a code, so it is the gateway's, and stays an
+// HTTPError, which Retryable judges by its status.
+func transportModeError(status int, body []byte) *Error {
+	switch status {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict,
+		http.StatusRequestedRangeNotSatisfiable, http.StatusTooManyRequests,
+		http.StatusInternalServerError:
+	default:
+		return nil
+	}
+	var apiErr Error
+	if json.Unmarshal(body, &apiErr) == nil && apiErr.Code >= minErrorCode && !isHTTPErrorStatus(apiErr.Code) {
+		return &apiErr
+	}
+	return nil
+}
+
+// minErrorCode is the lowest code of a Centrifugo error.
+const minErrorCode = 100
+
+// isHTTPErrorStatus reports whether code is an HTTP client or server error
+// status, which a gateway puts into its JSON error bodies.
+func isHTTPErrorStatus(code uint32) bool {
+	return code >= 400 && code < 600
+}
+
+// encodingError reports a request which cannot be encoded: a jsontext.Value
+// which is not valid JSON, or a string which is not valid UTF-8.
+func encodingError(method string, err error) error {
+	return &requestError{method: method, problem: "cannot be encoded", err: err}
+}
+
+// validHeaderName reports whether name is a valid HTTP header name: one or
+// more token characters.
+func validHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := range len(name) {
+		c := name[i]
+		if c <= ' ' || c >= 0x7f || strings.IndexByte(`"(),/:;<=>?@[\]{}`, c) >= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// validHeaderValue reports whether value holds no control characters other
+// than tab - a line break in particular.
+func validHeaderValue(value string) bool {
+	for i := range len(value) {
+		if c := value[i]; (c < ' ' && c != '\t') || c == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// transportError wraps an error from sending a request or reading its reply.
+// A timeout of the HTTP client's own - a dial timeout, http.Client.Timeout -
+// is made to match context.DeadlineExceeded too, so that a caller has one
+// check for "the request timed out" whichever layer's clock ran out.
+func transportError(method string, err error) error {
+	if isTimeout(err) && !errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("gocent: %s: %w (%w)", method, context.DeadlineExceeded, err)
+	}
+	return fmt.Errorf("gocent: %s: %w", method, err)
+}
+
+func isTimeout(err error) bool {
+	netErr, ok := errors.AsType[net.Error](err)
+	return ok && netErr.Timeout()
+}
+
+func deref[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
+	}
+	return *p
 }
