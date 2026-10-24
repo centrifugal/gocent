@@ -510,7 +510,7 @@ same way by every writer.
 | HMAC secret, not empty | HS256 | `client.token.hmac_secret_key` |
 | RSA private key | RS256 | `client.token.rsa_public_key` |
 | ECDSA private key | ES256 / ES384 / ES512 for P-256 / P-384 / P-521; other curves refused | `client.token.ecdsa_public_key` |
-| Ed25519 private key | EdDSA | `client.token.ed25519_public_key` (Centrifugo releases after #1288), or JWKS |
+| Ed25519 private key | EdDSA | `client.token.ed25519_public_key` (Centrifugo v6.10.2+), or JWKS |
 
 A key MAY carry a key ID, written as the token header's `kid`. A JWT is
 `base64url(header).base64url(claims).base64url(signature)`, unpadded, header

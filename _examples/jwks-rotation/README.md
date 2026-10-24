@@ -29,7 +29,7 @@ Centrifugo, configured with the endpoint only - no keys of its own:
 docker run --rm -p 8000:8000 \
   -e CENTRIFUGO_CLIENT_TOKEN_JWKS_PUBLIC_ENDPOINT=http://host.docker.internal:3000/centrifugo/jwks \
   -e CENTRIFUGO_UNI_HTTP_STREAM_ENABLED=true \
-  centrifugo/centrifugo:v6.10.1 centrifugo
+  centrifugo/centrifugo:v6.10.2 centrifugo
 ```
 
 A token for the session's user, and a connection with it:
@@ -74,8 +74,8 @@ get a new token and retry, but a key dated ahead avoids the refusals.
 
 2. Once that time has passed - every instance signs with the new key - remove
    the leaked key's file and roll out. Centrifugo drops the key when its cached
-   keys expire - an hour up to Centrifugo v6.10, minutes in later versions -
-   and tokens the leaked key signed stop working then.
+   keys expire - five minutes since Centrifugo v6.10.2, an hour before - and
+   tokens the leaked key signed stop working then.
 
 The backend refuses to start when no key is active yet, when a file is named
 by something else than a time, or when two keys activate together. Every

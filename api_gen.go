@@ -592,7 +592,9 @@ type ConnectionState struct {
 	SubscriptionTokens map[string]SubscriptionTokenInfo `json:"subscription_tokens,omitzero"`
 
 	// Meta is the meta information attached to the connection. It is not
-	// visible to the client.
+	// visible to other clients: Centrifugo never sends it. Meta from a
+	// connection token is visible to the user owning the token, though: it
+	// must not hold anything that user must not see.
 	Meta jsontext.Value `json:"meta,omitzero"`
 }
 

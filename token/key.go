@@ -90,9 +90,10 @@ func ECDSA(private *ecdsa.PrivateKey) Key {
 	}}
 }
 
-// Ed25519 returns a key signing with EdDSA and private. Centrifugo verifies
-// EdDSA tokens with keys from a JWKS endpoint - publish the key with [JWKS],
-// with its ID set by [Key.WithKeyID].
+// Ed25519 returns a key signing with EdDSA and private, whose public key is
+// Centrifugo's client.token.ed25519_public_key - since Centrifugo v6.10.2 -
+// or is published for its JWKS endpoint with [JWKS], with its ID set by
+// [Key.WithKeyID].
 func Ed25519(private ed25519.PrivateKey) Key {
 	k := Key{alg: "EdDSA", sign: func(data []byte) ([]byte, error) {
 		if len(private) != ed25519.PrivateKeySize {

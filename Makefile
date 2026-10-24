@@ -21,7 +21,7 @@ FUZZTIME ?= 30s
 COVERAGE_MIN ?= 90
 
 # The Centrifugo release `make sync-proto` takes api.proto and proxy.proto
-# from: a tag, such as v6.10.1. There is no default, so that nothing is synced
+# from: a tag, such as v6.10.2. There is no default, so that nothing is synced
 # from an unreleased branch by accident.
 CENTRIFUGO_REF ?=
 # Or a branch, such as master, set instead of CENTRIFUGO_REF on purpose: for
@@ -76,7 +76,7 @@ generate: ## Regenerate api_gen.go and proxy/proxy_gen.go from their protos
 .PHONY: sync-proto
 sync-proto: ## Copy api.proto and proxy.proto from Centrifugo at CENTRIFUGO_REF (a tag) or CENTRIFUGO_BRANCH, and regenerate
 	@if [ -n "$(CENTRIFUGO_REF)" ] && [ -n "$(CENTRIFUGO_BRANCH)" ]; then echo "set CENTRIFUGO_REF or CENTRIFUGO_BRANCH, not both"; exit 1; fi
-	@if [ -z "$(CENTRIFUGO_REF)$(CENTRIFUGO_BRANCH)" ]; then echo "set CENTRIFUGO_REF to a Centrifugo tag, e.g. make sync-proto CENTRIFUGO_REF=v6.10.1 - or CENTRIFUGO_BRANCH=master for unreleased changes"; exit 1; fi
+	@if [ -z "$(CENTRIFUGO_REF)$(CENTRIFUGO_BRANCH)" ]; then echo "set CENTRIFUGO_REF to a Centrifugo tag, e.g. make sync-proto CENTRIFUGO_REF=v6.10.2 - or CENTRIFUGO_BRANCH=master for unreleased changes"; exit 1; fi
 	@ref="$(CENTRIFUGO_REF)$(CENTRIFUGO_BRANCH)"; \
 	base=https://raw.githubusercontent.com/centrifugal/centrifugo/$$ref/internal; \
 	curl -fsSL $$base/apiproto/api.proto -o api.proto.new || { rm -f api.proto.new; echo "no api.proto at Centrifugo $$ref"; exit 1; }; \

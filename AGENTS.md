@@ -131,7 +131,7 @@ Centrifugo running:
 
 ```sh
 docker run --rm -p 8100:8100 -v $PWD/testdata/centrifugo.json:/centrifugo/config.json \
-  centrifugo/centrifugo:v6.10.1 centrifugo -c config.json   # listens on :8100
+  centrifugo/centrifugo:v6.10.2 centrifugo -c config.json   # listens on :8100
 make test-integration
 ```
 
@@ -148,7 +148,7 @@ variables in `.github/workflows/ci.yml`: a setting added to
 `testdata/centrifugo.json` must be added there too.
 
 CI and `testdata/centrifugo-pro.compose.yml` use one Centrifugo release, now
-v6.10.1, for OSS and PRO, the one `api.proto` is synced from. Moving to a new
+v6.10.2, for OSS and PRO, the one `api.proto` is synced from. Moving to a new
 release changes all three together: `make sync-proto CENTRIFUGO_REF=<tag>`, the
 OSS image in `ci.yml` and the PRO image in the compose file.
 
@@ -167,7 +167,7 @@ docker compose -f testdata/centrifugo-pro.compose.yml down
 
 ## Updating to a new Centrifugo API
 
-1. `make sync-proto CENTRIFUGO_REF=v6.10.1` - a released tag. It copies
+1. `make sync-proto CENTRIFUGO_REF=v6.10.2` - a released tag. It copies
    Centrifugo's `internal/apiproto/api.proto` at that tag over `api.proto`,
    and its `internal/proxyproto/proxy.proto` over `proxy/proxy.proto`, and
    runs `make generate`. For work which needs unreleased Centrifugo changes,

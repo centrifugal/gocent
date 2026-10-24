@@ -82,8 +82,9 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   `APIMethod()` on every request gives the method name alone.
 * **Tokens.** The new `token` package signs connection and subscription
   tokens with Centrifugo's claims - `token.Connection`, `token.Subscription` -
-  with HMAC, RSA, ECDSA or Ed25519 keys (Ed25519 verified by Centrifugo
-  through JWKS) - Centrifugo PRO's claims included: capabilities, labels,
+  with HMAC, RSA, ECDSA or Ed25519 keys (Ed25519 with Centrifugo's
+  `ed25519_public_key` since v6.10.2, or through JWKS) - Centrifugo PRO's
+  claims included: capabilities, labels,
   server-side tag filters - and `token.Handlers` serves the
   endpoints the `getToken` callbacks of client SDKs call: `{"token": ...}`,
   never cached, 403 for `token.ErrUnauthorized`. Every token states its

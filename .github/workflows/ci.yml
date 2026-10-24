@@ -58,7 +58,7 @@ jobs:
     # environment variables.
     services:
       centrifugo:
-        image: centrifugo/centrifugo:v6.10.1
+        image: centrifugo/centrifugo:v6.10.2
         ports:
           - 8100:8000
         # The proxy tests' backend runs on the runner, which Centrifugo
