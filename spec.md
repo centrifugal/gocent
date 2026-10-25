@@ -673,7 +673,8 @@ An SDK MUST have:
 - Integration tests of every OSS method against the `centrifugo/centrifugo`
   image, and of every PRO method against `centrifugo/centrifugo-pro` in
   sandbox mode (no license key), with the setup in gocent's `testdata/`:
-  tokens connecting a real client, proxy handlers called by Centrifugo,
+  tokens connecting a real client (HMAC, and Ed25519 verified by
+  `client.token.ed25519_public_key`), proxy handlers called by Centrifugo,
   commands run by a consumer, API tokens accepted - and refused without the
   audience or scope, as connection tokens, and from unpublished keys.
 - The vectors below.

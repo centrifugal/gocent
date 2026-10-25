@@ -24,6 +24,7 @@ No dependencies.
 | Centrifugo | v6, any release |
 | Map and shared poll methods | Centrifugo v6.8.0 or newer |
 | `Error.Temporary`, `ErrTooManyRequests`, refused requests reported as such rather than as internal errors | Centrifugo v6.10.0 or newer |
+| Ed25519 tokens verified without JWKS, by `client.token.ed25519_public_key` | Centrifugo v6.10.2 or newer |
 | Methods marked "Centrifugo PRO only" | Centrifugo PRO v6 |
 
 With an older Centrifugo, `Retryable` still works: it treats the internal
