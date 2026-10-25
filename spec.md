@@ -438,8 +438,11 @@ The SDK's docs MUST explain, wherever retries are:
   loop of the call, `retryable(err)` and `wait(deadline, delay(attempt))`,
   with the same `idempotency_key` on every attempt. Docs SHOULD show it
   (gocent: `ExampleRetryable`).
-  Broadcast has a helper of its own (section 7.3) because retrying only the
-  channels which may still succeed is easy to get wrong.
+  A broadcast is not retried this way: `retryable(err)` is true when any
+  channel may still succeed, and repeating the call resends to the channels
+  which got it - twice on the NATS broker, which ignores keys. Retry only
+  `retryable_channels()`, or use `broadcast_with_retry` (section 7.3), which
+  does that.
 - `wait(deadline, d)` waits for `d` or until the call's deadline or
   cancellation, and returns that error - never a sleep the deadline cannot
   end.
@@ -462,8 +465,11 @@ the error:
 `BroadcastFailedChannelsError`; `result.failed()` lists the failed channels.
 They MUST never disagree with the error. A partial error MUST NOT match its
 parts' errors: one unknown channel among many does not make the broadcast
-match `UnknownChannel`. `retryable_channels()` returns the channels a retry
-should go to.
+match `UnknownChannel`. This holds in every case, so that every language
+behaves the same: a broadcast into one channel, or one where every channel
+failed, does not match `UnknownChannel` either - `failed()` holds each
+channel's error. For one channel, `publish` is the call.
+`retryable_channels()` returns the channels a retry should go to.
 
 A partial error's message SHOULD say how many parts failed, that the others
 succeeded, and - when some failure is retryable - to retry only those parts,
@@ -477,7 +483,15 @@ In a language with exceptions, the exception raised for a broadcast or a
 batch carries its result (`err.result`): the same object a Go call returns
 beside its error, every channel's or command's outcome included. There is no
 mode which returns a partial result instead of raising: the core rule
-(section 4.3) holds in every language.
+(section 4.3) holds in every language. Docs SHOULD show how to log the
+failures and go on:
+
+```python
+try:
+    client.broadcast(channels=channels, data=data)
+except BroadcastFailedChannelsError as e:
+    log.warning("broadcast failed in %s", e.result.failed())
+```
 
 ### 7.2 Batch
 
@@ -991,7 +1005,9 @@ The first version. Rules settled while it was reviewed:
 - In a batch, a PRO method's code 104 SHOULD carry a hint that the server may
   be Centrifugo OSS (4.1).
 - Exceptions carry a broadcast's or batch's result (7.1).
-- Retrying a single call belongs to the application (6).
+- Retrying a single call belongs to the application; a broadcast is retried
+  only in its failed channels (6).
+- A partial error never matches its parts, also with one channel (7.1).
 - An expiry is one value, in the language's sum type where it has one
   (11.2).
 - HTTP handlers are framework-free (conventions).
