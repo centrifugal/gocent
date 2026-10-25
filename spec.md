@@ -32,12 +32,14 @@ Conventions:
   TypeScript), and keeps the same words.
 - **Idioms are the language's.** A "deadline", "cancellation" or "context" is
   the language's own way to bound and cancel a call: `context.Context` in Go;
-  an `AbortSignal` and a timeout option in JavaScript; task cancellation and
-  timeouts in Python's asyncio, a timeout argument in synchronous Python. An
+  an `AbortSignal` and a timeout option in JavaScript; in Python, which has no
+  deadline object, a per-call timeout argument - in async code too, since it
+  cannot read the deadline of an enclosing `asyncio.timeout`, which still ends
+  a call sooner, as cancelling its task does. An
   "error" is an error value or an exception, whichever the language uses, and
   "matches" is its way to test one (`errors.Is`, `isinstance`, `instanceof`).
   `batch_context` and context values exist only where the language has
-  request-scoped context.
+  request-scoped context: Go's `context.Context`, Python's `contextvars`.
 - **Blocking and async alike.** Where a language has both blocking and async
   I/O in common use - Python, Rust - an SDK SHOULD provide both clients, with
   the same methods, options, errors and behaviour: an application uses the
@@ -158,7 +160,9 @@ call.
   Where the HTTP library's timeouts bound each operation rather than the
   request - a connect, each read, as Python's `requests` and `httpx` do - the
   SDK enforces the request's deadline itself, so that a slow reply cannot
-  take longer than it.
+  take longer than it - headers included, which a check between body chunks
+  does not cover (pycent: a network backend bounding each connect, read and
+  write by the time left; asyncio's `asyncio.timeout` around the whole call).
   Whichever way a request times out, the SDK MUST report it as the language's
   one timeout error (gocent: `errors.Is(err, context.DeadlineExceeded)`).
 - Replies are decoded as strictly as requests are encoded: case-sensitive
@@ -454,7 +458,9 @@ The SDK's docs MUST explain, wherever retries are:
   does that.
 - `wait(deadline, d)` waits for `d` or until the call's deadline or
   cancellation, and returns that error - never a sleep the deadline cannot
-  end.
+  end. A language without a deadline object - Python - has no such helper: its
+  own sleep, which cancellation ends, is the wait, and each attempt takes its
+  own timeout.
 
 ## 7. Broadcast and batch
 
@@ -489,9 +495,11 @@ RetryableChannels, with the same IdempotencyKey)"). Where an error usually
 means nothing happened, as an exception does, a caller retrying the whole
 broadcast would publish twice into the channels which got it.
 
-In a language with exceptions, the exception raised for a broadcast or a
-batch carries its result (`err.result`): the same object a Go call returns
-beside its error, every channel's or command's outcome included. There is no
+In a language with exceptions, the exception raised for a partial failure
+carries its result (`err.result`): the same object a Go call returns beside
+its error, every channel's or command's outcome included. A failure as a whole
+raises its own error, the network's say: its result would only say that every
+part failed with it. There is no
 mode which returns a partial result instead of raising: the core rule
 (section 4.3) holds in every language. Docs SHOULD show how to log the
 failures and go on:
@@ -546,6 +554,10 @@ except BroadcastFailedChannelsError as e:
   retry, the result so far and the key. It waits, logs or stops by returning
   an error; the call then returns both errors joined - or only the
   broadcast's error when that already wraps the callback's (a deadline, say).
+  In a language with exceptions it MAY instead return how long to wait - the
+  default when it returns nothing - and raise to stop, its exception chained
+  to the broadcast's error (pycent): a callback which only logs then cannot
+  stop the retries by accident.
   Default: `wait(deadline, delay(attempt))` with the `delay` of an
   `exponential_backoff` (section 17);
 - a failure no retry can fix - a 401, an invalid request - stops it without
@@ -620,7 +632,10 @@ the channel the same way.
   attempt, an automatic batch once.
 - `batch_context(base, callers)` makes an automatic batch's request context,
   from a base context and its callers' - for a tracing span linking every
-  caller's span.
+  caller's span. In Python a batch runs in an empty `contextvars.Context`, and
+  `batch_context(callers)` takes the callers' contexts and returns a context
+  manager entered around the batch's request - `tracer.start_as_current_span`
+  with a link to each caller's span, say.
 - Tracing and metrics otherwise come from the HTTP client's transport; the SDK
   MUST NOT depend on a tracing library. Docs SHOULD show the language's
   OpenTelemetry HTTP instrumentation.
@@ -1008,6 +1023,10 @@ here; the sections they belong to say what they are for.
 
 The first version. Rules settled while it was reviewed:
 
+- Python: a per-call timeout argument in async code too; no `wait` helper;
+  only partial errors carry `result`; `on_attempt_err` may return the wait
+  and raise to stop; `batch_context` over `contextvars` (conventions, 6, 7.1,
+  7.3, 10).
 - A partial error's message says the others succeeded; a broadcast's, how to
   retry only the failed channels (7.1).
 - JavaScript decodes integers past 2^53 as numbers by default, with the

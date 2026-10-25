@@ -297,10 +297,6 @@ func (c *Client) BroadcastWithRetry(ctx context.Context, req BroadcastRequest, o
 	return final, err
 }
 
-// finalBroadcastError is the error of a broadcast sent in several attempts
-// whose outcomes final holds: nil when every channel got the publication, a
-// BroadcastFailedChannelsError listing those which did not when some attempt
-// got a reply, and otherwise the error of the last attempt - no channel got a
 // broadcastAttempt sends one attempt of BroadcastWithRetry, bounded by
 // timeout when it is set.
 func (c *Client) broadcastAttempt(ctx context.Context, req BroadcastRequest, timeout time.Duration) (BroadcastResult, error) {
@@ -312,6 +308,10 @@ func (c *Client) broadcastAttempt(ctx context.Context, req BroadcastRequest, tim
 	return c.Broadcast(ctx, req)
 }
 
+// finalBroadcastError is the error of a broadcast sent in several attempts
+// whose outcomes final holds: nil when every channel got the publication, a
+// BroadcastFailedChannelsError listing those which did not when some attempt
+// got a reply, and otherwise the error of the last attempt - no channel got a
 // reply.
 func finalBroadcastError(final *BroadcastResult, replied bool, lastErr error) error {
 	final.Replied = replied
