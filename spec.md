@@ -5,7 +5,18 @@ Centrifugo, as opposed to a client SDK in browsers and apps - provides, and
 how it behaves. gocent is its reference implementation: where this document
 and gocent disagree, it is a bug in one of them, to be fixed in both.
 
-The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
+**Version 0.1 (draft)**, 2026-10-25. Changes: section 18.
+
+The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119. Each
+section states its rules with the reasons for them, so that a case the spec
+does not list can be decided the same way. Section 15.2 lists every rule to
+check an SDK against; section 17 lists gocent's values.
+
+The spec has a version of its own, which an SDK's README names ("implements
+spec 1.0"). A new or stricter MUST or SHOULD is a new version: a minor one
+before 1.0, a major one after - an SDK implementing an older one is behind.
+Wording which changes no rule is no new version. 1.0 is released with gocent
+v4.
 
 Conventions:
 
@@ -64,8 +75,8 @@ its README.
 
 - The API is defined by Centrifugo's `internal/apiproto/api.proto`, the proxy
   by `internal/proxyproto/proxy.proto`. An SDK MUST generate its request and
-  result types - and, where its language allows, its API methods - from them,
-  and MUST NOT hand-edit generated code. Generated code MUST be checked to be
+  result types from them, and its API methods where its language allows. It
+  MUST NOT hand-edit generated code. Generated code MUST be checked to be
   current in CI.
 - The protos MUST be copied from a released Centrifugo tag before an SDK
   release. A branch MAY be used during development.
@@ -175,19 +186,19 @@ not list is decided the same way:
    `data: {text: "hi"}` in JavaScript, `$data = ['text' => 'hi']` in PHP.
    This is the usual way to publish.
 2. **Every SDK also takes raw JSON, marked by a type of its own,** and sends
-   it as the same JSON value, number text kept - not decoded into the
-   language's values and encoded again: Python `RawJSON(b'{"text":"hi"}')`,
-   JavaScript `rawJSON('{"text":"hi"}')`, Go `jsontext.Value` - the table
-   below names each. An encoder MAY drop insignificant whitespace and
-   normalize string escapes in it, as Go's does. It is for JSON the
-   application already has - from a database, a queue, a cache - and for
+   it as the same JSON value, number text kept, never decoding it into the
+   language's values to encode it again. The table below names each type:
+   Python `RawJSON(b'{"text":"hi"}')`, JavaScript `rawJSON('{"text":"hi"}')`,
+   Go `jsontext.Value`. An encoder MAY drop insignificant whitespace and
+   normalize string escapes in it, as Go's does. Raw JSON is for JSON the
+   application already has (from a database, a queue, a cache), and for
    encoding with a library or rules of the application's own (a faster
    encoder, dates, decimals): encode, then pass the result as raw JSON. An
    SDK therefore has no option to plug in a JSON encoder.
 3. **A string is a JSON string**, never raw JSON: `data="hello"` publishes
    `"hello"`. Only the raw JSON type marks raw JSON.
 4. **Binary data goes in the `b64` fields only** (`b64data`, `b64info`),
-   base64-encoded. Bytes given as a JSON payload are refused, not guessed at -
+   base64-encoded. Bytes given as a JSON payload are refused, not guessed at,
    unless bytes are the language's raw JSON type, as in Go. An SDK MAY take
    bytes for a `b64` field and encode them itself.
 5. **Invalid JSON is never sent**: raw JSON is checked to be valid, and a
@@ -338,16 +349,23 @@ called again. With its default HTTP client the SDK then closes idle connections.
   unrecoverable position, 113 conflict. Centrifugo adds codes: nothing may
   switch exhaustively over them, and an unknown code is still an `Error`.
 - An `HTTPError` with status 401 MUST match `Unauthorized`.
-- Error messages SHOULD carry hints: a redirect - check http or https in the
-  endpoint; a 404 for a PRO-only method - the server is likely Centrifugo OSS;
-  any other 404 - is the endpoint the API base URL; a 401 - check the
-  credentials. In a batch, a PRO-only command sent to Centrifugo OSS fails
-  with code 104 (not found) instead of a 404. That is Centrifugo's answer,
-  and the SDK keeps it: an `Error` with code 104, matching `NotFound`, where
-  the call sent alone is an `HTTPError` 404, which does not - a missing route
-  is not a missing entity. A PRO method on OSS is a configuration mistake,
-  seen on the first call either way. The 104 SHOULD carry a softer hint,
-  since 104 has other causes too: the server may be Centrifugo OSS.
+- Error messages SHOULD carry hints:
+
+  | Error | Hint |
+  |---|---|
+  | A redirect | Check http or https in the endpoint |
+  | A 404 for a PRO-only method | The server is likely Centrifugo OSS |
+  | Any other 404 | Is the endpoint the API base URL? |
+  | A 401 | Check the credentials |
+  | Code 104 for a PRO-only command in a batch | The server may be Centrifugo OSS |
+
+- In a batch, a PRO-only command sent to Centrifugo OSS fails with code 104
+  (not found) instead of a 404. That is Centrifugo's answer, and the SDK
+  keeps it. So it is an `Error` matching `NotFound`, while the call sent
+  alone is an `HTTPError` 404, which does not: a missing route is not a
+  missing entity. A PRO method on OSS is a configuration mistake, seen on the
+  first call either way. Its hint is softer because 104 has other causes
+  too.
 
 ### 4.2 Transport error mode
 
@@ -713,9 +731,10 @@ deadline ending with the proxy's timeout) and returning a result or an error.
   required when the handler is built.
 - It answers with exactly one of result, error and disconnect: Centrifugo
   takes a response with none as accepting the request as sent.
-- `ProxyError{code, message, temporary}` - codes in [400, 1999] - rejects the
-  request; `Disconnect{code, reason}` - codes in [4000, 4999], [4500, 4999]
-  for no reconnect - closes the connection. Wrapped ones count.
+- `ProxyError{code, message, temporary}`, with a code in [400, 1999],
+  rejects the request. `Disconnect{code, reason}`, with a code in
+  [4000, 4999], closes the connection; codes in [4500, 4999] tell the client
+  not to reconnect. Wrapped ones count.
 - An answer the proxy type cannot carry, any other error, or a result which
   cannot be encoded fails the request with 500, reported to `on_error`:
   Centrifugo answers the client with a temporary internal error, and for
@@ -753,6 +772,8 @@ An SDK MUST have:
   audience or scope, as connection tokens, and from unpublished keys.
 - The vectors below.
 
+Section 15.2 lists what the tests check.
+
 ### 15.1 Vectors
 
 The vectors fix `iat`: to check them, an SDK needs a way to sign at a given
@@ -782,6 +803,95 @@ claims in any order.
 - connection: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsImV4cCI6MTcwMDAwMzYwMCwiaWF0IjoxNzAwMDAwMDAwfQ.HKZwmcYmHVbRESuYd4swVgAH7gg41giR57F_K5FEmEY`
 - subscription to `news`: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsImV4cCI6MTcwMDAwMzYwMCwiaWF0IjoxNzAwMDAwMDAwLCJjaGFubmVsIjoibmV3cyJ9.v_Quw-azNV1qFjm9ZQnkp6QBtK6LmtFxY74YcUHlJcA`
 
+### 15.2 Checklist
+
+Every rule an SDK MUST follow, one line each; the section holds the rule in
+full and why.
+
+Generation and the client:
+
+- [ ] Request and result types generated from the protos, never edited by
+  hand, checked current in CI; protos from a released tag (2).
+- [ ] `BoolValue` fields optional, with a helper; PRO-only methods marked
+  (2).
+- [ ] Safe for concurrent use; creation validates all it can, with
+  `InvalidConfig` naming the field and the fix (3.1).
+- [ ] `header` refuses credentials, `Content-Type` and invalid names and
+  values (3.1).
+- [ ] `POST {api_endpoint}/{method}`, never the legacy `/api` (3.2).
+- [ ] Redirects not followed (3.2).
+- [ ] The default HTTP client keeps connections alive in a pool sized for
+  concurrent calls (3.2).
+- [ ] Response bodies closed and drained to a bound; request bodies not
+  reused while the transport may read them (3.2).
+- [ ] One deadline per request; every timeout is the language's one timeout
+  error (3.2).
+- [ ] Every API method but `rpc`, on the client and on a batch; a request
+  type names its method (3.3).
+
+Payloads and validation:
+
+- [ ] Native values in, but in the languages of rule 7; a raw JSON type of
+  the SDK's, sent as the same JSON value (3.4).
+- [ ] A string is a JSON string; bytes refused outside the `b64` fields;
+  invalid JSON, NaN and infinities never sent (3.4).
+- [ ] A payload from a reply goes back unchanged as the same JSON value
+  (3.4).
+- [ ] Docs advise strings for integers which may pass 2^53 (3.4).
+- [ ] JavaScript: `bigIntegers`, off by default, refused with
+  `InvalidConfig` where it cannot work (3.4).
+- [ ] A request the client can tell is wrong is not sent: `InvalidRequest`;
+  no other Centrifugo rule copied (3.5).
+- [ ] `close` refuses new calls with `Closed` and waits for those in progress
+  (3.6).
+
+Errors and retries:
+
+- [ ] The error kinds of 4.1; an `Error` matched by code alone; a 401
+  matches `Unauthorized` (4.1).
+- [ ] The transport error mode returns the same `Error` as a 200 reply (4.2).
+- [ ] An error unless the call did everything asked (4.3).
+- [ ] `retryable` as in 4.4; docs: retry a publication only with the same
+  `idempotency_key` (4.4).
+- [ ] Docs explain idempotency keys (5).
+- [ ] `exponential_backoff` cannot overflow; `wait` ends with the deadline
+  (6).
+
+Broadcast, batch, automatic batching, commands, observability:
+
+- [ ] A broadcast's result holds every channel, whatever the error;
+  `replied` and `failed()` never disagree with it; a partial error does not
+  match its parts (7.1).
+- [ ] Where errors are exceptions, the exception carries the result (7.1).
+- [ ] A batch: options fixed at creation, pending handles, sent once,
+  `BatchSent` and `BatchNotSent`, a wrong reply count a `DecodeError`; docs
+  on sequential batches in PRO (7.2).
+- [ ] `broadcast_with_retry`: one key on every attempt, made when missing;
+  only the channels which may still succeed; no attempt after the deadline
+  (7.3).
+- [ ] Automatic batching: no timers, `/api/batch` with `parallel: true`,
+  every call its own reply, deadlines as in 8 (8).
+- [ ] `new_command` validates as a call does; docs on partitions (9).
+- [ ] `on_request` after every request, synchronously; no tracing library
+  (10).
+
+Tokens, endpoints, shared poll, proxy:
+
+- [ ] Keys, algorithms and JWTs as in 11.1.
+- [ ] An expiry required, "never" chosen explicitly, contradictions refused;
+  docs on `meta` (11.2).
+- [ ] `jwks` refuses no keys, HMAC keys, keys without an ID, an ID used
+  twice; its endpoint's headers; docs on rotation (11.3).
+- [ ] `api_token` refuses HMAC keys, keys without an ID, neither audience
+  nor scope, no expiry; docs: keys and an endpoint of their own (11.4).
+- [ ] HTTP handlers framework-free, no framework required (conventions).
+- [ ] Endpoints for client SDKs: statuses, headers and limits of 12; their
+  `Unauthorized` distinct from the API client's (12).
+- [ ] Shared poll signatures as in 13.
+- [ ] Proxy handlers: `POST` only, body limit, exactly one of result, error
+  and disconnect, 500 for anything else; docs: keep them internal (14).
+- [ ] The tests of 15, and the vectors of 15.1 (15).
+
 ## 16. Versions
 
 - An SDK's versions are its own: a new Centrifugo major brings a new SDK
@@ -791,3 +901,40 @@ claims in any order.
 - A field removed from the protos is a breaking change in typed languages:
   keep it as a deprecated field Centrifugo ignores until the SDK's next major.
 - An SDK following section 2 is ready for Centrifugo v7's exact JSON names.
+
+## 17. gocent's values
+
+The defaults and limits an SDK SHOULD use (conventions), in one place:
+
+| Value | gocent | Section |
+|---|---|---|
+| `request_timeout` | 10 s | 3.1 |
+| Default HTTP client | 256 connections to a host, all kept while idle; idle ones closed after 50 s | 3.2 |
+| Response bodies | drained up to 64 KiB; an error body read up to 4 KiB, 512 bytes kept | 3.2 |
+| `User-Agent` | `gocent/v4` | 3.2 |
+| `broadcast_with_retry` | `max_attempts` 2; waits `exponential_backoff(100 ms, 5 s)`; key `gocent-` + 26 base32 characters | 7.3 |
+| Automatic batching | `max_batch_size` 1000; `max_in_flight` suggested about 8 | 8 |
+| JWKS endpoint | `Cache-Control: public, max-age=300` | 11.3 |
+| `api_tokens` | TTL 5 minutes, each token reused for half of it | 11.4 |
+| Endpoints for client SDKs | bodies up to 1 MiB | 12 |
+| Proxy handlers | bodies up to 16 MiB, configurable | 14 |
+
+## 18. Changes
+
+### 0.1 - 2026-10-25
+
+The first version. Rules settled while it was reviewed:
+
+- JavaScript decodes integers past 2^53 as numbers by default, with the
+  `bigIntegers` option of centrifuge-js, refused where it cannot work; every
+  SDK's docs advise strings for them (3.4).
+- Go, Rust, Swift and Kotlin take one JSON type only (3.4, rule 7).
+- In a batch, a PRO method's code 104 SHOULD carry a hint that the server may
+  be Centrifugo OSS (4.1).
+- Exceptions carry a broadcast's or batch's result (7.1).
+- Retrying a single call belongs to the application (6).
+- An expiry is one value, in the language's sum type where it has one
+  (11.2).
+- HTTP handlers are framework-free (conventions).
+- The endpoints' `Unauthorized` is distinct from the API client's (12).
+- SDK versions are independent of Centrifugo's (16).
