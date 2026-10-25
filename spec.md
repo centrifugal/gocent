@@ -471,9 +471,10 @@ failed, does not match `UnknownChannel` either - `failed()` holds each
 channel's error. For one channel, `publish` is the call.
 `retryable_channels()` returns the channels a retry should go to.
 
-A partial error's message SHOULD say how many parts failed, that the others
-succeeded, and - when some failure is retryable - to retry only those parts,
-with the same `idempotency_key` (gocent: "broadcast: 2 of 50 channels
+A partial error's message SHOULD say how many parts failed and that the
+others succeeded. A broadcast's SHOULD also say - when some failure is
+retryable - to retry only those channels, with the same `idempotency_key`; a
+batch's commands differ from each other, so a batch has no such advice (gocent: "broadcast: 2 of 50 channels
 failed, 48 got the publication: ... (retry only RetryableChannels, with the
 same IdempotencyKey)"). Where an error usually means nothing happened, as an
 exception does, a caller retrying the whole broadcast would publish twice
@@ -671,8 +672,8 @@ when it is called.
 
 A JWKS endpoint answers `GET` and `HEAD` with `Content-Type:
 application/json` and a `Cache-Control` letting caches keep the keys for a
-while (section 17). Centrifugo itself caches them for its own time, whatever
-the header says.
+while (section 17), for caches between the two. Centrifugo reads no header
+of the reply: it keeps the keys for its own time, five minutes since v6.10.2.
 
 Docs MUST explain rotation: publish a new key next to the old one; sign with
 it only once every instance of the application publishes it - from an
@@ -950,7 +951,7 @@ Tokens, endpoints, shared poll, proxy:
 - [ ] `api_tokens` reuses a token for half its TTL, is safe for concurrent
   use, and refuses an expiry or issue time in its claims and a negative TTL
   (11.4).
-- [ ] HTTP handlers framework-free, no framework required (conventions).
+- [ ] HTTP handlers require no particular framework (conventions).
 - [ ] Endpoints for client SDKs: statuses, headers and limits of 12; their
   `Unauthorized` distinct from the API client's (12).
 - [ ] Shared poll signature endpoint: `keys` always an array, empty
@@ -996,8 +997,8 @@ here; the sections they belong to say what they are for.
 
 The first version. Rules settled while it was reviewed:
 
-- A partial error's message says the others succeeded, and how to retry
-  only the failed parts (7.1).
+- A partial error's message says the others succeeded; a broadcast's, how to
+  retry only the failed channels (7.1).
 - JavaScript decodes integers past 2^53 as numbers by default, with the
   `bigIntegers` option of centrifuge-js, refused where it cannot work; every
   SDK's docs advise strings for them (3.4).
