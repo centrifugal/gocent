@@ -35,6 +35,11 @@ type Error struct {
 	// with the same IdempotencyKey. Centrifugo versions before the field
 	// existed never set it; [Retryable] takes that into account.
 	Temporary bool `json:"temporary,omitzero"`
+
+	// proMethod names the method of a batch command when only Centrifugo PRO
+	// has it: Centrifugo OSS answers it with code 104 (not found), where a
+	// call of its own gets a 404 - see [HTTPError].
+	proMethod string
 }
 
 func (e *Error) Error() string {
@@ -49,7 +54,19 @@ func (e *Error) Error() string {
 	b.WriteString(" (code ")
 	b.WriteString(strconv.FormatUint(uint64(e.Code), 10))
 	b.WriteByte(')')
+	if e.proMethod != "" {
+		b.WriteString(" (" + e.proMethod + " is a Centrifugo PRO method: is the server Centrifugo OSS?)")
+	}
 	return b.String()
+}
+
+// inBatch returns e, the error of a batch command for method, with the hint
+// of a PRO method sent to Centrifugo OSS when it may be that.
+func (e *Error) inBatch(method string) *Error {
+	if e.Code == ErrNotFound.Code && methodNames[method] {
+		e.proMethod = method
+	}
+	return e
 }
 
 // Is reports whether target is an *Error with the same Code. Messages are not

@@ -491,7 +491,8 @@ func TestIntegrationSharedPollPublish(t *testing.T) {
 }
 
 // A Centrifugo PRO method succeeds against PRO, and against OSS fails with a
-// 404 which says the server is OSS.
+// 404 which says the server is OSS - in a batch, with code 104 which says so
+// too.
 func TestIntegrationProMethod(t *testing.T) {
 	c := realClient(t, gocent.AutoBatch{})
 	_, err := c.Connections(t.Context(), gocent.ConnectionsRequest{User: "nobody"})
@@ -501,6 +502,12 @@ func TestIntegrationProMethod(t *testing.T) {
 	var httpErr *gocent.HTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusNotFound || !strings.Contains(err.Error(), "Centrifugo PRO method") {
 		t.Errorf("got %v", err)
+	}
+	b := c.NewBatch(gocent.BatchOptions{})
+	conns := b.Connections(gocent.ConnectionsRequest{User: "nobody"})
+	_, _ = b.Send(t.Context())
+	if _, err := conns.Result(); !errors.Is(err, gocent.ErrNotFound) || !strings.Contains(err.Error(), "Centrifugo PRO method") {
+		t.Errorf("in a batch: got %v", err)
 	}
 }
 

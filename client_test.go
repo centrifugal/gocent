@@ -816,6 +816,31 @@ func TestNotFoundForProMethod(t *testing.T) {
 	}
 }
 
+// In a batch, Centrifugo OSS answers a PRO method's command with code 104
+// (not found) instead of a 404: its error says so too, and stays ErrNotFound.
+func TestNotFoundForProMethodInBatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"replies":[{"error":{"code":104,"message":"not found"}},{"error":{"code":104,"message":"not found"}}]}`))
+	}))
+	defer srv.Close()
+	c, err := gocent.New(gocent.Config{APIEndpoint: srv.URL + "/api", APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := c.NewBatch(gocent.BatchOptions{})
+	conns := b.Connections(gocent.ConnectionsRequest{User: "u"})
+	hist := b.History(gocent.HistoryRequest{Channel: "news"})
+	if _, err := b.Send(t.Context()); err == nil {
+		t.Fatal("no error")
+	}
+	if _, err := conns.Result(); !errors.Is(err, gocent.ErrNotFound) || !strings.Contains(err.Error(), "connections is a Centrifugo PRO method") {
+		t.Errorf("PRO method: got %v", err)
+	}
+	if _, err := hist.Result(); !errors.Is(err, gocent.ErrNotFound) || strings.Contains(err.Error(), "PRO") {
+		t.Errorf("OSS method: got %v", err)
+	}
+}
+
 // The default HTTP client opens at most 256 connections to a host and keeps
 // them all while idle: calls beyond that wait for a connection instead of
 // opening one, and a second burst reuses the first one's connections, so no

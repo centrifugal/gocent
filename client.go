@@ -181,6 +181,11 @@ type AutoBatch struct {
 	MaxInFlight int
 
 	// MaxBatchSize caps how many calls one batch carries. Zero means 1000.
+	// Centrifugo has no limit on an API request's size, but a proxy in
+	// front of it may: nginx refuses bodies over 1 MB by default
+	// (client_max_body_size), failing every call in the batch with a 413
+	// which none of them would get alone. With large payloads, lower
+	// MaxBatchSize or raise the proxy's limit.
 	MaxBatchSize int
 }
 

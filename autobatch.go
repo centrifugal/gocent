@@ -102,7 +102,7 @@ func batched[W any](ctx context.Context, b *batcher, req request, get func(*repl
 	case q.err != nil:
 		return zero, q.err
 	case q.reply.Error != nil:
-		return zero, q.reply.Error
+		return zero, q.reply.Error.inBatch(req.APIMethod())
 	}
 	return deref(get(&q.reply)), nil
 }

@@ -135,7 +135,7 @@ func (b *Batch) Send(ctx context.Context) (BatchResult, error) {
 		var err error
 		switch {
 		case replies[i].Error != nil:
-			err = replies[i].Error
+			err = replies[i].Error.inBatch(b.methods[i])
 		case b.checks[i] != nil:
 			err = b.checks[i](&replies[i])
 		}
