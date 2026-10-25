@@ -471,14 +471,14 @@ failed, does not match `UnknownChannel` either - `failed()` holds each
 channel's error. For one channel, `publish` is the call.
 `retryable_channels()` returns the channels a retry should go to.
 
-A partial error's message SHOULD say how many parts failed and that the
-others succeeded. A broadcast's SHOULD also say - when some failure is
-retryable - to retry only those channels, with the same `idempotency_key`; a
-batch's commands differ from each other, so a batch has no such advice (gocent: "broadcast: 2 of 50 channels
-failed, 48 got the publication: ... (retry only RetryableChannels, with the
-same IdempotencyKey)"). Where an error usually means nothing happened, as an
-exception does, a caller retrying the whole broadcast would publish twice
-into the channels which got it.
+A partial error's message SHOULD say how many parts failed and that the others
+succeeded. A broadcast's SHOULD also say - when some failure is retryable - to
+retry only those channels, with the same `idempotency_key`; a batch's commands
+differ from each other, so a batch has no such advice (gocent: "broadcast: 2
+of 50 channels failed, 48 got the publication: ... (retry only
+RetryableChannels, with the same IdempotencyKey)"). Where an error usually
+means nothing happened, as an exception does, a caller retrying the whole
+broadcast would publish twice into the channels which got it.
 
 In a language with exceptions, the exception raised for a broadcast or a
 batch carries its result (`err.result`): the same object a Go call returns
