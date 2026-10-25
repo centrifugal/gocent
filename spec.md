@@ -209,7 +209,7 @@ not list is decided the same way:
 |---|---|---|---|---|---|---|
 | Go | `encoding/json/v2` | raw JSON only (rule 7): `json.Marshal(v)` | `jsontext.Value` | `jsontext.Value` | `json.Unmarshal(v, &x)` | |
 | Python | `json` | `dict`, `list`, `str`, `int`, `float`, `bool`, `None`, or raw JSON | `RawJSON` of the SDK, holding `bytes` or `str` | decoded values | `Model.model_validate(data)` (pydantic) | encode with `allow_nan=False`: by default `json.dumps` writes `NaN` |
-| JavaScript, TypeScript | `JSON` | objects, arrays, `string`, `number`, `bigint`, `boolean`, `null`, or raw JSON | `rawJSON(text)` of the SDK - `JSON.rawJSON` takes primitives only | decoded values; integers past 2^53 as `bigint` | a cast, or a schema library | `JSON.stringify` writes NaN and infinities as `null` and drops `undefined`: refuse non-finite numbers. Integers past 2^53: the note below the table |
+| JavaScript, TypeScript | `JSON` | objects, arrays, `string`, `number`, `bigint`, `boolean`, `null`, or raw JSON | `rawJSON(text)` of the SDK - `JSON.rawJSON` takes primitives only | decoded values; integers past 2^53 as `bigint` with the `bigIntegers` option | a cast, or a schema library | `JSON.stringify` writes NaN and infinities as `null` and drops `undefined`: refuse non-finite numbers. Integers past 2^53: the note below the table |
 | PHP | `ext-json` | arrays, `stdClass`, scalars, `null`, `JsonSerializable`, or raw JSON | `RawJson` of the SDK, holding a `string` | objects: `json_decode($json, false)` | a DTO's constructor | `JSON_THROW_ON_ERROR`, `JSON_PRESERVE_ZERO_FRACTION`. Objects, not associative arrays: arrays turn `{}` and `{"0":"a"}` into JSON arrays when sent on. An empty object in a request is `new \stdClass()` - `[]` is an array |
 | Ruby | `json` 2.10+ (bundled from Ruby 4.0; a gem dependency before) | `Hash`, `Array`, `String`, `Integer`, `Float`, `true`, `false`, `nil`, or raw JSON | `JSON::Fragment` | `JSON.parse`: `Hash` with `String` keys | `Model.new(**h.transform_keys(&:to_sym))` | |
 | Java | Jackson, internal to the SDK | POJOs, `Map`, `List`, scalars, or raw JSON | `RawJson` of the SDK, holding the text | `RawJson`: `toString()` is the JSON | `raw.decode(Foo.class)` | Never Jackson types in the API: Jackson 3 moved them from `com.fasterxml.jackson` to `tools.jackson`, and an application uses one or the other. Disable `WRITE_NAN_AS_STRINGS`, which writes NaN as `"NaN"` by default |
@@ -217,7 +217,7 @@ not list is decided the same way:
 | C# | System.Text.Json | POCOs, anonymous types, `JsonNode`, `JsonElement`, or raw JSON | `RawJson` of the SDK, written with `Utf8JsonWriter.WriteRawValue` | `JsonElement` which outlives the reply (`Deserialize<JsonElement>`, or `Clone()` from a `JsonDocument`) | `element.Deserialize<Foo>()` | |
 | Rust | serde_json, feature `raw_value` | raw JSON only (rule 7): `serde_json::value::to_raw_value(&v)` | `Box<RawValue>` | `Box<RawValue>` | `serde_json::from_str::<Foo>(raw.get())` | serde_json writes NaN and infinities as `null`, which the SDK cannot tell from a null: the docs say so |
 | Swift | Foundation `Codable` | raw JSON only (rule 7): `JSONEncoder().encode(v)` | `Data` | `Data` | `JSONDecoder().decode(Foo.self, from: data)` | |
-| Dart | `dart:convert` | `Map<String, dynamic>`, `List`, `num`, `String`, `bool`, `null`, or raw JSON | `RawJson` of the SDK, holding a `String` | decoded `Object?` | `Foo.fromJson(map)` | on the web, integers past 2^53 lose precision: the docs say so |
+| Dart | `dart:convert` | `Map<String, dynamic>`, `List`, `num`, `String`, `bool`, `null`, or raw JSON | `RawJson` of the SDK, holding a `String` | decoded `Object?` | `Foo.fromJson(map)` | on the web, integers past 2^53 lose precision: the note below the table |
 | Elixir | `JSON` (Elixir 1.18+) | maps, lists, strings, numbers, booleans, `nil`, or raw JSON | `RawJSON` struct of the SDK, encoded through `JSON.Encoder` as its text | decoded terms, maps with string keys | a struct, or an Ecto embedded schema | |
 
 A language not listed follows the closest row: its standard or dominant JSON
@@ -225,15 +225,25 @@ library, kept out of the SDK's API when it has rival major versions; native
 values in and out where the language is dynamic, its JSON type where it is
 not; and a raw JSON type of the SDK's own where the library has none.
 
-**JavaScript: integers past 2^53.** A `number` holds integers exactly only up
-to 2^53, so a JavaScript SDK decodes larger ones as `bigint`, and encodes a
-`bigint` as a JSON number:
+**Integers past 2^53.** Many languages - JavaScript, and Dart on the web -
+decode JSON numbers as doubles, which hold integers exactly only up to 2^53.
+Docs MUST say: a payload SHOULD carry integers which may pass it - 64-bit
+IDs, say - as JSON strings, `{"id": "9007199254740993"}`, as proto3's JSON
+mapping does for `int64`. A string is one type in every message, read exactly
+in every language and tool, and kept through every round trip.
+
+**JavaScript: the `bigIntegers` option**, as in centrifuge-js, the client
+SDK, for applications which cannot change how their payloads are written.
+Off by default: payloads decode with plain `JSON.parse`, integers past 2^53
+rounded. With `bigIntegers: true`, integers a `number` cannot hold exactly
+decode as `bigint`, and every other number stays a `number`. A `bigint` in a
+request is always encoded as a JSON number, exactly:
 
 ```js
 const integerLiteral = /^-?\d+$/;
-function decode(text) {
+function decode(text, bigIntegers) {
   // An integer past 2^53 has 16 digits or more: most replies skip the reviver.
-  if (!hasSourceText || !/\d{16}/.test(text)) return JSON.parse(text);
+  if (!bigIntegers || !hasSourceText || !/\d{16}/.test(text)) return JSON.parse(text);
   return JSON.parse(text, (key, value, ctx) =>
     typeof value === "number" && !Number.isSafeInteger(value) && integerLiteral.test(ctx.source)
       ? BigInt(ctx.source) // the original digits, not the rounded number
@@ -255,21 +265,23 @@ function encode(value) {
   edge runtimes on V8.
 - `hasSourceText` is found once, at startup:
   `JSON.parse("1", (k, v, ctx) => ...)` sees whether `ctx.source` is `"1"`.
-  Without it the SDK decodes with plain `JSON.parse`, and integers past 2^53
-  round as they always did; the docs say so.
+  Without it the option does nothing, and integers past 2^53 round; the docs
+  say so.
 - Only integer literals outside the safe range become `bigint`: `1e300` and
-  `1.5` stay numbers, and so does every integer a `number` holds exactly. The
-  docs say that IDs past 2^53 come back as `bigint`, which does not mix with
-  `number` in arithmetic.
+  `1.5` stay numbers, and so does every integer a `number` holds exactly.
 - Without `JSON.rawJSON`, a `bigint` in a request fails with
   `InvalidRequest` before sending (rule 5), naming the runtimes which have it.
-- Decoding big integers is on, not an option: exact comes first, and a new SDK
-  has no applications whose types it would change. (centrifuge-js, the client
-  SDK, has existing applications, so there it is the `bigIntegers` option.) An
-  application which sends a payload on with a `JSON.stringify` of its own -
-  `res.json(pub.data)` - gets a `TypeError` for a `bigint` in it: loud, where
-  a rounded integer would be wrong silently. The docs show the replacer:
+- Off by default, because a field's type would then follow its value: a
+  `bigint` does not mix with a `number` - `id + 1` throws, `42n === 42` is
+  false, a `Map` keyed by one misses the other - and `JSON.stringify` refuses
+  it. The docs say so, and show the replacer for an application which sends
+  such a payload on with a `JSON.stringify` of its own:
   `(k, v) => typeof v === "bigint" ? JSON.rawJSON(String(v)) : v`.
+- Without the option, a payload from a reply sent back unchanged loses the
+  digits of an integer past 2^53; the round trip of rule 6 is exact for every
+  other value. The docs say so, next to the advice to use strings. This is
+  the one place where the spec puts agreeing with centrifuge-js ahead of
+  Exact: the same payload decodes the same way on both sides.
 - `JSON.rawJSON` takes primitives only, so the SDK's own `rawJSON` for an
   object or array is spliced in by the SDK: written as a unique placeholder
   string by `JSON.stringify`, then replaced by its text, checked to be valid
@@ -721,7 +733,8 @@ An SDK MUST have:
   raw JSON is sent as the same JSON value, number text kept; a string is a
   JSON string; bytes, NaN and invalid raw JSON are refused before sending; a
   payload from a reply sent back unchanged is the same JSON value - `{}`,
-  `{"0":"a"}`, an integer past 2^53 and a float with a zero fraction included.
+  `{"0":"a"}`, an integer past 2^53 (in JavaScript, with `bigIntegers`) and a
+  float with a zero fraction included.
 - Automatic batching under random concurrency, with a race detector where the
   language has one.
 - Integration tests of every OSS method against the `centrifugo/centrifugo`
