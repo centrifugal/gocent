@@ -38,6 +38,11 @@ Conventions:
   "matches" is its way to test one (`errors.Is`, `isinstance`, `instanceof`).
   `batch_context` and context values exist only where the language has
   request-scoped context.
+- **Blocking and async alike.** Where a language has both blocking and async
+  I/O in common use - Python, Rust - an SDK SHOULD provide both clients, with
+  the same methods, options, errors and behaviour: an application uses the
+  one its framework runs on. The parts which do no I/O - tokens, commands,
+  shared poll signatures, the core of the HTTP handlers - are shared.
 - **Numbers are gocent's.** Defaults and limits - timeouts, pool sizes, body
   limits, cache lifetimes, retry waits - are gocent's, listed in section 17:
   an SDK SHOULD use them, and MAY differ where its platform suggests
@@ -115,7 +120,7 @@ the fix.
 | `api_endpoint_func` | Returns the base URL per request, for discovered addresses | Exactly one of the two is set; its result is validated per request |
 | `api_key` | Sent as `X-API-Key` | No control characters but tab |
 | `bearer_token_func` | Returns a token sent as `Authorization: Bearer <token>`, per request | Not together with `api_key`: Centrifugo PRO judges a request with a bearer token by the token alone. An empty token or one with control characters fails the call before sending |
-| `http_client` | The HTTP client | Default: section 3.2 |
+| `http_client` | The HTTP client | Default: section 3.2. The SDK MUST NOT change a client the caller passed - its headers, pool or redirect policy: credentials and headers go on each request |
 | `request_timeout` | Bounds a call without a deadline of its own | A default (section 17); negative refused |
 | `header` | Extra headers on every request | MUST refuse `X-API-Key`, `Authorization`, `Content-Type`, invalid names and values with control characters but tab; `User-Agent` replaces the SDK's own; `Host`, with exactly one non-empty value, sets the request's host |
 | `auto_batch` | Section 8 | |
@@ -150,6 +155,10 @@ call.
   read it.
 - One timeout story: every request has exactly one deadline - the caller's, or
   `request_timeout` - and the default client sets no timeouts of its own.
+  Where the HTTP library's timeouts bound each operation rather than the
+  request - a connect, each read, as Python's `requests` and `httpx` do - the
+  SDK enforces the request's deadline itself, so that a slow reply cannot
+  take longer than it.
   Whichever way a request times out, the SDK MUST report it as the language's
   one timeout error (gocent: `errors.Is(err, context.DeadlineExceeded)`).
 - Replies are decoded as strictly as requests are encoded: case-sensitive
@@ -227,7 +236,7 @@ not list is decided the same way:
 | Language | JSON library | Requests take | Raw JSON | Replies give | Decode into own type | Pitfalls |
 |---|---|---|---|---|---|---|
 | Go | `encoding/json/v2` | raw JSON only (rule 7): `json.Marshal(v)` | `jsontext.Value` | `jsontext.Value` | `json.Unmarshal(v, &x)` | |
-| Python | `json` | `dict`, `list`, `str`, `int`, `float`, `bool`, `None`, or raw JSON | `RawJSON` of the SDK, holding `bytes` or `str` | decoded values | `Model.model_validate(data)` (pydantic) | encode with `allow_nan=False`: by default `json.dumps` writes `NaN` |
+| Python | `json` | `dict`, `list`, `str`, `int`, `float`, `bool`, `None`, or raw JSON | `RawJSON` of the SDK, holding `bytes` or `str` | decoded values | `Model.model_validate(data)` (pydantic) | encode with `allow_nan=False`: by default `json.dumps` writes `NaN`, and an HTTP library's own encoder may too (aiohttp's does). Request and result types are generated dataclasses: never pydantic models in the API, which would tie applications to one major version of it |
 | JavaScript, TypeScript | `JSON` | objects, arrays, `string`, `number`, `bigint`, `boolean`, `null`, or raw JSON | `rawJSON(text)` of the SDK - `JSON.rawJSON` takes primitives only | decoded values; integers past 2^53 as `bigint` with the `bigIntegers` option | a cast, or a schema library | `JSON.stringify` writes NaN and infinities as `null` and drops `undefined`: refuse non-finite numbers. Integers past 2^53: the note below the table |
 | PHP | `ext-json` | arrays, `stdClass`, scalars, `null`, `JsonSerializable`, or raw JSON | `RawJson` of the SDK, holding a `string` | objects: `json_decode($json, false)` | a DTO's constructor | `JSON_THROW_ON_ERROR`, `JSON_PRESERVE_ZERO_FRACTION`. Objects, not associative arrays: arrays turn `{}` and `{"0":"a"}` into JSON arrays when sent on. An empty object in a request is `new \stdClass()` - `[]` is an array |
 | Ruby | `json` 2.10+ (bundled from Ruby 4.0; a gem dependency before) | `Hash`, `Array`, `String`, `Integer`, `Float`, `true`, `false`, `nil`, or raw JSON | `JSON::Fragment` | `JSON.parse`: `Hash` with `String` keys | `Model.new(**h.transform_keys(&:to_sym))` | |
@@ -863,8 +872,10 @@ Generation and the client:
   concurrent calls (3.2).
 - [ ] Response bodies closed and drained to a bound; request bodies not
   reused while the transport may read them (3.2).
-- [ ] One deadline per request; every timeout is the language's one timeout
-  error (3.2).
+- [ ] One deadline per request, also where the HTTP library times each
+  operation; every timeout is the language's one timeout error (3.2).
+- [ ] A client the caller passed is not changed: credentials and headers go
+  on each request (3.1).
 - [ ] A reply which is not of the reply's shape is a `DecodeError` (3.2).
 - [ ] Every API method but `rpc`, on the client and on a batch; a request
   type names its method (3.3).
@@ -1014,3 +1025,7 @@ The first version. Rules settled while it was reviewed:
 - HTTP handlers are framework-free (conventions).
 - The endpoints' `Unauthorized` is distinct from the API client's (12).
 - SDK versions are independent of Centrifugo's (16).
+- Blocking and async clients alike where a language has both (conventions);
+  a caller's HTTP client is never changed (3.1); one deadline also over
+  per-operation timeouts (3.2); no pydantic types in a Python SDK's API
+  (3.4).
