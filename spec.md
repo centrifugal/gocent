@@ -13,10 +13,16 @@ does not list can be decided the same way. Section 15.2 lists every rule to
 check an SDK against; section 17 lists gocent's values.
 
 The spec has a version of its own, which an SDK's README names ("implements
-spec 1.0"). A new or stricter MUST or SHOULD is a new version: a minor one
-before 1.0, a major one after - an SDK implementing an older one is behind.
-Wording which changes no rule is no new version. 1.0 is released with gocent
-v4.
+spec 1.2"). From 1.0, released with gocent v4:
+
+- a major version makes an existing rule stricter, so that an SDK following
+  the previous one may no longer conform;
+- a minor version adds rules for something new (a new proxy type, a new
+  method), or new SHOULDs: an SDK following the previous one still conforms
+  to everything it implements;
+- wording which changes no rule is no new version.
+
+Before 1.0, every version which changes a rule is a minor one.
 
 Conventions:
 
@@ -32,10 +38,10 @@ Conventions:
   "matches" is its way to test one (`errors.Is`, `isinstance`, `instanceof`).
   `batch_context` and context values exist only where the language has
   request-scoped context.
-- **Numbers are gocent's.** Defaults and limits given here - timeouts, pool
-  sizes, body limits, cache lifetimes, retry waits - are gocent's: an SDK
-  SHOULD use them, and MAY differ where its platform suggests otherwise,
-  saying so in its docs.
+- **Numbers are gocent's.** Defaults and limits - timeouts, pool sizes, body
+  limits, cache lifetimes, retry waits - are gocent's, listed in section 17:
+  an SDK SHOULD use them, and MAY differ where its platform suggests
+  otherwise, saying so in its docs.
 - **HTTP handlers are framework-free.** The JWKS endpoint (section 11.3), the
   endpoints for client SDKs (section 12) and the proxy handlers (section 14)
   are given in HTTP terms: statuses, headers, body limits. An SDK SHOULD
@@ -110,7 +116,7 @@ the fix.
 | `api_key` | Sent as `X-API-Key` | No control characters but tab |
 | `bearer_token_func` | Returns a token sent as `Authorization: Bearer <token>`, per request | Not together with `api_key`: Centrifugo PRO judges a request with a bearer token by the token alone. An empty token or one with control characters fails the call before sending |
 | `http_client` | The HTTP client | Default: section 3.2 |
-| `request_timeout` | Bounds a call without a deadline of its own | Default 10 s; negative refused |
+| `request_timeout` | Bounds a call without a deadline of its own | A default (section 17); negative refused |
 | `header` | Extra headers on every request | MUST refuse `X-API-Key`, `Authorization`, `Content-Type`, invalid names and values with control characters but tab; `User-Agent` replaces the SDK's own; `Host`, with exactly one non-empty value, sets the request's host |
 | `auto_batch` | Section 8 | |
 | `on_request` | Section 10 | |
@@ -132,14 +138,14 @@ call.
   into a `GET`. A redirect is an `HTTPError` with a hint to check the endpoint.
   A caller's HTTP client with its own redirect policy is left to it.
 - The default HTTP client MUST keep connections alive with a pool sized for
-  concurrent use - gocent: 256 connections to a host, all kept while idle, so
-  a burst does not open connections only to close them; idle ones closed after
-  50 s, before load balancers commonly close theirs. It MUST NOT be the
+  concurrent use. It keeps every connection while idle, so that a burst does
+  not open connections only to close them, and closes idle ones before load
+  balancers commonly close theirs (values: section 17). It MUST NOT be the
   language's process-wide default client when that keeps few connections.
-- Every response body MUST be closed, and drained up to a bound (gocent:
-  64 KiB), so connections are reused. A body of an unexpected status is read
-  up to 4 KiB for a Centrifugo error, and 512 bytes of it kept for the
-  `HTTPError`.
+- Every response body MUST be closed, and drained up to a bound, so
+  connections are reused. A body of an unexpected status is read up to a
+  bound for a Centrifugo error, and the start of it kept for the `HTTPError`
+  (values: section 17).
 - A request body MUST NOT be reused or pooled while the transport may still
   read it.
 - One timeout story: every request has exactly one deadline - the caller's, or
@@ -498,19 +504,18 @@ mode which returns a partial result instead of raising: the core rule
 - sends only the channels which may still succeed: a channel which failed for
   good is not retried, and when only those are left it stops;
 - every attempt carries the same `idempotency_key`; without one, the SDK
-  makes a random one for the call (gocent: `gocent-` + 26 random base32
-  characters) and returns it in the result;
+  makes a random one for the call (section 17) and returns it in the result;
 - the result holds every channel's last outcome and how many attempts each
   took;
-- `max_attempts` - default 2, one retry; `attempt_timeout` bounds each
+- `max_attempts` - a default (section 17); `attempt_timeout` bounds each
   attempt while the call's deadline bounds all, waits included;
 - `on_attempt_err(attempt)` is called after each failed attempt a retry may
   fix, except the last, with the attempt number, its error, the channels to
   retry, the result so far and the key. It waits, logs or stops by returning
   an error; the call then returns both errors joined - or only the
   broadcast's error when that already wraps the callback's (a deadline, say).
-  Default: `wait(deadline, delay(attempt))` with the `delay` of
-  `exponential_backoff(100 ms, 5 s)`;
+  Default: `wait(deadline, delay(attempt))` with the `delay` of an
+  `exponential_backoff` (section 17);
 - a failure no retry can fix - a 401, an invalid request - stops it without
   calling `on_attempt_err`, and no attempt starts once the call's deadline has
   ended;
@@ -526,9 +531,9 @@ out.
 - `max_in_flight` (0 disables): below it, every call is sent at once, alone.
   There are no timers: nothing ever waits for a batch to fill.
 - At the cap, calls queue first in, first out, and when a request finishes
-  all those queued go out as one batch, at most `max_batch_size` (default
-  1000). Requests in flight never exceed `max_in_flight`. A larger
-  `max_in_flight` batches less; docs SHOULD suggest about 8.
+  all those queued go out as one batch, at most `max_batch_size`. Requests in
+  flight never exceed `max_in_flight`. A larger `max_in_flight` batches less;
+  docs SHOULD suggest a value (section 17).
 - Refused at creation: negative values; `max_batch_size` without
   `max_in_flight`; `max_batch_size` of 1.
 - An automatic batch always goes to `/api/batch`, even with one command, so
@@ -643,7 +648,9 @@ twice. A JWKS endpoint built from keys it refuses fails when it is built, not
 when it is called.
 
 A JWKS endpoint answers `GET` and `HEAD` with `Content-Type:
-application/json` and `Cache-Control: public, max-age=300`.
+application/json` and a `Cache-Control` letting caches keep the keys for a
+while (section 17). Centrifugo itself caches them for its own time, whatever
+the header says.
 
 Docs MUST explain rotation: publish a new key next to the old one; sign with
 it only once every instance of the application publishes it - from an
@@ -662,7 +669,7 @@ audience nor scope, a missing expiry.
 
 `api_tokens` is a token source for `bearer_token_func`: it signs with a key
 (or the key a function returns, for rotation), reuses each token for half its
-TTL (the TTL defaults to 5 minutes), and is safe for concurrent use. It
+TTL (its default: section 17), and is safe for concurrent use. It
 refuses an expiry or issue time set in its claims, and a negative TTL.
 
 Docs MUST say: PRO accepts a token signed with any key of its JWKS endpoint,
@@ -687,7 +694,7 @@ required when the endpoint is built.
   SDK's credentials (gocent: `token.ErrUnauthorized`, `gocent.ErrUnauthorized`).
 - Any other error: 500, reported to `on_error` - client SDKs retry.
 - A malformed request: 400, reported to `on_error`; a wrong method: 405 with
-  `Allow`. Bodies are read up to 1 MiB.
+  `Allow`. Bodies are read up to a limit (section 17).
 
 | Endpoint | Request | Answer |
 |---|---|---|
@@ -726,9 +733,9 @@ deadline ending with the proxy's timeout) and returning a result or an error.
 | shared poll refresh; channel state (PRO) | result, `ProxyError` (a failure) |
 | refresh, sub refresh; cache empty (PRO) | result only (refresh and sub refresh end through the result's `expired`) |
 
-- A handler takes `POST` only (405 with `Allow` otherwise), reads up to 16 MiB
-  (configurable), and answers a malformed request with 400. Its function is
-  required when the handler is built.
+- A handler takes `POST` only (405 with `Allow` otherwise), reads bodies up
+  to a configurable limit (section 17), and answers a malformed request with
+  400. Its function is required when the handler is built.
 - It answers with exactly one of result, error and disconnect: Centrifugo
   takes a response with none as accepting the request as sent.
 - `ProxyError{code, message, temporary}`, with a code in [400, 1999],
@@ -806,16 +813,25 @@ claims in any order.
 ### 15.2 Checklist
 
 Every rule an SDK MUST follow, one line each; the section holds the rule in
-full and why.
+full and why. A rule added to a section is added here too.
 
 Generation and the client:
 
 - [ ] Request and result types generated from the protos, never edited by
   hand, checked current in CI; protos from a released tag (2).
+- [ ] Field names on the wire exactly the protos', case-sensitive; zero
+  values not sent (2).
 - [ ] `BoolValue` fields optional, with a helper; PRO-only methods marked
   (2).
 - [ ] Safe for concurrent use; creation validates all it can, with
   `InvalidConfig` naming the field and the fix (3.1).
+- [ ] Exactly one of `api_endpoint` and `api_endpoint_func`; an endpoint
+  an absolute `http`/`https` URL with a host, without query, fragment or
+  credentials, not ending in a method name; `api_key` and
+  `bearer_token_func` not together (3.1).
+- [ ] An endpoint from `api_endpoint_func` validated per request; an empty
+  bearer token, or one with control characters, fails the call before
+  sending (3.1).
 - [ ] `header` refuses credentials, `Content-Type` and invalid names and
   values (3.1).
 - [ ] `POST {api_endpoint}/{method}`, never the legacy `/api` (3.2).
@@ -826,6 +842,7 @@ Generation and the client:
   reused while the transport may read them (3.2).
 - [ ] One deadline per request; every timeout is the language's one timeout
   error (3.2).
+- [ ] A reply which is not of the reply's shape is a `DecodeError` (3.2).
 - [ ] Every API method but `rpc`, on the client and on a batch; a request
   type names its method (3.3).
 
@@ -847,15 +864,15 @@ Payloads and validation:
 
 Errors and retries:
 
-- [ ] The error kinds of 4.1; an `Error` matched by code alone; a 401
-  matches `Unauthorized` (4.1).
+- [ ] The error kinds of 4.1; an `Error` matched by code alone; an unknown
+  code still an `Error`; a 401 matches `Unauthorized` (4.1).
 - [ ] The transport error mode returns the same `Error` as a 200 reply (4.2).
 - [ ] An error unless the call did everything asked (4.3).
 - [ ] `retryable` as in 4.4; docs: retry a publication only with the same
   `idempotency_key` (4.4).
 - [ ] Docs explain idempotency keys (5).
-- [ ] `exponential_backoff` cannot overflow; `wait` ends with the deadline
-  (6).
+- [ ] `exponential_backoff` clamps its arguments as in 6 and cannot
+  overflow; `wait` ends with the deadline (6).
 
 Broadcast, batch, automatic batching, commands, observability:
 
@@ -866,30 +883,62 @@ Broadcast, batch, automatic batching, commands, observability:
 - [ ] A batch: options fixed at creation, pending handles, sent once,
   `BatchSent` and `BatchNotSent`, a wrong reply count a `DecodeError`; docs
   on sequential batches in PRO (7.2).
+- [ ] An invalid command fails the whole batch before sending, naming its
+  index; an empty batch succeeds, but returns `Closed` from a closed client;
+  a command added to a sent batch refused loudly (7.2).
 - [ ] `broadcast_with_retry`: one key on every attempt, made when missing;
-  only the channels which may still succeed; no attempt after the deadline
+  only the channels which may still succeed; no attempt after the deadline;
+  a negative `max_attempts` or `attempt_timeout` refused before any attempt
   (7.3).
-- [ ] Automatic batching: no timers, `/api/batch` with `parallel: true`,
-  every call its own reply, deadlines as in 8 (8).
+- [ ] Automatic batching, below `max_in_flight`: every call sent at once,
+  alone; no timers, nothing waits for a batch to fill (8).
+- [ ] At the cap: calls queue first in, first out, and go out together when
+  a request finishes, at most `max_batch_size`; requests in flight never
+  exceed `max_in_flight` (8).
+- [ ] Refused at creation: negative values, `max_batch_size` without
+  `max_in_flight`, `max_batch_size` of 1 (8).
+- [ ] An automatic batch goes to `/api/batch` with `parallel: true`, even
+  with one command; every call gets exactly its own reply; a batch failing as
+  a whole fails every call in it, none retried alone (8).
+- [ ] A command encoded before it queues; nothing reads a request after its
+  call returned (8).
+- [ ] A call whose deadline ends while queued leaves without its command
+  being sent (8).
+- [ ] A batch never runs on a caller's context: until the latest deadline of
+  its calls, and at least `request_timeout` from when it is sent; a reply
+  arriving as a deadline ends is returned, not a timeout (8).
+- [ ] Callers' context values reach a batch only through `batch_context`
+  (8).
 - [ ] `new_command` validates as a call does; docs on partitions (9).
 - [ ] `on_request` after every request, synchronously; no tracing library
   (10).
 
 Tokens, endpoints, shared poll, proxy:
 
-- [ ] Keys, algorithms and JWTs as in 11.1.
+- [ ] Keys, algorithms and JWTs as in 11.1; ECDSA curves other than P-256,
+  P-384 and P-521 refused; a payload claim which is not valid JSON fails
+  signing (11.1).
 - [ ] An expiry required, "never" chosen explicitly, contradictions refused;
-  docs on `meta` (11.2).
+  `channels` and `subs` not both; docs on `meta` (11.2).
 - [ ] `jwks` refuses no keys, HMAC keys, keys without an ID, an ID used
   twice; its endpoint's headers; docs on rotation (11.3).
 - [ ] `api_token` refuses HMAC keys, keys without an ID, neither audience
-  nor scope, no expiry; docs: keys and an endpoint of their own (11.4).
+  nor scope, no expiry, an empty scope or one with a space; docs: keys and
+  an endpoint of their own (11.4).
+- [ ] `api_tokens` reuses a token for half its TTL, is safe for concurrent
+  use, and refuses an expiry or issue time in its claims and a negative TTL
+  (11.4).
 - [ ] HTTP handlers framework-free, no framework required (conventions).
 - [ ] Endpoints for client SDKs: statuses, headers and limits of 12; their
   `Unauthorized` distinct from the API client's (12).
+- [ ] Shared poll signature endpoint: `keys` always an array, empty
+  included; a key the client did not ask for fails the request with 500
+  (12).
 - [ ] Shared poll signatures as in 13.
 - [ ] Proxy handlers: `POST` only, body limit, exactly one of result, error
   and disconnect, 500 for anything else; docs: keep them internal (14).
+- [ ] Proxy payloads as in 3.4; binary mode: payloads in the `b64` fields
+  (14).
 - [ ] The tests of 15, and the vectors of 15.1 (15).
 
 ## 16. Versions
@@ -904,18 +953,18 @@ Tokens, endpoints, shared poll, proxy:
 
 ## 17. gocent's values
 
-The defaults and limits an SDK SHOULD use (conventions), in one place:
+The defaults and limits an SDK SHOULD use (conventions). They are given only
+here; the sections they belong to say what they are for.
 
 | Value | gocent | Section |
 |---|---|---|
 | `request_timeout` | 10 s | 3.1 |
 | Default HTTP client | 256 connections to a host, all kept while idle; idle ones closed after 50 s | 3.2 |
 | Response bodies | drained up to 64 KiB; an error body read up to 4 KiB, 512 bytes kept | 3.2 |
-| `User-Agent` | `gocent/v4` | 3.2 |
-| `broadcast_with_retry` | `max_attempts` 2; waits `exponential_backoff(100 ms, 5 s)`; key `gocent-` + 26 base32 characters | 7.3 |
+| `broadcast_with_retry` | `max_attempts` 2 (one retry); waits `exponential_backoff(100 ms, 5 s)`; key `gocent-` + 26 base32 characters | 7.3 |
 | Automatic batching | `max_batch_size` 1000; `max_in_flight` suggested about 8 | 8 |
 | JWKS endpoint | `Cache-Control: public, max-age=300` | 11.3 |
-| `api_tokens` | TTL 5 minutes, each token reused for half of it | 11.4 |
+| `api_tokens` | TTL 5 minutes | 11.4 |
 | Endpoints for client SDKs | bodies up to 1 MiB | 12 |
 | Proxy handlers | bodies up to 16 MiB, configurable | 14 |
 
