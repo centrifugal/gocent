@@ -25,6 +25,14 @@ Conventions:
   sizes, body limits, cache lifetimes, retry waits - are gocent's: an SDK
   SHOULD use them, and MAY differ where its platform suggests otherwise,
   saying so in its docs.
+- **HTTP handlers are framework-free.** The JWKS endpoint (section 11.3), the
+  endpoints for client SDKs (section 12) and the proxy handlers (section 14)
+  are given in HTTP terms: statuses, headers, body limits. An SDK SHOULD
+  implement each as one function, `(method, headers, body) -> (status,
+  headers, body)`, holding all of that behaviour and tested once, with thin
+  adapters for its language's frameworks: gocent's are `http.Handler`s;
+  Python's would be WSGI and ASGI, JavaScript's a Fetch `Request -> Response`
+  and Express middleware. An SDK MUST NOT require one framework.
 
 ## 1. Scope
 
@@ -317,8 +325,10 @@ called again. With its default HTTP client the SDK then closes idle connections.
   endpoint; a 404 for a PRO-only method - the server is likely Centrifugo OSS;
   any other 404 - is the endpoint the API base URL; a 401 - check the
   credentials. In a batch, a PRO-only command sent to Centrifugo OSS fails
-  with code 104 (not found) instead of a 404; the SDK adds no hint there,
-  since 104 has other causes too.
+  with code 104 (not found) instead of a 404. Its error stays an `Error` with
+  code 104 - matching it does not change with how the call was sent - and
+  SHOULD carry a softer hint, since 104 has other causes too: the server may
+  be Centrifugo OSS.
 
 ### 4.2 Transport error mode
 
@@ -338,8 +348,10 @@ code. Broadcast and batch apply it too (section 7).
 
 ### 4.4 Retryable
 
-`retryable(err)` reports whether retrying may succeed: the error came from a
-temporary condition, not from the request.
+`retryable(err)` reports whether a new attempt, with time left, may succeed:
+the error came from a temporary condition, not from the request. A call's
+own deadline counts - an outer loop, a queue worker say, retries with a new
+one - while a retry under the deadline which ended fails at once.
 
 Retryable:
 
@@ -379,6 +391,12 @@ The SDK's docs MUST explain, wherever retries are:
   the first failure, doubling, capped at `limit`, each delay a uniformly
   random time in `[d/2, d]`. A negative base counts as 0, a limit below base
   as base, an attempt below 1 as 1; doubling MUST NOT overflow.
+- Retrying a single call, such as `publish`, belongs to the application: a
+  loop of the call, `retryable(err)` and `wait(deadline, delay(attempt))`,
+  with the same `idempotency_key` on every attempt. Docs SHOULD show it
+  (gocent: `ExampleRetryable`).
+  Broadcast has a helper of its own (section 7.3) because retrying only the
+  channels which may still succeed is easy to get wrong.
 - `wait(deadline, d)` waits for `d` or until the call's deadline or
   cancellation, and returns that error - never a sleep the deadline cannot
   end.
@@ -403,6 +421,12 @@ They MUST never disagree with the error. A partial error MUST NOT match its
 parts' errors: one unknown channel among many does not make the broadcast
 match `UnknownChannel`. `retryable_channels()` returns the channels a retry
 should go to.
+
+In a language with exceptions, the exception raised for a broadcast or a
+batch carries its result (`err.result`): the same object a Go call returns
+beside its error, every channel's or command's outcome included. There is no
+mode which returns a partial result instead of raising: the core rule
+(section 4.3) holds in every language.
 
 ### 7.2 Batch
 
@@ -486,6 +510,10 @@ out.
   queue still gets a full timeout. A reply arriving as a caller's deadline
   ends is returned, not a timeout.
 - Calls made one after another keep their order: each waits for its reply.
+- Docs SHOULD say that a proxy in front of Centrifugo may limit a request's
+  size (nginx: 1 MB by default) where Centrifugo does not, failing a whole
+  batch with a 413 its calls would not get alone; `max_batch_size` or the
+  proxy's limit is the fix.
 - Callers' context values reach a batch only through `batch_context`.
 
 ## 9. Commands for async consumers
@@ -542,10 +570,8 @@ JSON fails at signing.
 | SDK field | Claim | Notes |
 |---|---|---|
 | `user` | `sub` | Empty: anonymous |
-| `expires_at` | `exp` | Required, unless `no_expiry` |
-| `no_expiry` | `exp` left out | Explicit: the token is accepted forever |
-| `connection_expires_at` / `subscription_expires_at` | `expire_at` | When the connection or subscription expires, instead of at `exp` |
-| `connection_no_expiry` / `subscription_no_expiry` | `expire_at: 0` | Never expires; `exp` still bounds the token |
+| expiry | `exp` | Required: a time, or never - `exp` left out, the token accepted forever |
+| connection / subscription expiry | `expire_at` | Unset: at `exp`; a time: the connection or subscription expires then; never: `expire_at: 0`, `exp` still bounds the token |
 | `issued_at` | `iat` | Default now |
 | `id` | `jti` | For PRO token revocation |
 | `audience`, `issuer` | `aud`, `iss` | |
@@ -556,10 +582,13 @@ JSON fails at signing.
 | `channel` (subscription) | `channel` | Required |
 | `data` / `b64data`, `override`, `allow`, `server_tags_filter` (subscription) | same names | `allow` and `server_tags_filter`: PRO |
 
-Signing MUST refuse claims without an expiry - neither `expires_at` nor
-`no_expiry` - and contradictions: both of them, or both of a pair of
-`*_expires_at` and `*_no_expiry`. Claims are written with the exact names
-above.
+Each expiry is one value, and "never" is always chosen explicitly. An SDK
+SHOULD use its language's sum type for it (an enum, a union), so that a
+missing or contradicting expiry cannot be written. Where the language has
+none, as Go, it is fields - gocent: `ExpiresAt` and `NoExpiry`,
+`ConnectionExpiresAt` and `ConnectionNoExpiry`, the subscription's alike - and
+signing MUST refuse a missing token expiry and both fields of a pair set.
+Claims are written with the exact names above.
 
 ### 11.3 JWKS
 
@@ -612,7 +641,10 @@ required when the endpoint is built.
 - Success: a JSON object, `Content-Type: application/json`, `Cache-Control:
   no-store`.
 - The application's `Unauthorized` error (also wrapped): 403 - client SDKs
-  stop asking, and disconnect or unsubscribe.
+  stop asking, and disconnect or unsubscribe. It is the endpoints' own,
+  named after client SDKs' `UnauthorizedError`, and distinct from the API
+  client's `Unauthorized` (section 4.1), which means Centrifugo refused the
+  SDK's credentials (gocent: `token.ErrUnauthorized`, `gocent.ErrUnauthorized`).
 - Any other error: 500, reported to `on_error` - client SDKs retry.
 - A malformed request: 400, reported to `on_error`; a wrong method: 405 with
   `Allow`. Bodies are read up to 1 MiB.
@@ -729,8 +761,10 @@ claims in any order.
 
 ## 16. Versions
 
-- An SDK's major version follows Centrifugo's major API: gocent v4 is for
-  Centrifugo v6. The supported Centrifugo versions are stated in the README.
+- An SDK's versions are its own: a new Centrifugo major brings a new SDK
+  major, and an SDK MAY release a major of its own between them. The README
+  holds a table of the Centrifugo versions each SDK major supports (gocent v4:
+  Centrifugo v6).
 - A field removed from the protos is a breaking change in typed languages:
   keep it as a deprecated field Centrifugo ignores until the SDK's next major.
 - An SDK following section 2 is ready for Centrifugo v7's exact JSON names.
