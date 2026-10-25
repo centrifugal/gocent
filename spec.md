@@ -158,7 +158,9 @@ it out costs the application as little as its language allows. Where the
 choices pull apart, they are settled in this order:
 
 - **Exact** - a payload is never changed on the way: not `{}` into `[]`,
-  not an integer past 2^53, not `1.0` into `1`, not NaN into `null`.
+  not an integer past 2^53, not `1.0` into `1`, not NaN into `null`. (Where
+  the language's numbers are doubles, integers past 2^53 are the exception:
+  the note below the table.)
 - **Stable** - the SDK's API holds no type tying applications to one major
   version of a dependency.
 - **Idiomatic** - the types are those the language's developers already
@@ -225,12 +227,14 @@ library, kept out of the SDK's API when it has rival major versions; native
 values in and out where the language is dynamic, its JSON type where it is
 not; and a raw JSON type of the SDK's own where the library has none.
 
-**Integers past 2^53.** Many languages - JavaScript, and Dart on the web -
-decode JSON numbers as doubles, which hold integers exactly only up to 2^53.
-Docs MUST say: a payload SHOULD carry integers which may pass it - 64-bit
+**Integers past 2^53.** JavaScript, and Dart on the web, decode JSON numbers
+as doubles, which hold integers exactly only up to 2^53 - in browsers running
+a client SDK too, whatever language published the payload. So every SDK's
+docs MUST say: a payload SHOULD carry integers which may pass it - 64-bit
 IDs, say - as JSON strings, `{"id": "9007199254740993"}`, as proto3's JSON
-mapping does for `int64`. A string is one type in every message, read exactly
-in every language and tool, and kept through every round trip.
+mapping does for `int64` (gocent: the `json:",string"` option). A string is
+one type in every message, read exactly in every language and tool, and kept
+through every round trip.
 
 **JavaScript: the `bigIntegers` option**, as in centrifuge-js, the client
 SDK, for applications which cannot change how their payloads are written.
@@ -265,8 +269,11 @@ function encode(value) {
   edge runtimes on V8.
 - `hasSourceText` is found once, at startup:
   `JSON.parse("1", (k, v, ctx) => ...)` sees whether `ctx.source` is `"1"`.
-  Without it the option does nothing, and integers past 2^53 round; the docs
-  say so.
+  Without it, `bigIntegers: true` fails creating the client with
+  `InvalidConfig`, naming the runtimes which have it: a server's runtime is
+  its owner's choice, and one asking for exact integers must not get rounded
+  ones. (centrifuge-js ignores the option there instead: a browser is the
+  visitor's choice, and refusing would break the page.)
 - Only integer literals outside the safe range become `bigint`: `1e300` and
   `1.5` stay numbers, and so does every integer a `number` holds exactly.
 - Without `JSON.rawJSON`, a `bigint` in a request fails with
@@ -733,8 +740,8 @@ An SDK MUST have:
   raw JSON is sent as the same JSON value, number text kept; a string is a
   JSON string; bytes, NaN and invalid raw JSON are refused before sending; a
   payload from a reply sent back unchanged is the same JSON value - `{}`,
-  `{"0":"a"}`, an integer past 2^53 (in JavaScript, with `bigIntegers`) and a
-  float with a zero fraction included.
+  `{"0":"a"}`, an integer past 2^53 (in JavaScript only with `bigIntegers`;
+  not in Dart on the web) and a float with a zero fraction included.
 - Automatic batching under random concurrency, with a race detector where the
   language has one.
 - Integration tests of every OSS method against the `centrifugo/centrifugo`

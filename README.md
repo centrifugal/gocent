@@ -56,6 +56,10 @@ result struct, with fields mapping one to one onto the
 [API](https://centrifugal.dev/docs/server/server_api). Create the `Client` once
 and share it: it is safe for concurrent use.
 
+Write integers which may pass 2^53 - an `int64` ID, say - as JSON strings,
+with the `json:",string"` option: browsers and JavaScript backends decode JSON
+numbers as doubles, and round larger integers silently.
+
 ## Timeouts
 
 Each call is bounded by its context, so calls get their own timeouts:

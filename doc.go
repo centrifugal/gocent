@@ -23,6 +23,10 @@
 // encoding/json/v2, or pass bytes you already have. It is checked before
 // sending, so a malformed payload never reaches Centrifugo.
 //
+// Write integers which may pass 2^53 - an int64 ID, say - as JSON strings,
+// with the `json:",string"` option: browsers and JavaScript backends decode
+// JSON numbers as doubles, and round larger integers silently.
+//
 // The methods most applications need:
 //
 //   - [Client.Publish] and [Client.Broadcast] send data into one channel or many.
