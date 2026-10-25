@@ -53,7 +53,9 @@ func TestBroadcastPartialFailure(t *testing.T) {
 	if !errors.Is(be.Failed[0].Err, gocent.ErrUnknownChannel) || !errors.Is(be.Failed[1].Err, gocent.ErrNotAvailable) {
 		t.Errorf("channel errors %v, %v", be.Failed[0].Err, be.Failed[1].Err)
 	}
-	want := "gocent: broadcast: 2 of 4 channels failed: bad:1: unknown channel (code 102); full:1: not available (code 108)"
+	// The message says the others got the publication; neither failure is
+	// retryable, so it does not suggest a retry.
+	want := "gocent: broadcast: 2 of 4 channels failed, 2 got the publication: bad:1: unknown channel (code 102); full:1: not available (code 108)"
 	if err.Error() != want {
 		t.Errorf("message %q\nwant    %q", err, want)
 	}

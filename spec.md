@@ -465,6 +465,14 @@ parts' errors: one unknown channel among many does not make the broadcast
 match `UnknownChannel`. `retryable_channels()` returns the channels a retry
 should go to.
 
+A partial error's message SHOULD say how many parts failed, that the others
+succeeded, and - when some failure is retryable - to retry only those parts,
+with the same `idempotency_key` (gocent: "broadcast: 2 of 50 channels
+failed, 48 got the publication: ... (retry only RetryableChannels, with the
+same IdempotencyKey)"). Where an error usually means nothing happened, as an
+exception does, a caller retrying the whole broadcast would publish twice
+into the channels which got it.
+
 In a language with exceptions, the exception raised for a broadcast or a
 batch carries its result (`err.result`): the same object a Go call returns
 beside its error, every channel's or command's outcome included. There is no
@@ -974,6 +982,8 @@ here; the sections they belong to say what they are for.
 
 The first version. Rules settled while it was reviewed:
 
+- A partial error's message says the others succeeded, and how to retry
+  only the failed parts (7.1).
 - JavaScript decodes integers past 2^53 as numbers by default, with the
   `bigIntegers` option of centrifuge-js, refused where it cannot work; every
   SDK's docs advise strings for them (3.4).

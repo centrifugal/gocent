@@ -297,12 +297,12 @@ func TestErrorMessages(t *testing.T) {
 		{&gocent.BatchFailedCommandsError{Total: 3, Failed: []gocent.CommandError{
 			{Index: 0, Method: "publish", Err: gocent.ErrUnknownChannel},
 			{Index: 2, Method: "history", Err: gocent.ErrNotAvailable},
-		}}, "gocent: batch: 2 of 3 commands failed: #0 publish: unknown channel (code 102); #2 history: not available (code 108)"},
+		}}, "gocent: batch: 2 of 3 commands failed, 1 succeeded: #0 publish: unknown channel (code 102); #2 history: not available (code 108)"},
 		{&gocent.BatchFailedCommandsError{Total: 1, Failed: []gocent.CommandError{
 			{Index: 0, Method: "broadcast", Err: &gocent.BroadcastFailedChannelsError{Total: 2, Failed: []gocent.ChannelResult{
 				{Channel: "a", Err: gocent.ErrUnknownChannel},
 			}}},
-		}}, "gocent: batch: 1 of 1 commands failed: #0 broadcast: 1 of 2 channels failed: a: unknown channel (code 102)"},
+		}}, "gocent: batch: 1 of 1 commands failed: #0 broadcast: 1 of 2 channels failed, 1 got the publication: a: unknown channel (code 102)"},
 	} {
 		if got := tc.err.Error(); got != tc.want {
 			t.Errorf("%T message\n got %q\nwant %q", tc.err, got, tc.want)

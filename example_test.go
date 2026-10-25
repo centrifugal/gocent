@@ -105,7 +105,7 @@ func ExampleBatch() {
 	stats := b.PresenceStats(gocent.PresenceStatsRequest{Channel: "news"})
 
 	if _, err := b.Send(context.Background()); err != nil {
-		log.Print(err) // gocent: batch: 1 of 2 commands failed: ...
+		log.Print(err) // gocent: batch: 1 of 2 commands failed, 1 succeeded: ...
 	}
 	if res, err := pub.Result(); err == nil {
 		log.Printf("published at offset %d", res.Offset)

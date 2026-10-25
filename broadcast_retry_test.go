@@ -102,6 +102,10 @@ func TestBroadcastWithRetryGivesUp(t *testing.T) {
 	if !ok || len(be.Failed) != 1 || be.Failed[0].Channel != "flaky" || !gocent.Retryable(err) {
 		t.Fatalf("got %v, want a retryable BroadcastFailedChannelsError for flaky", err)
 	}
+	// The message says how to retry what is left.
+	if !strings.HasSuffix(err.Error(), "(retry only RetryableChannels, with the same IdempotencyKey)") {
+		t.Errorf("message %q", err)
+	}
 	// The channel which succeeded in the first attempt keeps its result.
 	if res.Channels[0].Err != nil || res.Channels[0].Result.Offset != 1 {
 		t.Errorf("channel a: %+v", res.Channels[0])

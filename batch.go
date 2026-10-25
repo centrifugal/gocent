@@ -291,7 +291,7 @@ type CommandError struct {
 }
 
 func (e *BatchFailedCommandsError) Error() string {
-	return failuresMessage("batch", "commands", len(e.Failed), e.Total, func(b *strings.Builder, i int) (string, error) {
+	return failuresMessage("batch", "commands", "succeeded", len(e.Failed), e.Total, func(b *strings.Builder, i int) (string, error) {
 		f := e.Failed[i]
 		b.WriteString("#")
 		b.WriteString(strconv.Itoa(f.Index))
@@ -302,11 +302,12 @@ func (e *BatchFailedCommandsError) Error() string {
 }
 
 // failuresMessage is the message of an error listing the failed parts of a
-// request - "gocent: batch: 2 of 3 commands failed: ...". It names at most
-// maxErrorItems of them; label writes the name of the i-th and returns its
-// error, and the prefix its message may repeat - "broadcast" for a broadcast
-// in a batch, whose message starts with "broadcast: ".
-func failuresMessage(op, parts string, failed, total int, label func(b *strings.Builder, i int) (string, error)) string {
+// request - "gocent: batch: 2 of 3 commands failed, 1 succeeded: ...", rest
+// saying what the others did. It names at most maxErrorItems of them; label
+// writes the name of the i-th and returns its error, and the prefix its
+// message may repeat - "broadcast" for a broadcast in a batch, whose message
+// starts with "broadcast: ".
+func failuresMessage(op, parts, rest string, failed, total int, label func(b *strings.Builder, i int) (string, error)) string {
 	var b strings.Builder
 	b.WriteString("gocent: ")
 	b.WriteString(op)
@@ -317,6 +318,12 @@ func failuresMessage(op, parts string, failed, total int, label func(b *strings.
 	b.WriteString(" ")
 	b.WriteString(parts)
 	b.WriteString(" failed")
+	if failed < total {
+		b.WriteString(", ")
+		b.WriteString(strconv.Itoa(total - failed))
+		b.WriteString(" ")
+		b.WriteString(rest)
+	}
 	for i := range failed {
 		if i == maxErrorItems {
 			b.WriteString("; and ")

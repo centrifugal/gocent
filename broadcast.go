@@ -194,10 +194,14 @@ type BroadcastFailedChannelsError struct {
 }
 
 func (e *BroadcastFailedChannelsError) Error() string {
-	return failuresMessage("broadcast", "channels", len(e.Failed), e.Total, func(b *strings.Builder, i int) (string, error) {
+	msg := failuresMessage("broadcast", "channels", "got the publication", len(e.Failed), e.Total, func(b *strings.Builder, i int) (string, error) {
 		b.WriteString(e.Failed[i].Channel)
 		return "", e.Failed[i].Err
 	})
+	if len(e.RetryableChannels()) > 0 {
+		msg += " (retry only RetryableChannels, with the same IdempotencyKey)"
+	}
+	return msg
 }
 
 // RetryableChannels returns the channels whose failure is retryable - see
