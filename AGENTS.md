@@ -193,8 +193,9 @@ can fail on their own would need the same treatment.
 
 ## Using gocent: easy mistakes
 
-For an agent writing code against gocent, and for anyone changing messages or
-docs here - these are the places a reader goes wrong.
+For anyone changing gocent's messages or docs: the places a user goes wrong,
+each answered where the user meets it - in the error message, or in the doc
+comment of the symbol. Code using gocent sees those, not this file.
 
 - **A 404 from a method Centrifugo PRO only has means the server is OSS, not
   that APIEndpoint is wrong.** The `*HTTPError` says so for such a method; for

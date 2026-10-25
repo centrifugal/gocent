@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/centrifugal/gocent/v4"
@@ -54,6 +56,67 @@ func ExampleClient_Publish() {
 	case err != nil:
 		log.Fatal(err)
 	}
+}
+
+// Streaming a model's output to browsers: one channel per response, in a
+// namespace with history and recovery, so that a client which reconnects, or
+// opens the page late, recovers the response from the start. Both must hold a
+// whole response: history_size, and client.recovery_max_publication_limit -
+// 300 publications by default, 15 seconds of streaming at 20 a second.
+// Publish from one goroutine, each call waiting for the previous one: calls
+// made concurrently have no order. A model emits up to hundreds of tokens a
+// second, far more than a page needs to render, so publish what arrived every
+// 50 ms or so - 20 publications a second at most - rather than one per token.
+// See https://centrifugal.dev/docs/getting-started/ai_apps.
+func ExampleClient_Publish_stream() {
+	var client *gocent.Client // created once with gocent.New
+
+	type chunk struct {
+		Text string `json:"text"`
+		Done bool   `json:"done,omitzero"`
+	}
+	// stream publishes a response's tokens into its channel, until the model
+	// closes tokens.
+	stream := func(ctx context.Context, channel string, tokens <-chan string) error {
+		var text strings.Builder
+		seq := 0
+		publish := func(done bool) error {
+			data, err := json.Marshal(chunk{Text: text.String(), Done: done})
+			if err != nil {
+				return err
+			}
+			text.Reset()
+			seq++
+			_, err = client.Publish(ctx, gocent.PublishRequest{
+				Channel: channel,
+				Data:    data,
+				// Retried with the same key, a chunk is not published twice.
+				IdempotencyKey: channel + "-" + strconv.Itoa(seq),
+			})
+			return err
+		}
+		tick := time.NewTicker(50 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case token, ok := <-tokens:
+				if !ok {
+					return publish(true)
+				}
+				text.WriteString(token)
+			case <-tick.C:
+				if text.Len() == 0 {
+					continue // the model is thinking, or calling a tool
+				}
+				if err := publish(false); err != nil {
+					return err
+				}
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+	_ = stream // called with each response: stream(ctx, "ai:response-42", tokens)
 }
 
 // A broadcast returns an error unless the data was published into every

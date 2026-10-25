@@ -412,6 +412,13 @@ follows their changes.
   above in more detail, plus writing commands for Centrifugo's async consumers.
 - A 404 from a Centrifugo PRO method means the server is Centrifugo OSS; the
   error says so.
+- Streaming AI output: [Centrifugo for AI
+  apps](https://centrifugal.dev/docs/getting-started/ai_apps), and
+  `ExampleClient_Publish_stream` in the package docs - what arrived every
+  50 ms, published in order into a channel with history.
+- Docs for agents and LLMs:
+  [centrifugal.dev/llms.txt](https://centrifugal.dev/llms.txt), an index of
+  the current (v6) documentation.
 - Upgrading from v3: [MIGRATING.md](MIGRATING.md) has complete programs before
   and after, and the [changelog](changelog.md#migrating-from-v3) maps every
   call.
