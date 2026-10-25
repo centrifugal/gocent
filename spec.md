@@ -142,9 +142,8 @@ call.
 ### 3.3 Methods
 
 Every API method in `api.proto` but `rpc` MUST be a client method taking its
-request and returning its result, and the same method on a batch (section
-7). The request
-type MUST tell its API method name (gocent: `APIMethod()`; Python:
+request and returning its result, and the same method on a batch (section 7).
+The request type MUST tell its API method name (gocent: `APIMethod()`; Python:
 `api_method`).
 
 ### 3.4 Payloads
@@ -264,13 +263,12 @@ function encode(value) {
   `number` in arithmetic.
 - Without `JSON.rawJSON`, a `bigint` in a request fails with
   `InvalidRequest` before sending (rule 5), naming the runtimes which have it.
-- Decoding big integers is on, not an option: exact comes first, and a new
-  SDK has no applications whose types it would change. (centrifuge-js, the
-  client SDK, has existing applications, so there it is the `bigIntegers`
-  option.) An
+- Decoding big integers is on, not an option: exact comes first, and a new SDK
+  has no applications whose types it would change. (centrifuge-js, the client
+  SDK, has existing applications, so there it is the `bigIntegers` option.) An
   application which sends a payload on with a `JSON.stringify` of its own -
   `res.json(pub.data)` - gets a `TypeError` for a `bigint` in it: loud, where
-  a rounded integer would be wrong silently. The docs show the replacer,
+  a rounded integer would be wrong silently. The docs show the replacer:
   `(k, v) => typeof v === "bigint" ? JSON.rawJSON(String(v)) : v`.
 - `JSON.rawJSON` takes primitives only, so the SDK's own `rawJSON` for an
   object or array is spliced in by the SDK: written as a unique placeholder
@@ -325,10 +323,12 @@ called again. With its default HTTP client the SDK then closes idle connections.
   endpoint; a 404 for a PRO-only method - the server is likely Centrifugo OSS;
   any other 404 - is the endpoint the API base URL; a 401 - check the
   credentials. In a batch, a PRO-only command sent to Centrifugo OSS fails
-  with code 104 (not found) instead of a 404. Its error stays an `Error` with
-  code 104 - matching it does not change with how the call was sent - and
-  SHOULD carry a softer hint, since 104 has other causes too: the server may
-  be Centrifugo OSS.
+  with code 104 (not found) instead of a 404. That is Centrifugo's answer,
+  and the SDK keeps it: an `Error` with code 104, matching `NotFound`, where
+  the call sent alone is an `HTTPError` 404, which does not - a missing route
+  is not a missing entity. A PRO method on OSS is a configuration mistake,
+  seen on the first call either way. The 104 SHOULD carry a softer hint,
+  since 104 has other causes too: the server may be Centrifugo OSS.
 
 ### 4.2 Transport error mode
 
@@ -510,6 +510,10 @@ out.
   queue still gets a full timeout. A reply arriving as a caller's deadline
   ends is returned, not a timeout.
 - Calls made one after another keep their order: each waits for its reply.
+- In the transport error mode (section 4.2), a call sent alone gets its error
+  with an HTTP status, and one in an automatic batch inside a 200 reply. The
+  SDK returns the same `Error` either way; only `on_request` sees the
+  difference, as it reports requests, not calls.
 - Docs SHOULD say that a proxy in front of Centrifugo may limit a request's
   size (nginx: 1 MB by default) where Centrifugo does not, failing a whole
   batch with a 413 its calls would not get alone; `max_batch_size` or the
@@ -636,7 +640,6 @@ their connection token.
 Endpoints the `getToken` and `getSignature` callbacks of client SDKs call,
 around an application function deciding who gets what. The function is
 required when the endpoint is built.
-
 
 - Success: a JSON object, `Content-Type: application/json`, `Cache-Control:
   no-store`.
