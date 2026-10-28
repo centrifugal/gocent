@@ -5,7 +5,7 @@ Centrifugo, as opposed to a client SDK in browsers and apps - provides, and
 how it behaves. gocent is its reference implementation: where this document
 and gocent disagree, it is a bug in one of them, to be fixed in both.
 
-**Version 0.1 (draft)**, 2026-10-25. Changes: section 18.
+**Version 0.2 (draft)**, 2026-10-28. Changes: section 18.
 
 The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119. Each
 section states its rules with the reasons for them, so that a case the spec
@@ -40,6 +40,14 @@ Conventions:
   "matches" is its way to test one (`errors.Is`, `isinstance`, `instanceof`).
   `batch_context` and context values exist only where the language has
   request-scoped context: Go's `context.Context`, Python's `contextvars`.
+- **Unified meaning, idiomatic spelling.** What a call means is the same in
+  every SDK: the methods and the words of their fields, results, error kinds
+  and codes, the behaviour this document sets, tokens, handlers and vectors.
+  How a call is written is the language's: Go passes a request struct, Python
+  keyword arguments, PHP named arguments, JavaScript a plain object, each the
+  way that language's own SDKs take parameters. Almost every user and agent
+  sees one SDK only, and writes it the way its language writes calls; what
+  carries between languages is the meaning, which the docs explain once.
 - **Blocking and async alike.** Where a language has both blocking and async
   I/O in common use - Python, Rust - an SDK SHOULD provide both clients, with
   the same methods, options, errors and behaviour: an application uses the
@@ -172,9 +180,24 @@ call.
 ### 3.3 Methods
 
 Every API method in `api.proto` but `rpc` MUST be a client method taking its
-request and returning its result, and the same method on a batch (section 7).
-The request type MUST tell its API method name (gocent: `APIMethod()`; Python:
-`api_method`).
+request and returning its result, and the same method on a batch (section 7)
+and for commands (section 9): one method per API method in all three, so that
+the method a call goes to is its name, and each is typed by its own request
+and result.
+
+A method takes its request in the language's idiom (conventions): a struct
+in Go (`client.Publish(ctx, gocent.PublishRequest{...})`), keyword arguments
+in Python (`client.publish(channel="news", data=d)`), named arguments in PHP
+(`$client->publish(channel: 'news', data: $d)`), a plain object in
+JavaScript (`client.publish({ channel: 'news', data })`). Keyword and named
+arguments are keyword-only where the language can say so, so that a field
+the protos add cannot shift a call. A nested message is the language's type
+for it - a dataclass, a class, an object. Where the request is a plain object,
+a field the SDK does not know MUST be refused with `InvalidRequest` naming
+it, rather than dropped: a typo or a field spelled as on the wire
+(`skip_history`) would otherwise change the request without a word. Where a
+request is one value - a Go struct - its type tells its API method (gocent:
+`APIMethod()`).
 
 ### 3.4 Payloads
 
@@ -608,8 +631,10 @@ out.
 
 ## 9. Commands for async consumers
 
-`new_command(req)` returns `{method, payload}`: the API method and the request
-as JSON. It MUST validate the request as a call would (section 3.5), so that a
+A command per API method (gocent: `NewCommand(req)`; Python:
+`command.publish(channel=..., data=...)`; JavaScript:
+`command.publish({ channel, data })`) returns `{method, payload}`: the API
+method and the request as JSON. It MUST validate the request as a call would (section 3.5), so that a
 command Centrifugo could not run fails when written rather than in a consumer
 which drops it. Encoded as JSON it is the `{"method": ..., "payload": ...}`
 message consumers take whole (Kafka, NATS JetStream). Docs MUST say that a
@@ -892,8 +917,9 @@ Generation and the client:
 - [ ] A client the caller passed is not changed: credentials and headers go
   on each request (3.1).
 - [ ] A reply which is not of the reply's shape is a `DecodeError` (3.2).
-- [ ] Every API method but `rpc`, on the client and on a batch; a request
-  type names its method (3.3).
+- [ ] Every API method but `rpc`, on the client, on a batch and for
+  commands; a request in the language's idiom; a plain-object request's
+  unknown fields refused (3.3).
 
 Payloads and validation:
 
@@ -958,7 +984,7 @@ Broadcast, batch, automatic batching, commands, observability:
   arriving as a deadline ends is returned, not a timeout (8).
 - [ ] Callers' context values reach a batch only through `batch_context`
   (8).
-- [ ] `new_command` validates as a call does; docs on partitions (9).
+- [ ] Commands validate as a call does; docs on partitions (9).
 - [ ] `on_request` after every request, synchronously; no tracing library
   (10).
 
@@ -1018,6 +1044,14 @@ here; the sections they belong to say what they are for.
 | Proxy handlers | bodies up to 16 MiB, configurable | 14 |
 
 ## 18. Changes
+
+### 0.2 - 2026-10-28
+
+- Unified meaning, idiomatic spelling: a method takes its request in the
+  language's idiom - a struct in Go, keyword arguments in Python, named
+  arguments in PHP, a plain object in JavaScript - and a batch and commands
+  have a method per API method, as the client (conventions, 3.3, 9).
+- A plain-object request refuses fields the SDK does not know (3.3).
 
 ### 0.1 - 2026-10-25
 
