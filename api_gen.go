@@ -829,25 +829,26 @@ type DeviceRemoveRequest struct {
 
 // DeviceUserUpdate sets the user of devices. Centrifugo PRO only.
 type DeviceUserUpdate struct {
-	// User is the user ID to set. Required.
+	// User is the user ID to set. Required. "" detaches the devices from their
+	// user.
 	User string `json:"user,omitzero"`
 }
 
 // DeviceTimezoneUpdate sets the timezone of devices. Centrifugo PRO only.
 type DeviceTimezoneUpdate struct {
-	// Timezone is the IANA time zone to set. Required.
+	// Timezone is the IANA time zone to set. Required. "" clears it.
 	Timezone string `json:"timezone,omitzero"`
 }
 
 // DeviceLocaleUpdate sets the locale of devices. Centrifugo PRO only.
 type DeviceLocaleUpdate struct {
-	// Locale is the locale to set. Required.
+	// Locale is the locale to set. Required. "" clears it.
 	Locale string `json:"locale,omitzero"`
 }
 
 // DeviceMetaUpdate sets the meta of devices. Centrifugo PRO only.
 type DeviceMetaUpdate struct {
-	// Meta is the meta to set. Required.
+	// Meta is the meta to set. Required. An empty map clears it.
 	Meta map[string]string `json:"meta,omitzero"`
 }
 
@@ -881,7 +882,7 @@ type DeviceFilter struct {
 // DeviceListRequest returns a paginated list of registered devices.
 // Centrifugo PRO only.
 type DeviceListRequest struct {
-	// Filter selects the devices to list. Required.
+	// Filter selects the devices to list: all of them when unset.
 	Filter DeviceFilter `json:"filter,omitzero"`
 
 	// IncludeTotalCount includes the total count for the filter in the
@@ -1000,7 +1001,8 @@ type DeviceTopicUpdateRequest struct {
 // UserTopicUpdateRequest changes the topics of a user. The change is also
 // applied to the user's registered devices. Centrifugo PRO only.
 type UserTopicUpdateRequest struct {
-	// User is the user ID. Required.
+	// User is the user ID. Required. "" updates the global binding, which every
+	// device - anonymous ones included - gets on its next DeviceRegister.
 	User string `json:"user,omitzero"`
 
 	// Op is the operation: add, remove or set. Required.
