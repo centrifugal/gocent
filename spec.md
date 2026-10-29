@@ -124,6 +124,13 @@ concurrent use. Creating it MUST validate everything that can be validated
 without a request and fail with an `InvalidConfig` error naming the field and
 the fix.
 
+It is shared within one process - and an async client within one event loop.
+Where applications fork after creating clients (Puma, Unicorn, Gunicorn
+`--preload`, Celery), a client used in a child MUST NOT reuse the parent's
+connections or background workers: it starts its own. An async client used
+from an event loop other than its first MUST fail with `InvalidConfig`
+saying to create one per loop, rather than with an error of the event loop's.
+
 | Option | Meaning | Rules |
 |---|---|---|
 | `api_endpoint` | Base URL of the API, `http://localhost:8000/api` | Absolute `http`/`https` URL with a host; no query, fragment or credentials; a trailing `/` is dropped; a path ending in a method name (`/api/publish`) is refused with a hint |
@@ -201,6 +208,14 @@ it, rather than dropped: a typo or a field spelled as on the wire
 request is one value - a Go struct - its type tells its API method (gocent:
 `APIMethod()`).
 
+A field the protos mark "Required." without a condition is a required
+parameter where the language can say so - a keyword or named argument
+without a default, a non-optional TypeScript property - so that a call
+missing it fails as the language fails such a call, before anything is sent,
+and type checkers and editors show it. A field "Required unless ..." stays
+optional. This is the method's signature, not a copy of Centrifugo's
+validation (section 3.5).
+
 ### 3.4 Payloads
 
 Payloads - `data`, `info`, `meta` and the like, in requests, replies, token
@@ -256,7 +271,12 @@ not list is decided the same way:
    the client's data, changes nothing. Dynamic languages give the decoded
    native value (`pub.data["text"]`), parsing the reply in one go as they
    must; the others give a JSON type, which costs nothing to send on and one
-   call to decode into the application's own types.
+   call to decode into the application's own types. JSON `null` is a payload
+   too: where the language has two "nothing" values, JavaScript's `null` and
+   `undefined`, `null` is JSON null and `undefined` is unset. Where it has
+   one - Python's `None`, Ruby's `nil`, PHP's `null` - that one means unset,
+   and JSON null is sent as raw JSON (`RawJSON("null")`); the error for a
+   missing payload SHOULD say so.
 7. **Go, Rust, Swift and Kotlin take one JSON type only,** by choice: one
    type in and out, and encoding a value is one call of the language's JSON
    library. In Go, Rust and Swift the type is raw JSON; in Kotlin it is the
@@ -370,6 +390,17 @@ batch, batches whose callers left, and a broadcast retry's attempt in flight:
 the retry stops at its next attempt, which fails with `Closed`. It returns
 the deadline's error if that ends first, leaving the rest to go on, and MAY be
 called again. With its default HTTP client the SDK then closes idle connections.
+
+### 3.7 Results as JSON
+
+Applications render results - to a frontend, a log, a queue. A result
+encoded through the language's own JSON mechanism (`json.Marshal`,
+`JSON.stringify`, `json_encode`, `as_json`/`to_json`, or a function of the
+SDK's where the language has none, as Python) MUST give its fields by their
+wire names - `num_clients`, `idempotency_key` - nested results alike, and
+payloads as they are. An error in a result - a channel's in a broadcast, a
+command's in a batch - is `{"code": ..., "message": ...}` for an `Error`,
+and `{"message": ...}` for any other.
 
 ## 4. Errors
 
@@ -502,12 +533,14 @@ the error:
   entry carries that error.
 
 `result.replied` is true exactly when the error is nil or a
-`BroadcastFailedChannelsError`; `result.failed()` lists the failed channels.
+`BroadcastFailedChannelsError`; `result.failed` lists the failed channels - a
+property or field where the language has them, as `failed` on the error is
+(gocent: the method `Failed()`).
 They MUST never disagree with the error. A partial error MUST NOT match its
 parts' errors: one unknown channel among many does not make the broadcast
 match `UnknownChannel`. This holds in every case, so that every language
 behaves the same: a broadcast into one channel, or one where every channel
-failed, does not match `UnknownChannel` either - `failed()` holds each
+failed, does not match `UnknownChannel` either - `failed` holds each
 channel's error. For one channel, `publish` is the call.
 `retryable_channels()` returns the channels a retry should go to.
 
@@ -533,7 +566,7 @@ failures and go on:
 try:
     client.broadcast(channels=channels, data=data)
 except BroadcastFailedChannelsError as e:
-    log.warning("broadcast failed in %s", e.result.failed())
+    log.warning("broadcast failed in %s", e.result.failed)
 ```
 
 ### 7.2 Batch
@@ -550,7 +583,7 @@ except BroadcastFailedChannelsError as e:
 - `send()`: nil when every command succeeded; `BatchFailedCommandsError`
   (`failed` with index, method, error; `total`) when some failed, each pending
   holding its own outcome; any other error when the batch failed as a whole,
-  every pending returning that error. `replied` and `failed()` as for
+  every pending returning that error. `replied` and `failed` as for
   broadcast. A broadcast in a batch returns exactly what a direct broadcast
   returns.
 - A command the client can tell is invalid fails the whole batch before
@@ -645,7 +678,12 @@ A command per API method (gocent: `NewCommand(req)`; Python:
 method and the request as JSON. It MUST validate the request as a call would (section 3.5), so that a
 command Centrifugo could not run fails when written rather than in a consumer
 which drops it. Encoded as JSON it is the `{"method": ..., "payload": ...}`
-message consumers take whole (Kafka, NATS JetStream). Docs MUST say that a
+message consumers take whole (Kafka, NATS JetStream). Encoded through the
+language's own JSON mechanism - `json.Marshal`, `JSON.stringify` of a value
+holding it, `json_encode`, `as_json` - a command MUST give `payload` as the
+JSON object, never as a string of it: a consumer drops a command whose
+payload is a string, and only Centrifugo's log says so. Docs SHOULD show
+writing `payload` to a `jsonb` column, as the PostgreSQL outbox has it. Docs MUST say that a
 consumer keeps commands in order only within a partition: a channel's
 commands keep their order only when every writer derives their partition from
 the channel the same way.
@@ -662,7 +700,9 @@ the channel the same way.
   (0 without a reply), `err` (the request's own error, nil when Centrifugo's
   reply was read; in the transport error mode, the error of the request's one
   command, which `failed` then does not count). A broadcast retry reports each
-  attempt, an automatic batch once.
+  attempt, an automatic batch once. Docs MUST say that `on_request`, and a
+  handler's `on_error`, must not raise: what they raise is the call's or the
+  handler's error.
 - `batch_context(base, callers)` makes an automatic batch's request context,
   from a base context and its callers' - for a tracing span linking every
   caller's span. In Python a batch runs in an empty `contextvars.Context`, and
@@ -792,7 +832,9 @@ client stops tracking them. A key the client did not ask for fails the request
 `"{iat}:{exp}:{mac}"`:
 
 - `iat` is now and `exp` is `expires_at`, in Unix seconds; `exp` is `0` for a
-  signature which does not expire;
+  signature which does not expire. `expires_at` is required: a time, or never
+  chosen explicitly, as a token's expiry (section 11.2). An integer or a
+  duration MUST be refused: `3600` is a time in 1970;
 - `keys_hash = hex(sha256(keys joined by "\x00"))`;
 - `mac = hex(hmac_sha256(secret, iat "\x00" exp "\x00" user "\x00" channel
   "\x00" keys_hash))`, NUL-separated so that a colon in a user or channel
@@ -821,7 +863,9 @@ deadline ending with the proxy's timeout) and returning a result or an error.
 - `ProxyError{code, message, temporary}`, with a code in [400, 1999],
   rejects the request. `Disconnect{code, reason}`, with a code in
   [4000, 4999], closes the connection; codes in [4500, 4999] tell the client
-  not to reconnect. Wrapped ones count.
+  not to reconnect. Wrapped ones count. Docs MUST give these ranges, and the
+  reason's limit of 32 bytes, where `ProxyError` and `Disconnect` are
+  documented.
 - An answer the proxy type cannot carry, any other error, or a result which
   cannot be encoded fails the request with 500, reported to `on_error`:
   Centrifugo answers the client with a temporary internal error, and for
@@ -928,7 +972,11 @@ Generation and the client:
 - [ ] A reply which is not of the reply's shape is a `DecodeError` (3.2).
 - [ ] Every API method but `rpc`, on the client, on a batch and for
   commands; a request in the language's idiom; a plain-object request's
-  unknown fields refused (3.3).
+  unknown fields refused; fields marked "Required." required where the
+  language can say so (3.3).
+- [ ] A client shared within a process: after a fork it uses connections
+  and workers of its own; an async client from another event loop fails with
+  `InvalidConfig` (3.1).
 
 Payloads and validation:
 
@@ -936,8 +984,9 @@ Payloads and validation:
   the SDK's, sent as the same JSON value (3.4).
 - [ ] A string is a JSON string; bytes refused outside the `b64` fields;
   invalid JSON, NaN and infinities never sent (3.4).
-- [ ] A payload from a reply goes back unchanged as the same JSON value
-  (3.4).
+- [ ] A payload from a reply goes back unchanged as the same JSON value;
+  JSON null as the language's `null` where it also has `undefined`, as raw
+  JSON otherwise (3.4).
 - [ ] Docs advise strings for integers which may pass 2^53 (3.4).
 - [ ] JavaScript: `bigIntegers`, off by default, refused with
   `InvalidConfig` where it cannot work (3.4).
@@ -945,6 +994,8 @@ Payloads and validation:
   no other Centrifugo rule copied (3.5).
 - [ ] `close` refuses new calls with `Closed` and waits for those in progress
   (3.6).
+- [ ] Results encoded as JSON the language's way give wire names, and errors
+  in them as `{code, message}` (3.7).
 
 Errors and retries:
 
@@ -961,7 +1012,7 @@ Errors and retries:
 Broadcast, batch, automatic batching, commands, observability:
 
 - [ ] A broadcast's result holds every channel, whatever the error;
-  `replied` and `failed()` never disagree with it; a partial error does not
+  `replied` and `failed` never disagree with it; a partial error does not
   match its parts (7.1).
 - [ ] Where errors are exceptions, the exception carries the result (7.1).
 - [ ] A batch: options fixed at creation, pending handles, sent once,
@@ -993,9 +1044,10 @@ Broadcast, batch, automatic batching, commands, observability:
   arriving as a deadline ends is returned, not a timeout (8).
 - [ ] Callers' context values reach a batch only through `batch_context`
   (8).
-- [ ] Commands validate as a call does; docs on partitions (9).
-- [ ] `on_request` after every request, synchronously; no tracing library
-  (10).
+- [ ] Commands validate as a call does; encoded as JSON the language's way,
+  `payload` is the object, not a string; docs on partitions (9).
+- [ ] `on_request` after every request, synchronously; no tracing library;
+  docs: hooks must not raise (10).
 
 Tokens, endpoints, shared poll, proxy:
 
@@ -1018,12 +1070,32 @@ Tokens, endpoints, shared poll, proxy:
 - [ ] Shared poll signature endpoint: `keys` always an array, empty
   included; a key the client did not ask for fails the request with 500
   (12).
-- [ ] Shared poll signatures as in 13.
+- [ ] Shared poll signatures as in 13; an expiry required, never chosen
+  explicitly, integers and durations refused (13).
 - [ ] Proxy handlers: `POST` only, body limit, exactly one of result, error
-  and disconnect, 500 for anything else; docs: keep them internal (14).
+  and disconnect, 500 for anything else; docs: keep them internal, the code
+  ranges and the reason's limit (14).
 - [ ] Proxy payloads as in 3.4; binary mode: payloads in the `b64` fields
   (14).
 - [ ] The tests of 15, and the vectors of 15.1 (15).
+- [ ] Docs show testing application code with a fake answering publish,
+  broadcast and a batch; partial-failure errors and their results
+  constructible by applications (15.3).
+
+### 15.3 Testing with an SDK
+
+Applications test their code without Centrifugo. Docs MUST show it: a fake
+transport or server answering `publish`, `broadcast` and a batch, partial
+failures included, with Centrifugo's reply shapes -
+
+- a method: `{"result": {...}}`, or `{"error": {"code": ..., "message": ...}}`;
+- a broadcast: `{"result": {"responses": [{"result": {...}} | {"error": {...}}, ...]}}`,
+  one per channel, in order;
+- a batch: `{"replies": [{"<method>": {...}} | {"error": {...}}, ...]}`, one
+  per command, in order.
+
+The partial-failure errors and the results they carry MUST be constructible
+by applications, for test doubles of their own.
 
 ## 16. Versions
 
@@ -1064,6 +1136,19 @@ here; the sections they belong to say what they are for.
 - One deadline per request is enforced by the language's public means: where
   the HTTP library times each operation, the time left per operation and a
   check between body chunks, the docs saying what can outlast it (3.2).
+- A client is shared within a process, and an async client within an event
+  loop (3.1).
+- Fields marked "Required." are required parameters where the language can
+  say so (3.3).
+- JSON null: the language's `null` where it also has `undefined`, raw JSON
+  where it has one null (3.4).
+- Results encode as JSON with wire names, errors in them as `{code, message}`
+  (3.7); `failed` is a property on results, as on errors (7).
+- A command encoded the language's way gives `payload` as the object (9).
+- Docs say hooks must not raise (10) and give the proxy code ranges (14).
+- A shared poll signature's expiry is required, never chosen explicitly (13).
+- Docs show testing application code without Centrifugo; partial-failure
+  errors constructible by applications (15.3).
 
 ### 0.1 - 2026-10-25
 

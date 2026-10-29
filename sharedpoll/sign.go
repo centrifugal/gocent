@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -11,16 +12,37 @@ import (
 
 // Sign returns the signature authorizing user to track keys in channel until
 // expiresAt, as Centrifugo verifies it: "iat:exp:hmac", where iat is now and
-// exp expiresAt in Unix seconds, zero for a zero expiresAt - a signature which
-// does not expire. secret is Centrifugo's shared_poll.hmac_secret_key.
+// exp expiresAt in Unix seconds. secret is Centrifugo's
+// shared_poll.hmac_secret_key.
+//
+// expiresAt is required, as a token's expiry is: a zero time is refused. A
+// signature which never expires is chosen explicitly, with [SignNoExpiry].
 //
 // The signature covers exactly keys, in their order: a client tracking other
 // keys, or the same in another order, is refused. user is the ID of the
 // connection's user, empty for an anonymous one.
-func Sign(secret []byte, user, channel string, keys []string, expiresAt time.Time) string {
-	return signAt(secret, user, channel, keys, expiresAt, time.Now())
+func Sign(secret []byte, user, channel string, keys []string, expiresAt time.Time) (string, error) {
+	if expiresAt.IsZero() {
+		return "", errors.New("sharedpoll: expiresAt is required: for a signature which never expires, use SignNoExpiry")
+	}
+	if len(secret) == 0 {
+		return "", errEmptySecret
+	}
+	return signAt(secret, user, channel, keys, expiresAt, time.Now()), nil
 }
 
+// SignNoExpiry returns a signature as [Sign] does, which never expires: valid
+// until the secret changes.
+func SignNoExpiry(secret []byte, user, channel string, keys []string) (string, error) {
+	if len(secret) == 0 {
+		return "", errEmptySecret
+	}
+	return signAt(secret, user, channel, keys, time.Time{}, time.Now()), nil
+}
+
+var errEmptySecret = errors.New("sharedpoll: empty secret")
+
+// signAt signs at now; a zero expiresAt signs one which never expires.
 func signAt(secret []byte, user, channel string, keys []string, expiresAt, now time.Time) string {
 	iat := strconv.FormatInt(now.Unix(), 10)
 	exp := "0"

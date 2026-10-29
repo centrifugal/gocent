@@ -7,14 +7,16 @@ import (
 	"slices"
 
 	"github.com/centrifugal/gocent/v4/internal/sdkendpoint"
+	"github.com/centrifugal/gocent/v4/token"
 )
 
 // ErrUnauthorized is returned - or wrapped - by a function a handler calls
 // when the user may not use the subscription at all. It answers HTTP status
 // 403.
 // centrifuge-js ends the subscription then, when the getSignature callback
-// throws UnauthorizedError for it.
-var ErrUnauthorized = errors.New("sharedpoll: unauthorized")
+// throws UnauthorizedError for it. It is [token.ErrUnauthorized]: an
+// application returning either from either package's handlers gets a 403.
+var ErrUnauthorized = token.ErrUnauthorized
 
 // Handlers builds the [http.Handler] of the endpoint client SDKs call for
 // signatures. The zero value is ready to use.
@@ -22,7 +24,7 @@ type Handlers struct {
 	// OnError, when set, is told of every request a handler could not answer
 	// as the function meant: one failed with HTTP status 500 - by an error
 	// other than ErrUnauthorized, or by keys the function had no request for -
-	// and a malformed one, rejected with status 400.
+	// and a malformed one, rejected with status 400. It must not panic.
 	OnError func(r *http.Request, err error)
 }
 

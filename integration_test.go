@@ -59,7 +59,7 @@ func realClient(t *testing.T, ab gocent.AutoBatch) *gocent.Client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Info(t.Context()); err != nil {
+	if _, err := c.Info(t.Context(), gocent.InfoRequest{}); err != nil {
 		t.Fatalf("Centrifugo not reachable at %s: %v", addr, err)
 	}
 	return c
@@ -256,7 +256,7 @@ func TestIntegrationServerSideSubscriptions(t *testing.T) {
 	if _, err := c.Channels(t.Context(), gocent.ChannelsRequest{}); err != nil {
 		t.Errorf("Channels: %v", err)
 	}
-	info, err := c.Info(t.Context())
+	info, err := c.Info(t.Context(), gocent.InfoRequest{})
 	if err != nil || len(info.Nodes) == 0 || info.Nodes[0].Version == "" {
 		t.Errorf("Info: %+v, %v", info, err)
 	}
@@ -515,7 +515,7 @@ func TestIntegrationProMethod(t *testing.T) {
 // major.minor. A build from source reports version 0.0.0, and counts as new.
 func requireServer(t *testing.T, c *gocent.Client, major, minor int) {
 	t.Helper()
-	info, err := c.Info(t.Context())
+	info, err := c.Info(t.Context(), gocent.InfoRequest{})
 	if err != nil || len(info.Nodes) == 0 {
 		t.Fatalf("Info: %+v, %v", info, err)
 	}

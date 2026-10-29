@@ -21,7 +21,8 @@ type Handlers struct {
 	// error which is not an *Error or *Disconnect the proxy type carries, or
 	// by a result which cannot be encoded - and a malformed one, rejected with
 	// status 400. Centrifugo only logs the status, so this is where the cause
-	// is seen. It is called before the response is written.
+	// is seen. It is called before the response is written, and must not
+	// panic.
 	OnError func(r *http.Request, err error)
 
 	// MaxRequestBytes bounds the body of a request. Zero means 16 MiB, far

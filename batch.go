@@ -167,6 +167,13 @@ type BatchResult struct {
 	failed []CommandError
 }
 
+// NewBatchResult returns a batch's outcome, for test doubles of code which
+// sends batches: replied as [BatchResult.Replied] says, failed as
+// [BatchResult.Failed] returns it.
+func NewBatchResult(replied bool, failed []CommandError) BatchResult {
+	return BatchResult{Replied: replied, failed: failed}
+}
+
 // Failed returns the commands which failed, with their errors, in the order
 // they were added; nil when every command succeeded. When the batch failed as
 // a whole, that is every command, each with the batch's error - as each
@@ -211,7 +218,11 @@ func (e *commandInvalidError) Unwrap() error { return e.err }
 // Pending is the outcome of one command of a [Batch], available once the
 // batch is sent.
 type Pending[T any] struct {
+	// batch is nil for a Pending made by NewPending, whose outcome is set.
 	batch *Batch
+	value T
+	err   error
+
 	index int
 	get   func(*reply) (T, error)
 	// fail, when set, gives the result returned with an error for the
@@ -226,6 +237,9 @@ type Pending[T any] struct {
 // whatever the error, as [Client.Broadcast] does.
 func (p *Pending[T]) Result() (T, error) {
 	b := p.batch
+	if b == nil {
+		return p.value, p.err
+	}
 	switch {
 	case !b.sent:
 		return p.failed(ErrBatchNotSent)
@@ -237,6 +251,12 @@ func (p *Pending[T]) Result() (T, error) {
 		return p.failed(r.Error)
 	}
 	return p.get(r)
+}
+
+// NewPending returns a Pending whose Result returns result and err, for test
+// doubles of code which sends batches.
+func NewPending[T any](result T, err error) *Pending[T] {
+	return &Pending[T]{value: result, err: err}
 }
 
 func (p *Pending[T]) failed(err error) (T, error) {

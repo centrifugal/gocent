@@ -191,7 +191,10 @@ for _, ch := range res.Failed() {
 ```
 
 The same for a batch: `res, err := b.Send(ctx)`, then `res.Replied` and
-`res.Failed()`; each command's typed result is in its `Pending`.
+`res.Failed()`; each command's typed result is in its `Pending`. Results
+render as JSON by their wire names, with `encoding/json` and
+`encoding/json/v2` alike - `{"channels": [...], "idempotency_key": ...}` - an
+error in them as `{"code": 102, "message": "unknown channel"}`.
 
 Retrying:
 
@@ -458,12 +461,42 @@ h := sharedpoll.Handlers{OnError: logError}
 mux.Handle("/centrifugo/shared_poll_signature", h.Signature(
 	func(r *http.Request, channel string, keys []string) ([]string, string, error) {
 		allowed := readable(r.Context(), user, channel, keys) // the rest are revoked
-		return allowed, sharedpoll.Sign(secret, user, channel, allowed, time.Now().Add(time.Hour)), nil
+		sig, err := sharedpoll.Sign(secret, user, channel, allowed, time.Now().Add(time.Hour))
+		return allowed, sig, err
 	}))
 ```
 
+An expiry is required: a signature which never expires is chosen explicitly,
+with `sharedpoll.SignNoExpiry`.
+
 Shared poll subscriptions are experimental in Centrifugo, and the package
 follows their changes.
+
+## Testing
+
+Test code which uses gocent against an `httptest` server answering as
+Centrifugo does - each method at `/api/<method>`, its reply
+`{"result": {...}}` or `{"error": {"code": ..., "message": ...}}`:
+
+```go
+srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/api/publish":
+		fmt.Fprint(w, `{"result":{"offset":1,"epoch":"e"}}`)
+	case "/api/broadcast": // one response per channel, in order
+		fmt.Fprint(w, `{"result":{"responses":[{"result":{"offset":1}},{"error":{"code":102,"message":"unknown channel"}}]}}`)
+	case "/api/batch": // one reply per command, in order
+		fmt.Fprint(w, `{"replies":[{"publish":{"offset":1}},{"error":{"code":102,"message":"unknown channel"}}]}`)
+	}
+}))
+defer srv.Close()
+client, err := gocent.New(gocent.Config{APIEndpoint: srv.URL + "/api"})
+```
+
+Behind an interface of your own, a test double returns gocent's results and
+errors as they are: a `gocent.BroadcastResult` with a
+`*gocent.BroadcastFailedChannelsError` for a partial failure, and
+`gocent.NewBatchResult` and `gocent.NewPending` for a batch.
 
 ## More
 

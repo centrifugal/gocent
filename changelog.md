@@ -25,6 +25,13 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   parts which failed. `Batch.Send` returns a `BatchResult` with them.
 * **Typed batches.** `client.NewBatch(opts)` gives a `Batch` with a method per
   command, each returning a `Pending` holding that command's typed result.
+  Every method takes its request, one without fields too:
+  `client.Info(ctx, gocent.InfoRequest{})`.
+* **Results as JSON.** Broadcast and batch results render by their wire
+  names with `encoding/json` and `encoding/json/v2`, an error in them as
+  `{"code": ..., "message": ...}`.
+* **Testing.** `gocent.NewBatchResult` and `gocent.NewPending` make a batch's
+  results for test doubles; the README shows a fake Centrifugo.
 * **Automatic batching.** `Config.AutoBatch` sends concurrent calls together
   once `MaxInFlight` requests are in flight, with no delay otherwise.
 * **Retries.** `gocent.Retryable(err)` tells whether retrying a call may
@@ -93,7 +100,8 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   as a JSON Web Key Set for Centrifugo's JWKS endpoint, for key rotation:
   `_examples/jwks-rotation` is a backend rotating keys by activation time.
 * **Shared poll signatures.** The new `sharedpoll` package signs the keys a
-  client may track - `sharedpoll.Sign` - and `sharedpoll.Handlers` serves the
+  client may track - `sharedpoll.Sign`, with an expiry, or
+  `sharedpoll.SignNoExpiry` - and `sharedpoll.Handlers` serves the
   endpoint centrifuge-js's `getSignature` calls: keys left out are revoked,
   `sharedpoll.ErrUnauthorized` ends the subscription.
 * **Proxy handlers.** The new `proxy` package serves Centrifugo's HTTP proxy:

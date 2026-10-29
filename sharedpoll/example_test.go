@@ -31,7 +31,8 @@ func Example() {
 					allowed = append(allowed, k)
 				}
 			}
-			return allowed, sharedpoll.Sign(secret, user, channel, allowed, time.Now().Add(time.Hour)), nil
+			sig, err := sharedpoll.Sign(secret, user, channel, allowed, time.Now().Add(time.Hour))
+			return allowed, sig, err
 		}))
 	log.Fatal(http.ListenAndServe("127.0.0.1:3000", mux)) //nolint:gosec // an example
 }

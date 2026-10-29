@@ -14,7 +14,8 @@
 //				return nil, "", sharedpoll.ErrUnauthorized
 //			}
 //			allowed := readable(r.Context(), user, channel, keys)
-//			return allowed, sharedpoll.Sign(secret, user, channel, allowed, time.Now().Add(time.Hour)), nil
+//			sig, err := sharedpoll.Sign(secret, user, channel, allowed, time.Now().Add(time.Hour))
+//			return allowed, sig, err
 //		}))
 //
 // The two are independent: sign anywhere, or serve signatures made elsewhere.

@@ -398,31 +398,22 @@ func generate(s *schema) ([]byte, error) {
 func emitMethods(w *writer, s *schema, c command) {
 	result := goBaseType(s, c.result)
 	summary := methodSummary(c)
-	empty := len(c.request.fields) == 0
 
 	w.p("")
 	for _, l := range summary {
 		w.p("// %s", w.goDoc(l, "", ""))
 	}
-	if empty {
-		w.p("func (c *Client) %s(ctx context.Context) (%s, error) {", c.goName, result)
-		w.p("\treturn invoke(ctx, c, &%s{}, func(r *reply) *%s { return r.%s })", c.request.name, result, c.goName)
-	} else {
-		w.p("func (c *Client) %s(ctx context.Context, req %s) (%s, error) {", c.goName, c.request.name, result)
-		w.p("\treturn invoke(ctx, c, &req, func(r *reply) *%s { return r.%s })", result, c.goName)
-	}
+	// Every method takes its request, one without fields - InfoRequest - too:
+	// a call is written the same way whatever the method.
+	w.p("func (c *Client) %s(ctx context.Context, req %s) (%s, error) {", c.goName, c.request.name, result)
+	w.p("\treturn invoke(ctx, c, &req, func(r *reply) *%s { return r.%s })", result, c.goName)
 	w.p("}")
 
 	w.p("")
 	w.p("// %s adds %s %s command to the batch. Its outcome is what [Client.%s]", c.goName, article(c.method), c.method, c.goName)
 	w.p("// would have returned; read it with [Pending.Result] once the batch is sent.")
-	if empty {
-		w.p("func (b *Batch) %s() *Pending[%s] {", c.goName, result)
-		w.p("\treturn add(b, &%s{}, func(r *reply) (%s, error) { return deref(r.%s), nil })", c.request.name, result, c.goName)
-	} else {
-		w.p("func (b *Batch) %s(req %s) *Pending[%s] {", c.goName, c.request.name, result)
-		w.p("\treturn add(b, &req, func(r *reply) (%s, error) { return deref(r.%s), nil })", result, c.goName)
-	}
+	w.p("func (b *Batch) %s(req %s) *Pending[%s] {", c.goName, c.request.name, result)
+	w.p("\treturn add(b, &req, func(r *reply) (%s, error) { return deref(r.%s), nil })", result, c.goName)
 	w.p("}")
 }
 

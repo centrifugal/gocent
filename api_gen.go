@@ -2211,14 +2211,14 @@ func (b *Batch) HistoryRemove(req HistoryRemoveRequest) *Pending[HistoryRemoveRe
 }
 
 // Info returns information about the running Centrifugo nodes.
-func (c *Client) Info(ctx context.Context) (InfoResult, error) {
-	return invoke(ctx, c, &InfoRequest{}, func(r *reply) *InfoResult { return r.Info })
+func (c *Client) Info(ctx context.Context, req InfoRequest) (InfoResult, error) {
+	return invoke(ctx, c, &req, func(r *reply) *InfoResult { return r.Info })
 }
 
 // Info adds an info command to the batch. Its outcome is what [Client.Info]
 // would have returned; read it with [Pending.Result] once the batch is sent.
-func (b *Batch) Info() *Pending[InfoResult] {
-	return add(b, &InfoRequest{}, func(r *reply) (InfoResult, error) { return deref(r.Info), nil })
+func (b *Batch) Info(req InfoRequest) *Pending[InfoResult] {
+	return add(b, &req, func(r *reply) (InfoResult, error) { return deref(r.Info), nil })
 }
 
 // Refresh refreshes a user's connections, mostly useful with

@@ -130,7 +130,7 @@ func TestBatch(t *testing.T) {
 	b := c.NewBatch(gocent.BatchOptions{})
 	pub := b.Publish(gocent.PublishRequest{Channel: "news", Data: data})
 	stats := b.PresenceStats(gocent.PresenceStatsRequest{Channel: "news"})
-	info := b.Info()
+	info := b.Info(gocent.InfoRequest{})
 	if b.Len() != 3 {
 		t.Fatalf("Len %d", b.Len())
 	}

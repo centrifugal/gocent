@@ -97,20 +97,20 @@ func (b *Batch) Broadcast(req BroadcastRequest) *Pending[BroadcastResult] {
 // BroadcastResult is the outcome of a broadcast: one entry per channel, in the
 // order the request listed them.
 type BroadcastResult struct {
-	Channels []ChannelResult
+	Channels []ChannelResult `json:"channels"`
 
 	// IdempotencyKey is the key the broadcast was sent with: the request's,
 	// or the one [Client.BroadcastWithRetry] made when the request had none.
 	// A later retry of the same broadcast - from a job queue, say - which
 	// sends it with this key does not publish it again into the channels
 	// which got it.
-	IdempotencyKey string
+	IdempotencyKey string `json:"idempotency_key"`
 
 	// Attempts is how many times the broadcast was tried: 1 from
 	// [Client.Broadcast], up to BroadcastRetryOptions.MaxAttempts from
 	// [Client.BroadcastWithRetry], and 0 when it was refused before sending,
 	// as an invalid request.
-	Attempts int
+	Attempts int `json:"attempts"`
 
 	// Replied is true when Centrifugo carried the broadcast out and replied
 	// for every channel, the failed ones included - the error is nil or a
@@ -126,7 +126,7 @@ type BroadcastResult struct {
 	//		return err // no channel got a reply
 	//	}
 	//	for _, ch := range res.Failed() { ... } // the channels which failed
-	Replied bool
+	Replied bool `json:"replied"`
 }
 
 // Failed returns the channels which did not get the publication, with their
@@ -155,6 +155,12 @@ func (res *BroadcastResult) finish(req BroadcastRequest, err error) {
 	res.Attempts = 1
 	for i := range res.Channels {
 		res.Channels[i].Attempts = 1
+	}
+	// The error's channels are copies: they agree with the result's.
+	if be, ok := errors.AsType[*BroadcastFailedChannelsError](err); ok {
+		for i := range be.Failed {
+			be.Failed[i].Attempts = 1
+		}
 	}
 }
 

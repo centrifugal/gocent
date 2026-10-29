@@ -37,17 +37,35 @@ func TestSignMatchesCentrifugo(t *testing.T) {
 
 func TestSignTimes(t *testing.T) {
 	before := time.Now().Unix()
-	sig := Sign([]byte("s"), "u", "c", []string{"k"}, time.Time{})
+	sig, err := SignNoExpiry([]byte("s"), "u", "c", []string{"k"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	parts := strings.Split(sig, ":")
 	if len(parts) != 3 || parts[1] != "0" || len(parts[2]) != 64 {
 		t.Fatalf("signature %q", sig)
 	}
-	if iat, err := strconv.ParseInt(parts[0], 10, 64); err != nil || iat < before || iat > time.Now().Unix() {
+	if iat, perr := strconv.ParseInt(parts[0], 10, 64); perr != nil || iat < before || iat > time.Now().Unix() {
 		t.Errorf("iat %s, want now", parts[0])
 	}
 	exp := time.Now().Add(time.Hour)
-	if parts := strings.Split(Sign([]byte("s"), "u", "c", nil, exp), ":"); parts[1] != strconv.FormatInt(exp.Unix(), 10) {
-		t.Errorf("exp %s, want %d", parts[1], exp.Unix())
+	sig, err = Sign([]byte("s"), "u", "c", nil, exp)
+	if parts := strings.Split(sig, ":"); err != nil || parts[1] != strconv.FormatInt(exp.Unix(), 10) {
+		t.Errorf("exp %s, %v, want %d", parts[1], err, exp.Unix())
+	}
+}
+
+// An expiry is chosen, never left out: a zero time is refused, and so is an
+// empty secret.
+func TestSignRefusals(t *testing.T) {
+	if _, err := Sign([]byte("s"), "u", "c", nil, time.Time{}); err == nil || !strings.Contains(err.Error(), "SignNoExpiry") {
+		t.Errorf("zero expiry: %v", err)
+	}
+	if _, err := Sign(nil, "u", "c", nil, time.Now().Add(time.Hour)); err == nil {
+		t.Error("empty secret signed")
+	}
+	if _, err := SignNoExpiry(nil, "u", "c", nil); err == nil {
+		t.Error("empty secret signed")
 	}
 }
 

@@ -24,7 +24,7 @@ type Handlers struct {
 	// OnError, when set, is told of every request a handler could not answer
 	// as the function meant: one failed with HTTP status 500 - by an error
 	// other than ErrUnauthorized - and a malformed one, rejected with status
-	// 400.
+	// 400. It must not panic.
 	OnError func(r *http.Request, err error)
 }
 

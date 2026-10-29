@@ -96,7 +96,8 @@ type Config struct {
 	// with the request's context and what happened: for metrics and tracing
 	// without a dependency of gocent's. A retried broadcast calls it for
 	// each attempt, an automatic batch once for the batch. It is called in
-	// the goroutine which made the request, and the call waits for it.
+	// the goroutine which made the request, and the call waits for it. It
+	// must not panic: a panic is the call's, though the request was made.
 	OnRequest func(ctx context.Context, info RequestInfo)
 
 	// BatchContext, when set, makes the context of an automatic batch's

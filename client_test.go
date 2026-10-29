@@ -169,7 +169,7 @@ func TestAPIErrors(t *testing.T) {
 	}
 
 	// A code this package has no value for is still an *Error.
-	_, err = c.Info(t.Context())
+	_, err = c.Info(t.Context(), gocent.InfoRequest{})
 	if err != nil {
 		t.Fatalf("Info: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestBearerToken(t *testing.T) {
 	if _, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	if _, err := c.Info(t.Context()); err != nil {
+	if _, err := c.Info(t.Context(), gocent.InfoRequest{}); err != nil {
 		t.Fatalf("Info: %v", err)
 	}
 	// Asked for every request, so a refreshed token is used at once.
@@ -648,7 +648,7 @@ func TestHostFromHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Info(t.Context()); err != nil {
+	if _, err := c.Info(t.Context(), gocent.InfoRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := host.Load(); got != "centrifugo.example" {
