@@ -601,8 +601,14 @@ out.
   There are no timers: nothing ever waits for a batch to fill.
 - At the cap, calls queue first in, first out, and when a request finishes
   all those queued go out as one batch, at most `max_batch_size`. Requests in
-  flight never exceed `max_in_flight`. A larger `max_in_flight` batches less;
-  docs SHOULD suggest a value (section 17).
+  flight never exceed `max_in_flight`. A larger `max_in_flight` batches less:
+  above the calls a process has in flight at once it never batches, and just
+  below it batches calls one at a time, only limiting them. Docs SHOULD say
+  who it is for - processes making many calls at once - and how to choose the
+  value (section 17).
+- Batches are sent from tasks or threads of the SDK's, not a caller's; where
+  starting one costs - a thread - they are kept between batches, and end
+  when idle.
 - Refused at creation: negative values; `max_batch_size` without
   `max_in_flight`; `max_batch_size` of 1.
 - An automatic batch always goes to `/api/batch`, even with one command, so
@@ -1040,7 +1046,7 @@ here; the sections they belong to say what they are for.
 | Default HTTP client | 256 connections to a host, all kept while idle; idle ones closed after 50 s | 3.2 |
 | Response bodies | drained up to 64 KiB; an error body read up to 4 KiB, 512 bytes kept | 3.2 |
 | `broadcast_with_retry` | `max_attempts` 2 (one retry); waits `exponential_backoff(100 ms, 5 s)`; key `gocent-` + 26 base32 characters | 7.3 |
-| Automatic batching | `max_batch_size` 1000; `max_in_flight` suggested about 8 | 8 |
+| Automatic batching | `max_batch_size` 1000; `max_in_flight` suggested at about half the calls a process makes at once | 8 |
 | JWKS endpoint | `Cache-Control: public, max-age=300` | 11.3 |
 | `api_tokens` | TTL 5 minutes | 11.4 |
 | Endpoints for client SDKs | bodies up to 1 MiB | 12 |
