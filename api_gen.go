@@ -735,7 +735,8 @@ type InvalidateUserTokensRequest struct {
 	// Optional, but a value matching the token expiration is recommended.
 	ExpireAt int64 `json:"expire_at,omitzero"`
 
-	// User is the ID of the user whose tokens to invalidate. Required.
+	// User is the ID of the user whose tokens to invalidate. Required. ""
+	// invalidates the tokens of anonymous users.
 	User string `json:"user,omitzero"`
 
 	// IssuedBefore is the Unix time in seconds: tokens issued before it are
