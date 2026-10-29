@@ -174,10 +174,10 @@ type AutoBatch struct {
 	// MaxInFlight is how many requests may be in flight at once before calls
 	// start to wait and be batched. Zero disables AutoBatch.
 	//
-	// A smaller value batches more: calls are batched only once this many
-	// requests are in flight, so a value above the concurrency the load needs
-	// leaves nearly every call sent alone. A small value such as 8 suits most
-	// applications.
+	// Calls are batched only once this many requests are in flight: set it to
+	// about half the calls the process makes at once. Above that, it never
+	// batches; just below, it batches calls one at a time, and only limits
+	// them.
 	MaxInFlight int
 
 	// MaxBatchSize caps how many calls one batch carries. Zero means 1000.

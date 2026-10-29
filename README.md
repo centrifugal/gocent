@@ -247,9 +247,15 @@ publications into different channels may not, unless the namespace sets
 
 ## Automatic batching
 
-With `AutoBatch` set, calls made concurrently go out together once enough
-requests are in flight - with no delay otherwise, since nothing waits for a
-timer:
+With `AutoBatch` set, calls made concurrently go out together once
+`MaxInFlight` requests are in flight - with no delay otherwise, since nothing
+waits for a timer.
+
+It is for processes making many calls at once - a service handling many
+requests concurrently, a worker fanning publications out - and does nothing
+for one making a few at a time. Set `MaxInFlight` to about half the calls the
+process makes at once: above that, it never batches; just below, it batches
+calls one at a time, and only limits them:
 
 ```go
 client, err := gocent.New(gocent.Config{
@@ -261,8 +267,7 @@ client, err := gocent.New(gocent.Config{
 
 Every call still gets its own result or error, and keeps its own deadline. Calls
 sharing a batch share its request, though: if the request itself fails - the
-network, a body too large - every call in it fails. A smaller `MaxInFlight`
-batches more; 8 suits most applications. See
+network, a body too large - every call in it fails. See
 [`AutoBatch`](https://pkg.go.dev/github.com/centrifugal/gocent/v4#AutoBatch) for
 the details.
 
