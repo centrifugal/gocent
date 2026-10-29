@@ -165,12 +165,14 @@ call.
   read it.
 - One timeout story: every request has exactly one deadline - the caller's, or
   `request_timeout` - and the default client sets no timeouts of its own.
-  Where the HTTP library's timeouts bound each operation rather than the
-  request - a connect, each read, as Python's `requests` and `httpx` do - the
-  SDK enforces the request's deadline itself, so that a slow reply cannot
-  take longer than it - headers included, which a check between body chunks
-  does not cover (pycent: a network backend bounding each connect, read and
-  write by the time left; asyncio's `asyncio.timeout` around the whole call).
+  How it is enforced is the language's: a deadline or cancellation where the
+  platform has one (Go's `context`, JavaScript's `AbortSignal`, Python's
+  `asyncio.timeout`); where the HTTP library's timeouts bound each operation
+  rather than the request - a connect, each read, as Python's `httpx` and
+  Ruby's `Net::HTTP` do - each request gets the time left as its timeout, and
+  the SDK checks the deadline between the chunks of the reply's body. An SDK
+  SHOULD use its HTTP library's public API only: what it cannot bound so - a
+  reply's headers trickling in - its docs MUST say may outlast the timeout.
   Whichever way a request times out, the SDK MUST report it as the language's
   one timeout error (gocent: `errors.Is(err, context.DeadlineExceeded)`).
 - Replies are decoded as strictly as requests are encoded: case-sensitive
@@ -912,8 +914,9 @@ Generation and the client:
   concurrent calls (3.2).
 - [ ] Response bodies closed and drained to a bound; request bodies not
   reused while the transport may read them (3.2).
-- [ ] One deadline per request, also where the HTTP library times each
-  operation; every timeout is the language's one timeout error (3.2).
+- [ ] One deadline per request: the platform's deadline, or the time left
+  given to each operation and checked between body chunks; docs say what can
+  outlast it; every timeout is the language's one timeout error (3.2).
 - [ ] A client the caller passed is not changed: credentials and headers go
   on each request (3.1).
 - [ ] A reply which is not of the reply's shape is a `DecodeError` (3.2).
@@ -1052,6 +1055,9 @@ here; the sections they belong to say what they are for.
   arguments in PHP, a plain object in JavaScript - and a batch and commands
   have a method per API method, as the client (conventions, 3.3, 9).
 - A plain-object request refuses fields the SDK does not know (3.3).
+- One deadline per request is enforced by the language's public means: where
+  the HTTP library times each operation, the time left per operation and a
+  check between body chunks, the docs saying what can outlast it (3.2).
 
 ### 0.1 - 2026-10-25
 
