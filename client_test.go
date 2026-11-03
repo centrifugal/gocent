@@ -439,8 +439,8 @@ func TestBearerTokenErrorSendsNothing(t *testing.T) {
 	cause := errors.New("identity provider down")
 	c := bearerClient(t, f, func(context.Context) (string, error) { return "", cause })
 	_, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data})
-	if !errors.Is(err, cause) || !strings.Contains(err.Error(), "bearer token") {
-		t.Fatalf("error %v, want one wrapping the token error", err)
+	if !errors.Is(err, cause) || !strings.Contains(err.Error(), "BearerTokenFunc") {
+		t.Fatalf("error %v, want one wrapping the token error, naming BearerTokenFunc", err)
 	}
 	if n := len(f.recorded()); n != 0 {
 		t.Errorf("%d requests sent without a token", n)
