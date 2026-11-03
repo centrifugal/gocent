@@ -151,7 +151,7 @@ func goFieldType(s *schema, f *field) string {
 var initialisms = map[string]string{
 	"id": "ID", "ids": "IDs", "uid": "UID", "url": "URL", "urls": "URLs",
 	"ttl": "TTL", "api": "API", "json": "JSON", "http": "HTTP", "rpc": "RPC",
-	"apns": "APNS", "fcm": "FCM", "hms": "HMS", "ip": "IP",
+	"apns": "APNS", "fcm": "FCM", "hms": "HMS", "ip": "IP", "ios": "IOS",
 }
 
 func goName(snake string) string {
@@ -172,6 +172,134 @@ func goName(snake string) string {
 		}
 	}
 	return b.String()
+}
+
+// reValue matches a value listed by "One of:": a wire value, lowercase.
+var reValue = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
+// listedValues returns the values a field's comment lists in the sentence
+// "One of: add, remove, set.", or nil without one. The sentence is api.proto's
+// convention for a string field with a fixed set of values, which become
+// constants; one which is malformed fails the generation rather than being
+// skipped.
+func listedValues(doc []string) ([]string, error) {
+	_, after, ok := strings.Cut(strings.Join(doc, " "), "One of:")
+	if !ok {
+		return nil, nil
+	}
+	list, _, ok := strings.Cut(after, ".")
+	if !ok {
+		return nil, fmt.Errorf(`the values after "One of:" must end with a period`)
+	}
+	var values []string
+	for v := range strings.SplitSeq(list, ",") {
+		v = strings.TrimSpace(v)
+		if !reValue.MatchString(v) {
+			return nil, fmt.Errorf("%q is not a value: lowercase letters, digits and underscores", v)
+		}
+		if slices.Contains(values, v) {
+			return nil, fmt.Errorf("value %q listed twice", v)
+		}
+		values = append(values, v)
+	}
+	return values, nil
+}
+
+// constGroup is the constants of a string field with listed values: the
+// values, and the messages whose field of that name lists exactly them.
+type constGroup struct {
+	field    string
+	values   []string
+	messages []string
+	// prefix is the message name, set when the field name alone would be
+	// ambiguous.
+	prefix string
+}
+
+// constName returns the constant for one of the group's values: OpAdd for
+// the op field's "add".
+func (g *constGroup) constName(value string) string {
+	return g.prefix + goName(g.field) + goName(value)
+}
+
+// constGroups collects the fields with listed values into groups, in the
+// order of the proto. A constant is named by its field and value. Where
+// fields of one name list different values in different messages, the set
+// listed in the most messages keeps the short name and the others are named
+// by their message too - OpAdd for the topic updates, FilterNodeOpAnd for
+// FilterNode - and a tie names all of them so.
+func constGroups(s *schema) ([]*constGroup, error) {
+	byField := map[string][]*constGroup{}
+	var order []string
+	for _, m := range s.messages {
+		if skipType(s, m.name) {
+			continue
+		}
+		for _, f := range m.fields {
+			values, err := listedValues(f.doc)
+			if err != nil {
+				return nil, fmt.Errorf("%s.%s: %w", m.name, f.name, err)
+			}
+			if values == nil {
+				continue
+			}
+			if byField[f.name] == nil {
+				order = append(order, f.name)
+			}
+			i := slices.IndexFunc(byField[f.name], func(g *constGroup) bool { return slices.Equal(g.values, values) })
+			if i < 0 {
+				byField[f.name] = append(byField[f.name], &constGroup{field: f.name, values: values})
+				i = len(byField[f.name]) - 1
+			}
+			byField[f.name][i].messages = append(byField[f.name][i].messages, m.name)
+		}
+	}
+	var out []*constGroup
+	for _, name := range order {
+		groups := byField[name]
+		if len(groups) > 1 {
+			most := slices.MaxFunc(groups, func(a, b *constGroup) int { return len(a.messages) - len(b.messages) })
+			for _, g := range groups {
+				if g != most || slices.ContainsFunc(groups, func(o *constGroup) bool { return o != most && len(o.messages) == len(most.messages) }) {
+					if len(g.messages) > 1 {
+						return nil, fmt.Errorf("field %s lists %v in %v and other values elsewhere: cannot name its constants", name, g.values, g.messages)
+					}
+					g.prefix = g.messages[0]
+				}
+			}
+		}
+		out = append(out, groups...)
+	}
+	return out, nil
+}
+
+// joinAnd joins words as a sentence does: "a, b and c".
+func joinAnd(words []string) string {
+	if len(words) < 2 {
+		return strings.Join(words, "")
+	}
+	return strings.Join(words[:len(words)-1], ", ") + " and " + words[len(words)-1]
+}
+
+// wrap breaks text into lines of at most width characters, at spaces.
+func wrap(text string, width int) []string {
+	var lines []string
+	line := ""
+	for word := range strings.FieldsSeq(text) {
+		switch {
+		case line == "":
+			line = word
+		case len(line)+1+len(word) > width:
+			lines = append(lines, line)
+			line = word
+		default:
+			line += " " + word
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 // command pairs an API method with its request and result, as the batch
@@ -338,6 +466,25 @@ func generate(s *schema) ([]byte, error) {
 			w.p("\t%s %s `json:\"%s,omitzero\"`", goName(f.name), goFieldType(s, f), f.name)
 		}
 		w.p("}")
+	}
+
+	// The values of the string fields with a fixed set, as constants.
+	groups, err := constGroups(s)
+	if err != nil {
+		return nil, fmt.Errorf("api.proto: %w", err)
+	}
+	for _, g := range groups {
+		names := make([]string, len(g.values))
+		for i, v := range g.values {
+			names[i] = g.constName(v)
+		}
+		w.p("")
+		w.doc("", wrap(fmt.Sprintf("%s are the values of the %s field of %s. The field is a string: a value Centrifugo accepts which these do not name can still be sent.", joinAnd(names), goName(g.field), joinAnd(g.messages)), 77), "", "")
+		w.p("const (")
+		for i, v := range g.values {
+			w.p("\t%s = %q", names[i], v)
+		}
+		w.p(")")
 	}
 
 	// Every request knows its method name, and how it sits in a batch.

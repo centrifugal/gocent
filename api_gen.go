@@ -106,15 +106,15 @@ type BroadcastRequest struct {
 // Centrifugo PRO only: defined here for protocol-surface consistency,
 // Centrifugo OSS parses it but ignores it.
 type FilterNode struct {
-	// Op is the logical operation of a non-leaf node: "and", "or" or "not".
-	// Empty for a leaf node.
+	// Op is the logical operation of a non-leaf node. Empty for a leaf node.
+	// One of: and, or, not.
 	Op string `json:"op,omitzero"`
 
 	// Key is the label key a leaf node compares.
 	Key string `json:"key,omitzero"`
 
-	// Cmp is the comparison of a leaf node: "eq", "neq", "in", "nin", "ex",
-	// "nex", "sw", "ew", "ct", "gt", "gte", "lt" or "lte".
+	// Cmp is the comparison of a leaf node. One of: eq, neq, in, nin, ex, nex,
+	// sw, ew, ct, gt, gte, lt, lte.
 	Cmp string `json:"cmp,omitzero"`
 
 	// Val is the value to compare with, for single-value comparisons.
@@ -761,15 +761,15 @@ type DeviceRegisterRequest struct {
 	// device.
 	ID string `json:"id,omitzero"`
 
-	// Provider is the provider of the device token: fcm, hms, apns or
-	// webpush. Required.
+	// Provider is the provider of the device token. Required. One of: fcm,
+	// hms, apns, webpush.
 	Provider string `json:"provider,omitzero"`
 
 	// Token is the push token of the device. For webpush, it is the browser
 	// PushSubscription serialized as a JSON string. Required.
 	Token string `json:"token,omitzero"`
 
-	// Platform is the device platform: ios, android or web. Required.
+	// Platform is the device platform. Required. One of: ios, android, web.
 	Platform string `json:"platform,omitzero"`
 
 	// User is the user associated with the device.
@@ -855,7 +855,7 @@ type DeviceMetaUpdate struct {
 
 // DeviceTopicsUpdate changes the topics of devices. Centrifugo PRO only.
 type DeviceTopicsUpdate struct {
-	// Op is the operation: add, remove or set. Required.
+	// Op is the operation. Required. One of: add, remove, set.
 	Op string `json:"op,omitzero"`
 
 	// Topics are the topics for the operation.
@@ -987,7 +987,7 @@ type DeviceTopicUpdateRequest struct {
 	// DeviceID is the ID of the device. Required.
 	DeviceID string `json:"device_id,omitzero"`
 
-	// Op is the operation: add, remove or set. Required.
+	// Op is the operation. Required. One of: add, remove, set.
 	Op string `json:"op,omitzero"`
 
 	// Topics are the topics for the operation.
@@ -1006,7 +1006,7 @@ type UserTopicUpdateRequest struct {
 	// device - anonymous ones included - gets on its next DeviceRegister.
 	User string `json:"user,omitzero"`
 
-	// Op is the operation: add, remove or set. Required.
+	// Op is the operation. Required. One of: add, remove, set.
 	Op string `json:"op,omitzero"`
 
 	// Topics are the topics for the operation.
@@ -1356,8 +1356,8 @@ type UpdatePushStatusRequest struct {
 	// SendPushNotificationRequest). Required.
 	AnalyticsUID string `json:"analytics_uid,omitzero"`
 
-	// Status is the status of the push notification: delivered or
-	// interacted. Required.
+	// Status is the status of the push notification. Required. One of:
+	// delivered, interacted.
 	Status string `json:"status,omitzero"`
 
 	// DeviceID is the Centrifugo device ID. Required.
@@ -1431,9 +1431,9 @@ type MapPublishRequest struct {
 	// Score is currently not used by the server API.
 	Score int64 `json:"score,omitzero"`
 
-	// KeyMode makes the publish conditional: "if_new" writes only if the
-	// key does not exist, "if_exists" only if it exists. Empty always
-	// writes.
+	// KeyMode makes the publish conditional: if_new writes only if the key
+	// does not exist, if_exists only if it exists. Empty always writes.
+	// One of: if_new, if_exists.
 	KeyMode string `json:"key_mode,omitzero"`
 }
 
@@ -1643,6 +1643,80 @@ type SharedPollPublishRequest struct {
 // Empty at the moment.
 type SharedPollPublishResult struct {
 }
+
+// FilterNodeOpAnd, FilterNodeOpOr and FilterNodeOpNot are the values of the Op
+// field of FilterNode. The field is a string: a value Centrifugo accepts which
+// these do not name can still be sent.
+const (
+	FilterNodeOpAnd = "and"
+	FilterNodeOpOr  = "or"
+	FilterNodeOpNot = "not"
+)
+
+// OpAdd, OpRemove and OpSet are the values of the Op field of
+// DeviceTopicsUpdate, DeviceTopicUpdateRequest and UserTopicUpdateRequest. The
+// field is a string: a value Centrifugo accepts which these do not name can
+// still be sent.
+const (
+	OpAdd    = "add"
+	OpRemove = "remove"
+	OpSet    = "set"
+)
+
+// CmpEq, CmpNeq, CmpIn, CmpNin, CmpEx, CmpNex, CmpSw, CmpEw, CmpCt, CmpGt,
+// CmpGte, CmpLt and CmpLte are the values of the Cmp field of FilterNode. The
+// field is a string: a value Centrifugo accepts which these do not name can
+// still be sent.
+const (
+	CmpEq  = "eq"
+	CmpNeq = "neq"
+	CmpIn  = "in"
+	CmpNin = "nin"
+	CmpEx  = "ex"
+	CmpNex = "nex"
+	CmpSw  = "sw"
+	CmpEw  = "ew"
+	CmpCt  = "ct"
+	CmpGt  = "gt"
+	CmpGte = "gte"
+	CmpLt  = "lt"
+	CmpLte = "lte"
+)
+
+// ProviderFCM, ProviderHMS, ProviderAPNS and ProviderWebpush are the values of
+// the Provider field of DeviceRegisterRequest. The field is a string: a value
+// Centrifugo accepts which these do not name can still be sent.
+const (
+	ProviderFCM     = "fcm"
+	ProviderHMS     = "hms"
+	ProviderAPNS    = "apns"
+	ProviderWebpush = "webpush"
+)
+
+// PlatformIOS, PlatformAndroid and PlatformWeb are the values of the Platform
+// field of DeviceRegisterRequest. The field is a string: a value Centrifugo
+// accepts which these do not name can still be sent.
+const (
+	PlatformIOS     = "ios"
+	PlatformAndroid = "android"
+	PlatformWeb     = "web"
+)
+
+// StatusDelivered and StatusInteracted are the values of the Status field of
+// UpdatePushStatusRequest. The field is a string: a value Centrifugo accepts
+// which these do not name can still be sent.
+const (
+	StatusDelivered  = "delivered"
+	StatusInteracted = "interacted"
+)
+
+// KeyModeIfNew and KeyModeIfExists are the values of the KeyMode field of
+// MapPublishRequest. The field is a string: a value Centrifugo accepts which
+// these do not name can still be sent.
+const (
+	KeyModeIfNew    = "if_new"
+	KeyModeIfExists = "if_exists"
+)
 
 // APIMethod returns "publish", the Centrifugo server API method a [PublishRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an

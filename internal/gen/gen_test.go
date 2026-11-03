@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -62,10 +63,91 @@ func TestGoName(t *testing.T) {
 		"ttl":            "TTL",
 		"device_ids":     "DeviceIDs",
 		"apns":           "APNS",
+		"ios":            "IOS",
+		"if_new":         "IfNew",
 	} {
 		if got := goName(in); got != want {
 			t.Errorf("goName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestListedValues(t *testing.T) {
+	for name, tc := range map[string]struct {
+		doc  []string
+		want []string
+		err  bool
+	}{
+		"one line":     {doc: []string{"op is the operation. Required. One of: add, remove, set."}, want: []string{"add", "remove", "set"}},
+		"wrapped":      {doc: []string{"provider is the provider. Required. One of: fcm,", "hms, apns, webpush."}, want: []string{"fcm", "hms", "apns", "webpush"}},
+		"none":         {doc: []string{"channel is the channel. Required."}},
+		"no period":    {doc: []string{"One of: a, b"}, err: true},
+		"not a value":  {doc: []string{"One of: A, b."}, err: true},
+		"listed twice": {doc: []string{"One of: a, a."}, err: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := listedValues(tc.doc)
+			if (err != nil) != tc.err {
+				t.Fatalf("err %v, want error %t", err, tc.err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestConstGroups(t *testing.T) {
+	s, err := parse(strings.NewReader(`
+message A {
+    string op = 1; // One of: add, remove.
+}
+message B {
+    string op = 1; // One of: add, remove.
+}
+message C {
+    string op = 1; // One of: and, or.
+    string mode = 2; // One of: if_new.
+}`), "test.proto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, err := constGroups(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, g := range groups {
+		for _, v := range g.values {
+			names = append(names, g.constName(v))
+		}
+	}
+	want := []string{"OpAdd", "OpRemove", "COpAnd", "COpOr", "ModeIfNew"}
+	if !slices.Equal(names, want) {
+		t.Errorf("constants %v, want %v", names, want)
+	}
+
+	// A tie names every group by its message.
+	s, err = parse(strings.NewReader(`
+message A {
+    string op = 1; // One of: add.
+}
+message C {
+    string op = 1; // One of: and.
+}`), "test.proto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, err = constGroups(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names = names[:0]
+	for _, g := range groups {
+		names = append(names, g.constName(g.values[0]))
+	}
+	if want := []string{"AOpAdd", "COpAnd"}; !slices.Equal(names, want) {
+		t.Errorf("constants %v, want %v", names, want)
 	}
 }
 
