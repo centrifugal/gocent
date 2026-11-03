@@ -34,6 +34,29 @@ func Example() {
 	log.Printf("published at offset %d", res.Offset)
 }
 
+// HistoryAll reads the publications which came after one: Since is where it
+// went in the channel's stream.
+func ExampleClient_HistoryAll() {
+	client, err := gocent.New(gocent.Config{APIEndpoint: "http://localhost:8000/api", APIKey: os.Getenv("CENTRIFUGO_API_KEY")})
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx := context.Background()
+	res, err := client.Publish(ctx, gocent.PublishRequest{Channel: "news", Data: jsontext.Value(`{"text":"hello"}`)})
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Later: every publication after that one, a hundred at a time.
+	for pub, err := range client.HistoryAll(ctx, gocent.HistoryRequest{Channel: "news", Limit: 100, Since: res.Position()}) {
+		if err != nil {
+			// ErrUnrecoverablePosition: the history was lost since, and only
+			// reading it from the start is left.
+			log.Fatal(err)
+		}
+		log.Printf("offset %d: %s", pub.Offset, pub.Data)
+	}
+}
+
 // Data is JSON. Encode a value of your own with encoding/json.
 func ExampleClient_Publish() {
 	var client *gocent.Client // created once with gocent.New
