@@ -5,7 +5,7 @@ Centrifugo, as opposed to a client SDK in browsers and apps - provides, and
 how it behaves. gocent is its reference implementation: where this document
 and gocent disagree, it is a bug in one of them, to be fixed in both.
 
-**Version 0.2 (draft)**, 2026-10-28. Changes: section 18.
+**Version 0.3 (draft)**, 2026-11-03. Changes: section 18.
 
 The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119. Each
 section states its rules with the reasons for them, so that a case the spec
@@ -102,13 +102,25 @@ its README.
 - The protos MUST be copied from a released Centrifugo tag before an SDK
   release. A branch MAY be used during development.
 - The proto comments become the SDK's documentation of every type, field and
-  method.
+  method. Three phrases in them are read by the generator: "Required."
+  (section 3.3), "Centrifugo PRO only" (below) and "One of:" (section 3.3).
 - Field names on the wire are the protos' field names, exactly: snake_case,
-  case-sensitive (Centrifugo v7 stops accepting other spellings).
-- A field left at its zero value is not sent. A `BoolValue` field is
-  tri-state - absent leaves the server's setting alone, which `false` cannot
-  say - and MUST be represented as optional (a pointer, `None`, `undefined`),
-  with a helper to make one (gocent: `gocent.Bool(true)`).
+  case-sensitive. Centrifugo matches a name exactly, then by ASCII case
+  folding, and ignores a name it does not know: `Channel` works, but
+  `idempotencyKey` is dropped without a word. The exact name is the one
+  spelling every version accepts.
+- A scalar field left at its zero value is not sent: a proto3 scalar has no
+  presence, so a request with the field absent and one with it zero are the
+  same request. A message field has presence: it is sent when set, even when
+  every field in it is zero, since Centrifugo reads that it is there.
+  `device_update`'s `user_update` with an empty `user` detaches the devices
+  from their user; its `timezone_update` and `locale_update` with an empty
+  value, and `meta_update` with an empty map, clear them. An SDK MUST
+  therefore represent a message field as optional - a pointer in Go, `None`,
+  `undefined` - and send it whenever it is set, whatever it holds. A
+  `BoolValue` field is a message too, and so tri-state: absent leaves the
+  server's setting alone, which `false` cannot say; an SDK gives it a helper
+  (gocent: `gocent.Bool(true)`).
 - Payload fields (`bytes` in the protos: data, info, meta) are JSON values in
   the API and the proxy: section 3.4 says how an SDK takes and returns them.
 - A method whose comment says "Centrifugo PRO only" MUST be marked so in the
@@ -155,10 +167,12 @@ call.
   be used.
 - Headers: `Content-Type: application/json`, `User-Agent: <sdk>/<major>`
   (gocent: `gocent/v4`), the credentials.
-- Redirects MUST NOT be followed: Centrifugo's API never redirects, and
-  following one would send the API key wherever it points and turn a `POST`
-  into a `GET`. A redirect is an `HTTPError` with a hint to check the endpoint.
-  A caller's HTTP client with its own redirect policy is left to it.
+- Redirects MUST NOT be followed: Centrifugo's API never redirects a call -
+  its HTTP router redirects only a path which is not in canonical form, one
+  with a doubled slash say, to the clean one - and following one would send
+  the API key wherever it points and turn a `POST` into a `GET`. A redirect
+  is an `HTTPError` with a hint to check the endpoint's scheme and path. A
+  caller's HTTP client with its own redirect policy is left to it.
 - The default HTTP client MUST keep connections alive with a pool sized for
   concurrent use. It keeps every connection while idle, so that a burst does
   not open connections only to close them, and closes idle ones before load
@@ -212,9 +226,47 @@ A field the protos mark "Required." without a condition is a required
 parameter where the language can say so - a keyword or named argument
 without a default, a non-optional TypeScript property - so that a call
 missing it fails as the language fails such a call, before anything is sent,
-and type checkers and editors show it. A field "Required unless ..." stays
-optional. This is the method's signature, not a copy of Centrifugo's
-validation (section 3.5).
+and type checkers and editors show it. Where the language cannot say so - a
+Go struct, in which a missing field and an empty one are the same value -
+the SDK checks before sending that each such field is set, and fails with
+`InvalidRequest` naming it (section 3.5). Either way a call missing a
+required field fails before anything is sent, in every language, and in the
+signature where there is one. A field "Required unless ..." stays optional.
+A field whose comment gives its empty value a meaning is required in the
+signature but not checked, since a check could not tell empty from missing:
+`invalidate_user_tokens`'s `user`, where empty means anonymous users;
+`user_topic_update`'s `user`, where empty is the global binding; the `user`,
+`timezone`, `locale` and `meta` of `device_update`'s updates, where empty
+clears.
+
+A field whose comment lists its values - in the sentence `One of: add,
+remove, set.`, which `api.proto` writes for every string field with a fixed
+set of values - gets a constant per value in the SDK, generated from that
+sentence as the types are from the messages, so that a value Centrifugo
+adds reaches every SDK with its next sync. A constant is named by the field
+and the value - `ProviderFCM`, `PlatformIOS`, `OpAdd`, `StatusDelivered`,
+`KeyModeIfNew`, `CmpEq`, spelled the language's way - so that a typo fails
+at compile or import time rather than at Centrifugo. Where fields of one
+name list different values in different messages, the set listed in the
+most messages keeps the short name and the others are named by their
+message too - `OpAdd` for the topic updates, `FilterNodeOpAnd` for
+`FilterNode` - and a tie names all of them so. The field stays a string,
+never a closed enum: Centrifugo adds values, and one the SDK does not name
+MUST still be sendable. The fields today, for reference; the proto is the
+source:
+
+| Field | Values |
+|---|---|
+| `device_register.provider` | `fcm`, `hms`, `apns`, `webpush` |
+| `device_register.platform` | `ios`, `android`, `web` |
+| `op` of `device_update`'s `topics_update`, of `device_topic_update` and of `user_topic_update` | `add`, `remove`, `set` |
+| `update_push_status.status` | `delivered`, `interacted` |
+| `map_publish.key_mode` | `if_new`, `if_exists` |
+| `FilterNode.op` | `and`, `or`, `not` |
+| `FilterNode.cmp` | `eq`, `neq`, `in`, `nin`, `ex`, `nex`, `sw`, `ew`, `ct`, `gt`, `gte`, `lt`, `lte` |
+
+The `provider` and `platform` constants serve `device_list`'s filter too,
+whose `providers` and `platforms` take the same values.
 
 ### 3.4 Payloads
 
@@ -376,11 +428,17 @@ A request the client can tell is wrong MUST NOT be sent, and fails with an
 
 - a request which cannot be encoded: a payload which is not valid JSON, a
   string which is not valid UTF-8;
-- `publish`: no `channel`; neither `data` nor `b64data`;
-- `broadcast`: no `channels`; an empty channel name (naming its index);
-  neither `data` nor `b64data`.
+- a field marked "Required." left unset, where the language's signature
+  could not require it (section 3.3): `presence` without a `channel`,
+  `shared_poll_publish` without a `version`;
+- `publish`: neither `data` nor `b64data`;
+- `broadcast`: an empty channel name (naming its index); neither `data` nor
+  `b64data`.
 
 Every other rule stays Centrifugo's to check: the SDK MUST NOT copy them.
+The protos' "Required." marks and the two `data` rules are the whole of what
+it copies, because they are stable - a field does not stop being required -
+and because the signature already says them where it can.
 
 ### 3.6 Shutdown
 
@@ -401,6 +459,39 @@ wire names - `num_clients`, `idempotency_key` - nested results alike, and
 payloads as they are. An error in a result - a channel's in a broadcast, a
 command's in a batch - is `{"code": ..., "message": ...}` for an `Error`,
 and `{"message": ...}` for any other.
+
+### 3.8 Pages and stream positions
+
+Some methods give their items a page at a time:
+
+| Method | Request | Result | Next page |
+|---|---|---|---|
+| `history` | `limit`, `since`, `reverse` | `publications`, `offset`, `epoch` | `since` = the last publication's `offset` and the result's `epoch` |
+| `device_list`, `device_topic_list`, `user_topic_list` | `cursor`, `limit` | `items`, `next_cursor` | `cursor` = `next_cursor`; empty: no more |
+| `map_read_state` | `cursor`, `limit` | `entries`, `offset`, `epoch`, `cursor` | `cursor` = the result's `cursor`; empty: no more |
+
+For each of them an SDK MUST provide `<method>_all(req)`, returning the
+items of every page in the language's iterator - Go `iter.Seq2[T, error]`,
+a Python generator, a JavaScript async iterator, a PHP `Generator` - so that
+paging is written once, in the SDK. It sends `req` as given, then the next
+page as the table says, until there is none, and yields each page's items in
+order; an error ends it with that error, the language's way (yielded beside
+the item in Go, raised elsewhere). A page is fetched when the iteration
+reaches it, not ahead. `history_all` refuses with `InvalidRequest` a `limit`
+of 0 or -1 - the one asks for the position alone, the other for everything
+in one call - and `reverse`, since `since` has no counterpart running back;
+it stops at a page shorter than `limit`. The others take `limit` as the
+method does. Docs SHOULD say that the items of a paged method change under
+the iteration: a device registered while listing may or may not be seen.
+
+A result holding `offset` and `epoch` - `publish`'s, `history`'s,
+`map_read_state`'s - MUST give them as a `StreamPosition`, the type of
+`history`'s `since` and of `subscribe`'s `recover_since` (gocent: the method
+`Position()`), so that what a publish returned is what the next history call
+asks from, with no fields copied by hand. A position whose epoch is no
+longer the stream's fails with code 112, `UnrecoverablePosition`: the
+stream was reset, and reading from its start is the only recovery. Docs
+SHOULD show reading what came after a publication.
 
 ## 4. Errors
 
@@ -494,8 +585,9 @@ The SDK's docs MUST explain, wherever retries are:
 - Centrifugo remembers a key per channel, five minutes by default: a second
   publication under the same key is not published, so a key derived from an
   entity must also name the event (`order-42-paid`, not `order-42`);
-- the memory, Redis and PostgreSQL brokers keep keys; the NATS broker ignores
-  them, and a retry publishes again.
+- the memory, Redis and PostgreSQL brokers keep keys, and the Redis plus
+  NATS broker does through Redis; the plain NATS broker ignores them, and a
+  retry publishes again.
 
 ## 6. Retry helpers
 
@@ -681,8 +773,12 @@ which drops it. Encoded as JSON it is the `{"method": ..., "payload": ...}`
 message consumers take whole (Kafka, NATS JetStream). Encoded through the
 language's own JSON mechanism - `json.Marshal`, `JSON.stringify` of a value
 holding it, `json_encode`, `as_json` - a command MUST give `payload` as the
-JSON object, never as a string of it: a consumer drops a command whose
-payload is a string, and only Centrifugo's log says so. Docs SHOULD show
+JSON object, never as a string of it. The PostgreSQL outbox consumer reads
+the `payload` column as the request itself, so a column holding a JSON
+string is a bad request, dropped with only Centrifugo's log saying so. The
+other consumers unwrap a string which holds JSON, for CDC pipelines
+(Debezium writes a `jsonb` column as a string): a courtesy to them, not a
+format for an SDK to rely on. Docs SHOULD show
 writing `payload` to a `jsonb` column, as the PostgreSQL outbox has it. Docs MUST say that a
 consumer keeps commands in order only within a partition: a channel's
 commands keep their order only when every writer derives their partition from
@@ -735,7 +831,7 @@ JSON fails at signing.
 
 | SDK field | Claim | Notes |
 |---|---|---|
-| `user` | `sub` | Empty: anonymous |
+| `user` | `sub` | Empty: anonymous. A subscription token's is the connection's user |
 | expiry | `exp` | Required: a time, or never - `exp` left out, the token accepted forever |
 | connection / subscription expiry | `expire_at` | Unset: at `exp`; a time: the connection or subscription expires then; never: `expire_at: 0`, `exp` still bounds the token |
 | `issued_at` | `iat` | Default now |
@@ -744,8 +840,9 @@ JSON fails at signing.
 | `info` / `b64info` | `info` / `b64info` | |
 | `channels` / `subs` (connection) | `channels` / `subs` | Not both: Centrifugo ignores `channels` when `subs` is set |
 | `meta` (connection) | `meta` | Not visible to other clients, but visible to the user owning the token: docs warn against putting in it what that user must not see |
-| `caps`, `labels` (connection, PRO) | `caps`, `labels` | |
+| `caps`, `labels`, `profile` (connection, PRO) | `caps`, `labels`, `profile` | `profile`: the compression profile |
 | `channel` (subscription) | `channel` | Required |
+| `client` (subscription) | `client` | Binds the token to one connection: a subscribe or subscription refresh from another client ID is refused. For a token handed to one connection only, as from the subscription token endpoint of section 12 given the client ID |
 | `data` / `b64data`, `override`, `allow`, `server_tags_filter` (subscription) | same names | `allow` and `server_tags_filter`: PRO |
 
 Each expiry is one value, and "never" is always chosen explicitly. An SDK
@@ -858,8 +955,12 @@ deadline ending with the proxy's timeout) and returning a result or an error.
 - A handler takes `POST` only (405 with `Allow` otherwise), reads bodies up
   to a configurable limit (section 17), and answers a malformed request with
   400. Its function is required when the handler is built.
-- It answers with exactly one of result, error and disconnect: Centrifugo
-  takes a response with none as accepting the request as sent.
+- It answers with exactly one of result, error and disconnect. Centrifugo
+  takes a subscribe, publish, rpc, map publish or map remove response with
+  none of them as accepting the request as sent; a connect response with
+  none gives no credentials, so the connection is refused unless Centrifugo
+  allows anonymous ones; a refresh or sub refresh response with none has
+  expired.
 - `ProxyError{code, message, temporary}`, with a code in [400, 1999],
   rejects the request. `Disconnect{code, reason}`, with a code in
   [4000, 4999], closes the connection; codes in [4500, 4999] tell the client
@@ -924,9 +1025,9 @@ matches byte for byte when its JSON is written compactly, the header as
 `alg, typ, kid` and the claims, those present, in gocent's order:
 
 - connection: `sub, exp, iat, jti, aud, iss, expire_at, info, b64info,
-  channels, subs, meta, caps, labels`;
-- subscription: `sub, exp, iat, jti, aud, iss, channel, expire_at, info,
-  b64info, data, b64data, override, allow, server_tags_filter`.
+  channels, subs, meta, caps, labels, profile`;
+- subscription: `sub, exp, iat, jti, aud, iss, channel, client, expire_at,
+  info, b64info, data, b64data, override, allow, server_tags_filter`.
 
 Byte equality is a convenience for tests, not a requirement: Centrifugo reads
 claims in any order.
@@ -944,7 +1045,7 @@ Generation and the client:
 - [ ] Request and result types generated from the protos, never edited by
   hand, checked current in CI; protos from a released tag (2).
 - [ ] Field names on the wire exactly the protos', case-sensitive; zero
-  values not sent (2).
+  scalars not sent; message fields optional, sent whenever set (2).
 - [ ] `BoolValue` fields optional, with a helper; PRO-only methods marked
   (2).
 - [ ] Safe for concurrent use; creation validates all it can, with
@@ -973,7 +1074,9 @@ Generation and the client:
 - [ ] Every API method but `rpc`, on the client, on a batch and for
   commands; a request in the language's idiom; a plain-object request's
   unknown fields refused; fields marked "Required." required where the
-  language can say so (3.3).
+  language can say so, and checked before sending where it cannot, but for
+  those whose empty value has a meaning; constants for the fields with
+  listed values, the fields still strings (3.3).
 - [ ] A client shared within a process: after a fork it uses connections
   and workers of its own; an async client from another event loop fails with
   `InvalidConfig` (3.1).
@@ -990,12 +1093,16 @@ Payloads and validation:
 - [ ] Docs advise strings for integers which may pass 2^53 (3.4).
 - [ ] JavaScript: `bigIntegers`, off by default, refused with
   `InvalidConfig` where it cannot work (3.4).
-- [ ] A request the client can tell is wrong is not sent: `InvalidRequest`;
-  no other Centrifugo rule copied (3.5).
+- [ ] A request the client can tell is wrong is not sent: `InvalidRequest`
+  for what cannot be encoded, an unset "Required." field the signature could
+  not require, and the `data` rules; no other Centrifugo rule copied (3.5).
 - [ ] `close` refuses new calls with `Closed` and waits for those in progress
   (3.6).
 - [ ] Results encoded as JSON the language's way give wire names, and errors
   in them as `{code, message}` (3.7).
+- [ ] `<method>_all` for every paged method, in the language's iterator,
+  fetching a page when reached; `history_all` refuses `limit` 0 and -1 and
+  `reverse`; results with `offset` and `epoch` give a `StreamPosition` (3.8).
 
 Errors and retries:
 
@@ -1055,7 +1162,8 @@ Tokens, endpoints, shared poll, proxy:
   P-384 and P-521 refused; a payload claim which is not valid JSON fails
   signing (11.1).
 - [ ] An expiry required, "never" chosen explicitly, contradictions refused;
-  `channels` and `subs` not both; docs on `meta` (11.2).
+  `channels` and `subs` not both; the `client` and `profile` claims; docs on
+  `meta` (11.2).
 - [ ] `jwks` refuses no keys, HMAC keys, keys without an ID, an ID used
   twice; its endpoint's headers; docs on rotation (11.3).
 - [ ] `api_token` refuses HMAC keys, keys without an ID, neither audience
@@ -1074,7 +1182,8 @@ Tokens, endpoints, shared poll, proxy:
   explicitly, integers and durations refused (13).
 - [ ] Proxy handlers: `POST` only, body limit, exactly one of result, error
   and disconnect, 500 for anything else; docs: keep them internal, the code
-  ranges and the reason's limit (14).
+  ranges, the reason's limit and what an empty response means per proxy
+  (14).
 - [ ] Proxy payloads as in 3.4; binary mode: payloads in the `b64` fields
   (14).
 - [ ] The tests of 15, and the vectors of 15.1 (15).
@@ -1105,7 +1214,8 @@ by applications, for test doubles of their own.
   Centrifugo v6).
 - A field removed from the protos is a breaking change in typed languages:
   keep it as a deprecated field Centrifugo ignores until the SDK's next major.
-- An SDK following section 2 is ready for Centrifugo v7's exact JSON names.
+- An SDK following section 2 sends the one spelling of a field name every
+  Centrifugo version accepts.
 
 ## 17. gocent's values
 
@@ -1125,6 +1235,37 @@ here; the sections they belong to say what they are for.
 | Proxy handlers | bodies up to 16 MiB, configurable | 14 |
 
 ## 18. Changes
+
+### 0.3 - 2026-11-03
+
+Rules added:
+
+- A message field has presence: optional in the SDK, sent whenever set, even
+  empty - `device_update`'s updates clear with an empty value (2).
+- A "Required." field is checked before sending where the signature cannot
+  require it, but for those whose empty value has a meaning (3.3, 3.5).
+- Constants for the fields whose comments list their values, generated from
+  the proto's "One of:" sentence; the fields stay strings (2, 3.3).
+- `<method>_all` iterators for the paged methods; `StreamPosition` from the
+  results holding `offset` and `epoch` (3.8).
+- The `client` claim of subscription tokens and the `profile` claim of
+  connection tokens; a subscription token's `sub` is the connection's user
+  (11.2).
+- The Redis plus NATS broker keeps idempotency keys (5).
+
+Corrections, where 0.2 said what Centrifugo does not do:
+
+- Centrifugo matches field names by ASCII case folding too, and drops an
+  unknown name silently; no version is said to stop accepting other
+  spellings (2, 16).
+- Centrifugo's router redirects a non-canonical path; the API itself never
+  redirects (3.2).
+- Consumers other than the PostgreSQL outbox unwrap a string payload holding
+  JSON; the outbox drops it (9).
+- A proxy response with none of result, error and disconnect accepts a
+  subscribe, publish, rpc, map publish or map remove as sent; it refuses a
+  connect, unless anonymous connections are allowed, and expires a refresh
+  or sub refresh (14).
 
 ### 0.2 - 2026-10-28
 
