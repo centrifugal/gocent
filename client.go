@@ -83,7 +83,8 @@ type Config struct {
 	// deadline only shortens a call, never extends it - a call made with
 	// the context of an HTTP handler which lives for minutes still gives up
 	// on a stuck Centrifugo after RequestTimeout. To let calls take longer,
-	// raise RequestTimeout. Zero means 10 seconds.
+	// raise RequestTimeout. Zero means the default of 10 seconds, not "no
+	// timeout": a call cannot be left unbounded.
 	RequestTimeout time.Duration
 
 	// Header holds extra headers sent with every request, for a proxy in
@@ -585,17 +586,17 @@ func (c *Client) post(ctx context.Context, method string, body, out any, status 
 			return fmt.Errorf("gocent: APIEndpointFunc: %w", err)
 		}
 		if base, err = checkAddr(addr); err != nil {
-			return fmt.Errorf("gocent: APIEndpointFunc: %w", err)
+			return fmt.Errorf("%w: APIEndpointFunc: %w", ErrInvalidConfig, err)
 		}
 	}
 	var auth string
 	if c.token != nil {
 		token, err := c.token(ctx)
 		if err != nil {
-			return fmt.Errorf("gocent: bearer token: %w", err)
+			return fmt.Errorf("gocent: BearerTokenFunc: %w", err)
 		}
 		if token == "" || !validHeaderValue(token) {
-			return errors.New("gocent: bearer token: BearerTokenFunc returned an empty token or one with a line break or another control character")
+			return fmt.Errorf("%w: BearerTokenFunc returned an empty token or one with a line break or another control character", ErrInvalidConfig)
 		}
 		auth = "Bearer " + token
 	}

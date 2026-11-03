@@ -154,7 +154,10 @@ func (e *DecodeError) Error() string {
 
 func (e *DecodeError) Unwrap() error { return e.Err }
 
-// ErrInvalidConfig is wrapped by every error [New] returns.
+// ErrInvalidConfig is wrapped by every error [New] returns, and by the error
+// of a call whose Config.APIEndpointFunc or Config.BearerTokenFunc returned
+// an endpoint or token the client cannot send: the client is refused as
+// configured. A function's own error is returned wrapped, naming the function.
 var ErrInvalidConfig = errors.New("gocent: invalid config")
 
 // maxErrorItems bounds how many failures an aggregate error names in its

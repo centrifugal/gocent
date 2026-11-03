@@ -94,6 +94,9 @@ func TestRetryableFromClient(t *testing.T) {
 	if err == nil || gocent.Retryable(err) {
 		t.Errorf("malformed address: Retryable(%v) = true", err)
 	}
+	if !errors.Is(err, gocent.ErrInvalidConfig) {
+		t.Errorf("malformed address: %v does not match ErrInvalidConfig", err)
+	}
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

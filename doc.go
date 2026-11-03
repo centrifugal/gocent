@@ -58,6 +58,9 @@
 //   - [ErrInvalidRequest]: the client could tell the request is wrong - a
 //     publication without a channel, data which is not JSON - and did not
 //     send it.
+//   - [ErrInvalidConfig]: Config.APIEndpointFunc or Config.BearerTokenFunc
+//     returned an endpoint or token the client cannot send. An error of
+//     the function's own is returned wrapped, naming the function.
 //   - Anything else comes from the network or the context, wrapped.
 //
 // Each call is bounded by its context: give a call a timeout of its own with

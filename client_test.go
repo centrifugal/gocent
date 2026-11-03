@@ -459,6 +459,10 @@ func TestBearerTokenMalformedSendsNothing(t *testing.T) {
 		if gocent.Retryable(err) {
 			t.Errorf("token %q: Retryable(%v) = true", token, err)
 		}
+		// The client is refused as configured, with the function named.
+		if !errors.Is(err, gocent.ErrInvalidConfig) || !strings.Contains(err.Error(), "BearerTokenFunc") {
+			t.Errorf("token %q: %v, want one wrapping ErrInvalidConfig naming BearerTokenFunc", token, err)
+		}
 		if n := len(f.recorded()); n != 0 {
 			t.Errorf("token %q: %d requests sent", token, n)
 		}

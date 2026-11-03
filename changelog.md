@@ -91,7 +91,10 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   Centrifugo require an audience or scope only they carry, or any user could
   call the API with their connection token.
 * **Configuration is validated.** `New` returns an error for a missing or
-  malformed `APIEndpoint`, and contradictory settings.
+  malformed `APIEndpoint`, and contradictory settings, wrapping
+  `gocent.ErrInvalidConfig`. A call fails with it too when `APIEndpointFunc`
+  or `BearerTokenFunc` returns an endpoint or token the client cannot send;
+  an error of the function's own is returned wrapped, naming the function.
 * **Safer defaults.** A default HTTP client with a connection pool - at most
   256 connections to the server, all kept while idle, so bursts of calls do
   not open and close connections - and a per-request timeout when the context
