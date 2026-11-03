@@ -176,6 +176,11 @@ type ConnectResult struct {
 	// PRO only — client labels attached to the centrifuge.Client by Centrifugo PRO.
 	// Parsed by OSS but not used (OSS does not populate centrifuge.ConnectReply.Labels).
 	Labels map[string]string `json:"labels,omitzero"`
+
+	// Profile assigns the connection to a dictionary compression profile, as the
+	// profile claim of a connection token does: it overrides the profile the
+	// client declared. Centrifugo PRO only.
+	Profile string `json:"profile,omitzero"`
 }
 
 // ChannelsCapability grants operations in channels. A connection may do an
