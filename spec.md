@@ -632,9 +632,8 @@ The SDK's docs MUST explain, wherever retries are:
 - Centrifugo remembers a key per channel, five minutes by default: a second
   publication under the same key is not published, so a key derived from an
   entity must also name the event (`order-42-paid`, not `order-42`);
-- the memory, Redis and PostgreSQL brokers keep keys, and the Redis plus
-  NATS broker does through Redis; the plain NATS broker ignores them, and a
-  retry publishes again.
+- the memory, Redis and PostgreSQL brokers keep keys; the NATS broker
+  ignores them, and a retry publishes again.
 
 ## 6. Retry helpers
 
@@ -1333,7 +1332,6 @@ Rules added:
 - The `client` claim of subscription tokens and the `profile` claim of
   connection tokens; a subscription token's `sub` is the connection's user
   (11.2).
-- The Redis plus NATS broker keeps idempotency keys (5).
 
 Corrections, where 0.2 said what Centrifugo does not do:
 
@@ -1368,8 +1366,7 @@ it done. gocent made each in its own commit, on its `v4_dev` branch.
    16); that the API never redirects, in the redirect hint (3.2); when
    consumers drop a string payload, in the commands' docs (9); that a proxy
    response with nothing in it accepts any request, in the proxy handlers'
-   docs (14). The idempotency docs name the Redis plus NATS broker among
-   those keeping keys (5).
+   docs (14).
 3. **Presence wrappers** (2). The generator finds them - a `*Value` message
    whose one field is `value`, or a message whose one field's comment gives
    its empty value a meaning after "Required." - and represents the fields
