@@ -239,7 +239,9 @@ the field, not give it a value: `channel=""`, a C# `required` member set to
 `null`, Rust's `new("")` all pass it empty, and since a zero value is not
 sent, an empty required field is a missing one on the wire. So every SDK
 also checks before sending that each such field has a value - not empty,
-not zero, not null, a nested message not empty - and fails with
+not zero, not the language's unset, a nested message not empty - where a
+payload's JSON `null` is a value, as section 3.4 says (JavaScript's `null`,
+raw JSON `null` elsewhere) - and fails with
 `InvalidRequest` naming its path (section 3.5); a Go struct, which cannot
 require a field at all, has the check only. Either way a call missing a
 required field fails before anything is sent, in every language, and in the
@@ -261,7 +263,8 @@ in the SDK, generated from that
 sentence as the types are from the messages, so that a value Centrifugo
 adds reaches every SDK with its next sync. A constant is named by the field
 and the value - `ProviderFCM`, `PlatformIOS`, `OpAdd`, `StatusDelivered`,
-`KeyModeIfNew`, `CmpEq`, spelled the language's way: Rust `PROVIDER_FCM`;
+`KeyModeIfNew`, `CmpEq`, spelled the language's way: Rust and JavaScript
+`PROVIDER_FCM`, Python `PROVIDER_FCM`;
 where the language puts constants in a type, one per field, named so that it
 does not clash with the platform's own types - C# `ProviderValues.Fcm`, not
 `Encoding` or `Type`, which `System` already has - so that a typo fails
@@ -528,14 +531,20 @@ the first page is the recovery. The others take `limit` as the method
 does. Docs SHOULD say that the items of a paged method change under
 the iteration: a device registered while listing may or may not be seen.
 
-A result holding `offset` and `epoch` - `publish`'s, `history`'s,
-`map_read_state`'s, `map_read_stream`'s - MUST give them as a `StreamPosition`, the type of
+Every result holding `offset` and `epoch` - `publish`'s, `history`'s,
+`map_read_state`'s, `map_read_stream`'s, `map_publish`'s and
+`map_remove`'s today; a generator can find them by the two fields - MUST
+give them as a `StreamPosition`, the type of
 `history`'s `since` and of `subscribe`'s `recover_since` (gocent: the method
 `Position()`), so that what a publish returned is what the next history call
 asks from, with no fields copied by hand. `map_read_stream` takes its
 position apart, as `since_offset` and `since_epoch`: an SDK MAY give its
 request a setter taking a `StreamPosition`, where the language has one for
-its requests (Rust's builders), and otherwise the caller copies the two. A position whose epoch is no
+its requests (Rust's builders), and otherwise the caller copies the two.
+Where results are structural types - TypeScript interfaces - a position is
+a getter of the decoded result, and section 15.3's test doubles get it from
+a constructor or helper of the SDK's, never from the application writing
+it out. A position whose epoch is no
 longer the stream's fails with code 112, `UnrecoverablePosition`: the
 stream was reset, and reading from its start is the only recovery. Docs
 SHOULD show reading what came after a publication.
@@ -1399,7 +1408,7 @@ it done. gocent made each in its own commit, on its `v4_dev` branch.
    stay strings. Tests: the parser, the naming rule, a tie.
 6. **Pages and positions** (3.8): the five `<method>_all` iterators,
    written once over the cursor and once for `history`, and `position()` on
-   the four results holding `offset` and `epoch`. Tests: section 15.
+   the six results holding `offset` and `epoch`. Tests: section 15.
 7. **Token claims** (11.2): `profile` on connection tokens, written after
    `labels`, as 15.1 lists it. The vectors do not change: the claim is not in
    them.

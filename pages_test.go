@@ -211,6 +211,8 @@ func TestPosition(t *testing.T) {
 		"history":         gocent.HistoryResult{Offset: 7, Epoch: "e"}.Position(),
 		"map_read_state":  gocent.MapReadStateResult{Offset: 7, Epoch: "e"}.Position(),
 		"map_read_stream": gocent.MapReadStreamResult{Offset: 7, Epoch: "e"}.Position(),
+		"map_publish":     gocent.MapPublishResult{Offset: 7, Epoch: "e"}.Position(),
+		"map_remove":      gocent.MapRemoveResult{Offset: 7, Epoch: "e"}.Position(),
 	} {
 		if got != want {
 			t.Errorf("%s: %+v", name, got)

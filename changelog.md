@@ -38,8 +38,9 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   `proxy.EncodingBinary`, `proxy.ProtocolJSON`. The fields stay strings.
 * **Pages.** `HistoryAll`, `DeviceListAll`, `DeviceTopicListAll`,
   `UserTopicListAll` and `MapReadStateAll` iterate every item, a page at a
-  time, as an `iter.Seq2`. `Position()` on the results of publish, history
-  and the map reads gives a `StreamPosition` to read from.
+  time, as an `iter.Seq2`. `Position()` on the results of publish, history,
+  map publish, map remove and the map reads gives a `StreamPosition` to read
+  from.
 * **Clearing device fields.** `DeviceUpdateRequest`'s `UserUpdate`,
   `TimezoneUpdate`, `LocaleUpdate` and `MetaUpdate` are pointers: an empty
   one is sent, and clears - `UserUpdate: &gocent.DeviceUserUpdate{}`

@@ -29,6 +29,16 @@ func (r MapReadStreamResult) Position() StreamPosition {
 	return StreamPosition{Offset: r.Offset, Epoch: r.Epoch}
 }
 
+// Position returns where the map publication went in the channel's stream.
+func (r MapPublishResult) Position() StreamPosition {
+	return StreamPosition{Offset: r.Offset, Epoch: r.Epoch}
+}
+
+// Position returns where the map removal went in the channel's stream.
+func (r MapRemoveResult) Position() StreamPosition {
+	return StreamPosition{Offset: r.Offset, Epoch: r.Epoch}
+}
+
 // HistoryAll returns the publications of a channel's history, oldest first,
 // a page of req.Limit at a time: from req.Since when it is set, from the
 // start of what the channel keeps otherwise. A page is read when the

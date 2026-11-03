@@ -264,8 +264,8 @@ for pub, err := range client.HistoryAll(ctx, gocent.HistoryRequest{Channel: "new
 }
 ```
 
-`Position()` on a publish, history or map read result is the
-`StreamPosition` to read on from: `HistoryRequest{Since: res.Position()}`
+`Position()` on a publish, history, map publish, map remove or map read
+result is the `StreamPosition` to read on from: `HistoryRequest{Since: res.Position()}`
 reads what came after a publication.
 
 ## Automatic batching
