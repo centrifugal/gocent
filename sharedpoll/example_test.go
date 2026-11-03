@@ -23,7 +23,7 @@ func Example() {
 			user, ok := sessionUser(r)
 			if !ok {
 				// centrifuge-js ends the subscription.
-				return nil, "", sharedpoll.ErrUnauthorized
+				return nil, "", sharedpoll.ErrForbidden
 			}
 			var allowed []string // in the order asked; the others are revoked
 			for _, k := range keys {

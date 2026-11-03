@@ -68,7 +68,7 @@ func main() {
 	mux.Handle("/centrifugo/connection_token", h.Connection(func(r *http.Request) (string, error) {
 		user, ok := sessionUser(r)
 		if !ok {
-			return "", token.ErrUnauthorized
+			return "", token.ErrForbidden
 		}
 		key, err := keys.current(time.Now())
 		if err != nil {
@@ -82,7 +82,7 @@ func main() {
 	mux.Handle("/centrifugo/subscription_token", h.Subscription(func(r *http.Request, channel string) (string, error) {
 		user, ok := sessionUser(r)
 		if !ok || !canRead(r.Context(), user, channel) {
-			return "", token.ErrUnauthorized
+			return "", token.ErrForbidden
 		}
 		key, err := keys.current(time.Now())
 		if err != nil {

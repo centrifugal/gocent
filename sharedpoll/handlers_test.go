@@ -33,8 +33,8 @@ func TestSignature(t *testing.T) {
 		{"all keys", []string{"k1", "k2"}, "sig", nil, http.StatusOK, `{"signature":"sig","keys":["k1","k2"]}`, false},
 		{"some revoked", []string{"k2"}, "sig", nil, http.StatusOK, `{"signature":"sig","keys":["k2"]}`, false},
 		{"all revoked", nil, "", nil, http.StatusOK, `{"signature":"","keys":[]}`, false},
-		{"unauthorized", nil, "", sharedpoll.ErrUnauthorized, http.StatusForbidden, "", false},
-		{"wrapped unauthorized", nil, "", fmt.Errorf("session: %w", sharedpoll.ErrUnauthorized), http.StatusForbidden, "", false},
+		{"forbidden", nil, "", sharedpoll.ErrForbidden, http.StatusForbidden, "", false},
+		{"wrapped forbidden", nil, "", fmt.Errorf("session: %w", sharedpoll.ErrForbidden), http.StatusForbidden, "", false},
 		{"other error", nil, "", errDown, http.StatusInternalServerError, "", true},
 		{"key not asked for", []string{"k1", "extra"}, "sig", nil, http.StatusInternalServerError, "", true},
 	}

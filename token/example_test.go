@@ -26,7 +26,7 @@ func Example() {
 		func(r *http.Request) (string, error) {
 			user, ok := sessionUser(r)
 			if !ok {
-				return "", token.ErrUnauthorized // the client stops asking
+				return "", token.ErrForbidden // the client stops asking
 			}
 			return token.Connection(key, token.ConnectionClaims{
 				User:      user,
@@ -38,7 +38,7 @@ func Example() {
 		func(r *http.Request, channel string) (string, error) {
 			user, ok := sessionUser(r)
 			if !ok || !canRead(r.Context(), user, channel) {
-				return "", token.ErrUnauthorized
+				return "", token.ErrForbidden
 			}
 			return token.Subscription(key, token.SubscriptionClaims{
 				User:      user,
@@ -76,7 +76,7 @@ func ExampleJWKS() {
 		func(r *http.Request) (string, error) {
 			user, ok := sessionUser(r)
 			if !ok {
-				return "", token.ErrUnauthorized
+				return "", token.ErrForbidden
 			}
 			return token.Connection(current, token.ConnectionClaims{User: user, ExpiresAt: time.Now().Add(time.Hour)})
 		}))

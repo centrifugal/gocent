@@ -11,7 +11,7 @@
 //		func(r *http.Request, channel string, keys []string) ([]string, string, error) {
 //			user, ok := sessionUser(r)
 //			if !ok {
-//				return nil, "", sharedpoll.ErrUnauthorized
+//				return nil, "", sharedpoll.ErrForbidden
 //			}
 //			allowed := readable(r.Context(), user, channel, keys)
 //			sig, err := sharedpoll.Sign(secret, user, channel, allowed, time.Now().Add(time.Hour))

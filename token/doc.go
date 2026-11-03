@@ -19,7 +19,7 @@
 //		func(r *http.Request) (string, error) {
 //			user, ok := sessionUser(r)
 //			if !ok {
-//				return "", token.ErrUnauthorized
+//				return "", token.ErrForbidden
 //			}
 //			return token.Connection(key, token.ConnectionClaims{User: user, ExpiresAt: time.Now().Add(time.Hour)})
 //		}))

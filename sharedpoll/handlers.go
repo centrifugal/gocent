@@ -10,20 +10,20 @@ import (
 	"github.com/centrifugal/gocent/v4/token"
 )
 
-// ErrUnauthorized is returned - or wrapped - by a function a handler calls
+// ErrForbidden is returned - or wrapped - by a function a handler calls
 // when the user may not use the subscription at all. It answers HTTP status
 // 403.
-// centrifuge-js ends the subscription then, when the getSignature callback
-// throws UnauthorizedError for it. It is [token.ErrUnauthorized]: an
+// centrifuge-js reports it as UnauthorizedError from the getSignature
+// callback, and ends the subscription. It is [token.ErrForbidden]: an
 // application returning either from either package's handlers gets a 403.
-var ErrUnauthorized = token.ErrUnauthorized
+var ErrForbidden = token.ErrForbidden
 
 // Handlers builds the [http.Handler] of the endpoint client SDKs call for
 // signatures. The zero value is ready to use.
 type Handlers struct {
 	// OnError, when set, is told of every request a handler could not answer
 	// as the function meant: one failed with HTTP status 500 - by an error
-	// other than ErrUnauthorized, or by keys the function had no request for -
+	// other than ErrForbidden, or by keys the function had no request for -
 	// and a malformed one, rejected with status 400. It must not panic.
 	OnError func(r *http.Request, err error)
 }
@@ -48,7 +48,7 @@ type signatureResponse struct {
 // f decides which of keys the user may track in channel, and signs them -
 // with [Sign], say. It returns them, in the order signed, with the signature;
 // the keys it leaves out are revoked: the client stops tracking them. To end
-// the subscription instead, it returns [ErrUnauthorized]; any other error fails
+// the subscription instead, it returns [ErrForbidden]; any other error fails
 // the request with status 500, and the client asks again.
 //
 // f may return only keys it was asked for: the client tracks no others, and a
@@ -79,6 +79,6 @@ func (h Handlers) Signature(f func(r *http.Request, channel string, keys []strin
 		if allowed == nil {
 			allowed = []string{} // the SDK reads the keys as an array
 		}
-		sdkendpoint.Answer(w, r, signatureResponse{Signature: signature, Keys: allowed}, err, ErrUnauthorized, h.OnError)
+		sdkendpoint.Answer(w, r, signatureResponse{Signature: signature, Keys: allowed}, err, ErrForbidden, h.OnError)
 	})
 }

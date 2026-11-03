@@ -8,22 +8,23 @@ import (
 	"github.com/centrifugal/gocent/v4/internal/sdkendpoint"
 )
 
-// ErrUnauthorized is returned - or wrapped - by a function a handler calls
-// when the user may not have a token. It answers HTTP status 403, on which a
-// client's getToken callback throws UnauthorizedError: client SDKs stop
-// asking then, and disconnect or unsubscribe.
-var ErrUnauthorized = errors.New("token: unauthorized")
+// ErrForbidden is returned - or wrapped - by a function a handler calls
+// when the user may not have a token. It answers HTTP status 403, which
+// client SDKs report as their UnauthorizedError: they stop asking then, and
+// disconnect or unsubscribe. It is not gocent.ErrUnauthorized, which means
+// Centrifugo refused this server's own credentials.
+var ErrForbidden = errors.New("token: forbidden")
 
 // Handlers builds the [http.Handler]s of the endpoints client SDKs call for
 // tokens: what their getToken callbacks fetch, on connecting and subscribing,
 // and again before a token expires. The zero value is ready to use.
 //
-// A handler answers {"token": "..."}, never cached; [ErrUnauthorized] with
+// A handler answers {"token": "..."}, never cached; [ErrForbidden] with
 // status 403; and any other error with status 500, which a client retries.
 type Handlers struct {
 	// OnError, when set, is told of every request a handler could not answer
 	// as the function meant: one failed with HTTP status 500 - by an error
-	// other than ErrUnauthorized - and a malformed one, rejected with status
+	// other than ErrForbidden - and a malformed one, rejected with status
 	// 400. It must not panic.
 	OnError func(r *http.Request, err error)
 }
@@ -46,13 +47,13 @@ func (h Handlers) Connection(f func(r *http.Request) (string, error)) http.Handl
 			return
 		}
 		tok, err := f(r)
-		sdkendpoint.Answer(w, r, tokenResponse{tok}, err, ErrUnauthorized, h.OnError)
+		sdkendpoint.Answer(w, r, tokenResponse{tok}, err, ErrForbidden, h.OnError)
 	})
 }
 
 // Subscription serves the endpoint the getToken callback of a subscription
 // calls: f returns the token of the request's user for channel - from
-// [Subscription], say - or ErrUnauthorized when the user may not subscribe.
+// [Subscription], say - or ErrForbidden when the user may not subscribe.
 // The channel comes from a POST's JSON body, {"channel": "..."}, or from the
 // "channel" query parameter of a GET.
 func (h Handlers) Subscription(f func(r *http.Request, channel string) (string, error)) http.Handler {
@@ -83,6 +84,6 @@ func (h Handlers) Subscription(f func(r *http.Request, channel string) (string, 
 			return
 		}
 		tok, err := f(r, channel)
-		sdkendpoint.Answer(w, r, tokenResponse{tok}, err, ErrUnauthorized, h.OnError)
+		sdkendpoint.Answer(w, r, tokenResponse{tok}, err, ErrForbidden, h.OnError)
 	})
 }

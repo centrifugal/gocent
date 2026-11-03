@@ -28,8 +28,8 @@ func TestHandlerAnswers(t *testing.T) {
 		onError bool
 	}{
 		{"token", nil, http.StatusOK, false},
-		{"unauthorized", token.ErrUnauthorized, http.StatusForbidden, false},
-		{"wrapped unauthorized", fmt.Errorf("session: %w", token.ErrUnauthorized), http.StatusForbidden, false},
+		{"forbidden", token.ErrForbidden, http.StatusForbidden, false},
+		{"wrapped forbidden", fmt.Errorf("session: %w", token.ErrForbidden), http.StatusForbidden, false},
 		{"other error", errDown, http.StatusInternalServerError, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
