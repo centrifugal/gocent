@@ -234,7 +234,9 @@ Go struct, in which a missing field and an empty one are the same value -
 the SDK checks before sending that each such field is set, and fails with
 `InvalidRequest` naming it (section 3.5). Either way a call missing a
 required field fails before anything is sent, in every language, and in the
-signature where there is one. A field "Required unless ..." stays optional.
+signature where there is one. A field "Required unless ..." or "Required
+when ..." is required under a condition, and stays optional: only the
+exact "Required." - the word and its period - marks a field required.
 A field whose comment gives its empty value a meaning - after "Required.",
 it mentions `""` or the word "empty" - is required in the signature but not
 checked, since a check could not tell empty from missing:
@@ -1343,7 +1345,7 @@ it done. gocent made each in its own commit, on its `v4_dev` branch.
    language's signature cannot require a field - Go's structs; in Python,
    PHP, TypeScript the signature already does, and this step is only the
    test. Generated from the "Required." marks, skipping "Required unless
-   ..." and the fields whose empty value has a meaning. A nested message is
+   ...", "Required when ..." and the fields whose empty value has a meaning. A nested message is
    checked when set, a required one must be set, and a list's elements are
    checked each: the error names the path, `TopicsUpdate.Op is required`.
    The hand-written checks of `publish`'s `channel` and `broadcast`'s
