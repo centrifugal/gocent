@@ -11,7 +11,8 @@ including those of Centrifugo PRO. For a real-time client over WebSocket, see
 go get github.com/centrifugal/gocent/v4
 ```
 
-No dependencies.
+No dependencies. gocent implements the
+[Centrifugo server SDK spec](spec.md) 0.3, as its reference implementation.
 
 | | Version |
 |---|---|
@@ -247,6 +248,25 @@ concurrently. Centrifugo PRO sends a batch's publications to its broker
 together: each channel's publications still take effect in order, but
 publications into different channels may not, unless the namespace sets
 `publication_grouping_disabled`.
+
+## Pages
+
+`HistoryAll`, `DeviceListAll`, `DeviceTopicListAll`, `UserTopicListAll` and
+`MapReadStateAll` return every item of a paged method, reading a page when
+the loop reaches it:
+
+```go
+for pub, err := range client.HistoryAll(ctx, gocent.HistoryRequest{Channel: "news", Limit: 100}) {
+	if err != nil {
+		return err
+	}
+	handle(pub)
+}
+```
+
+`Position()` on a publish, history or map read result is the
+`StreamPosition` to read on from: `HistoryRequest{Since: res.Position()}`
+reads what came after a publication.
 
 ## Automatic batching
 

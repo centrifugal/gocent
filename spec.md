@@ -109,17 +109,20 @@ its README.
   folding, and ignores a name it does not know: `Channel` works, but
   `idempotencyKey` is dropped without a word. The exact name is the one
   spelling every version accepts.
-- A scalar field left at its zero value is not sent: a proto3 scalar has no
-  presence, so a request with the field absent and one with it zero are the
-  same request. A message field has presence: it is sent when set, even when
-  every field in it is zero, since Centrifugo reads that it is there.
-  `device_update`'s `user_update` with an empty `user` detaches the devices
-  from their user; its `timezone_update` and `locale_update` with an empty
-  value, and `meta_update` with an empty map, clear them. An SDK MUST
-  therefore represent a message field as optional - a pointer in Go, `None`,
-  `undefined` - and send it whenever it is set, whatever it holds. A
-  `BoolValue` field is a message too, and so tri-state: absent leaves the
-  server's setting alone, which `false` cannot say; an SDK gives it a helper
+- A field left at its zero value is not sent - a message field too, when
+  every field in it is zero: for almost every field, absent and empty mean
+  the same, and an SDK represents it by value. The exception is a presence
+  wrapper: a message with one field, which Centrifugo reads by whether it is
+  there. A `BoolValue` is one - absent leaves the server's setting alone,
+  which `false` cannot say. So are `device_update`'s `user_update`,
+  `timezone_update`, `locale_update` and `meta_update`: an empty `user`
+  detaches the devices from their user, an empty timezone, locale or meta
+  clears it, and an absent one changes nothing. A generator finds them in
+  the proto: a message named `*Value` whose field is `value`, or one whose
+  only field's comment gives its empty value a meaning after "Required."
+  (`"" clears it`, `An empty map clears it.`). An SDK MUST represent a
+  presence wrapper as optional - a pointer in Go, `None`, `undefined` - and
+  send it whenever it is set, even empty, with a helper for `BoolValue`
   (gocent: `gocent.Bool(true)`).
 - Payload fields (`bytes` in the protos: data, info, meta) are JSON values in
   the API and the proxy: section 3.4 says how an SDK takes and returns them.
@@ -232,21 +235,24 @@ the SDK checks before sending that each such field is set, and fails with
 `InvalidRequest` naming it (section 3.5). Either way a call missing a
 required field fails before anything is sent, in every language, and in the
 signature where there is one. A field "Required unless ..." stays optional.
-A field whose comment gives its empty value a meaning is required in the
-signature but not checked, since a check could not tell empty from missing:
+A field whose comment gives its empty value a meaning - after "Required.",
+it mentions `""` or the word "empty" - is required in the signature but not
+checked, since a check could not tell empty from missing:
 `invalidate_user_tokens`'s `user`, where empty means anonymous users;
 `user_topic_update`'s `user`, where empty is the global binding; the `user`,
 `timezone`, `locale` and `meta` of `device_update`'s updates, where empty
 clears.
 
 A field whose comment lists its values - in the sentence `One of: add,
-remove, set.`, which `api.proto` writes for every string field with a fixed
-set of values - gets a constant per value in the SDK, generated from that
+remove, set.`, which the protos write for every string field with a fixed
+set of values, `proxy.proto`'s as `api.proto`'s - gets a constant per value
+in the SDK, generated from that
 sentence as the types are from the messages, so that a value Centrifugo
 adds reaches every SDK with its next sync. A constant is named by the field
 and the value - `ProviderFCM`, `PlatformIOS`, `OpAdd`, `StatusDelivered`,
 `KeyModeIfNew`, `CmpEq`, spelled the language's way - so that a typo fails
-at compile or import time rather than at Centrifugo. Where fields of one
+at compile or import time rather than at Centrifugo - or, in a proxy
+handler comparing a request's `encoding` with a value, rather than never. Where fields of one
 name list different values in different messages, the set listed in the
 most messages keeps the short name and the others are named by their
 message too - `OpAdd` for the topic updates, `FilterNodeOpAnd` for
@@ -264,6 +270,13 @@ source:
 | `map_publish.key_mode` | `if_new`, `if_exists` |
 | `FilterNode.op` | `and`, `or`, `not` |
 | `FilterNode.cmp` | `eq`, `neq`, `in`, `nin`, `ex`, `nex`, `sw`, `ew`, `ct`, `gt`, `gte`, `lt`, `lte` |
+| proxy: `protocol`, in every request | `json`, `protobuf` |
+| proxy: `encoding`, in every request | `json`, `binary` |
+| proxy: `allow` of `ChannelsCapability` and of the subscribe result | `sub`, `pub`, `hst`, `prs` |
+| proxy: `ChannelsCapability.match` | `wildcard`, `regex` |
+| proxy: `key_mode` of the map publish proxy | `if_new`, `if_exists` |
+| proxy: `type` of a channel state event | `occupied`, `vacated` |
+| proxy: `FilterNode.op` and `cmp` | as in the API |
 
 The `provider` and `platform` constants serve `device_list`'s filter too,
 whose `providers` and `platforms` take the same values.
@@ -477,15 +490,16 @@ paging is written once, in the SDK. It sends `req` as given, then the next
 page as the table says, until there is none, and yields each page's items in
 order; an error ends it with that error, the language's way (yielded beside
 the item in Go, raised elsewhere). A page is fetched when the iteration
-reaches it, not ahead. `history_all` refuses with `InvalidRequest` a `limit`
-of 0 or -1 - the one asks for the position alone, the other for everything
-in one call - and `reverse`, since `since` has no counterpart running back;
-it stops at a page shorter than `limit`. The others take `limit` as the
+reaches it, not ahead; leaving the loop early reads no further page.
+`history_all` refuses with `InvalidRequest`, before sending anything, a
+`limit` below 1 - 0 asks for the position alone, -1 for everything in one
+call - and `reverse`, since `since` has no counterpart running back; it
+stops at a page shorter than `limit`. The others take `limit` as the
 method does. Docs SHOULD say that the items of a paged method change under
 the iteration: a device registered while listing may or may not be seen.
 
 A result holding `offset` and `epoch` - `publish`'s, `history`'s,
-`map_read_state`'s - MUST give them as a `StreamPosition`, the type of
+`map_read_state`'s, `map_read_stream`'s - MUST give them as a `StreamPosition`, the type of
 `history`'s `since` and of `subscribe`'s `recover_since` (gocent: the method
 `Position()`), so that what a publish returned is what the next history call
 asks from, with no fields copied by hand. A position whose epoch is no
@@ -842,7 +856,7 @@ JSON fails at signing.
 | `meta` (connection) | `meta` | Not visible to other clients, but visible to the user owning the token: docs warn against putting in it what that user must not see |
 | `caps`, `labels`, `profile` (connection, PRO) | `caps`, `labels`, `profile` | `profile`: the compression profile |
 | `channel` (subscription) | `channel` | Required |
-| `client` (subscription) | `client` | Binds the token to one connection: a subscribe or subscription refresh from another client ID is refused. For a token handed to one connection only, as from the subscription token endpoint of section 12 given the client ID |
+| `client` (subscription) | `client` | Binds the token to one connection: a subscribe or subscription refresh from another client ID is refused. For a token made for one connection, whose client ID the application knows. Empty: any connection of the user |
 | `data` / `b64data`, `override`, `allow`, `server_tags_filter` (subscription) | same names | `allow` and `server_tags_filter`: PRO |
 
 Each expiry is one value, and "never" is always chosen explicitly. An SDK
@@ -993,6 +1007,23 @@ An SDK MUST have:
   payload from a reply sent back unchanged is the same JSON value - `{}`,
   `{"0":"a"}`, an integer past 2^53 (in JavaScript only with `bigIntegers`;
   not in Dart on the web) and a float with a zero fraction included.
+- Requests (sections 2, 3.3, 3.5): an unconditional "Required." field left
+  unset fails with `InvalidRequest` naming its path - nested ones included,
+  `LimitStrategy.RateLimit.Policies[0].Rate` - and nothing is sent; an
+  optional nested message left unset is not checked; a field whose empty
+  value has a meaning is sent empty; a presence wrapper set empty is sent
+  as `{}`, and one left unset is not sent. A test pins the presence wrappers
+  and the unchecked required fields the generator finds in the proto, so
+  that a changed comment fails it. Each constant generated from a "One of:"
+  sentence equals its value, and a value without a constant is still sent.
+  The test that every API method reaches its endpoint fills every field of
+  its requests, so that the required-field checks let them through.
+- Pages (section 3.8): each `<method>_all` against a fake, over no items,
+  one, exactly a page and several pages: every item once and in order; each
+  request after the first carries the cursor, or `since`, of the reply
+  before; leaving the loop early reads no further page; an error ends the
+  iteration after the items before it; `history_all`'s refusals send
+  nothing. Each `position()` gives its result's offset and epoch.
 - Automatic batching under random concurrency, with a race detector where the
   language has one.
 - Integration tests of every OSS method against the `centrifugo/centrifugo`
@@ -1001,7 +1032,12 @@ An SDK MUST have:
   tokens connecting a real client (HMAC, and Ed25519 verified by
   `client.token.ed25519_public_key`), proxy handlers called by Centrifugo,
   commands run by a consumer, API tokens accepted - and refused without the
-  audience or scope, as connection tokens, and from unpublished keys.
+  audience or scope, as connection tokens, and from unpublished keys. For
+  PRO: an empty `device_update` timezone update clears the timezone and an
+  empty user update detaches the device; `send_push_notification` with a
+  rate limit and with a time limit is accepted - which needs PRO's
+  `distributed_rate_limit` with Redis, and the notification's `expire_at`;
+  a `<method>_all` reads every device page by page.
 - The vectors below.
 
 Section 15.2 lists what the tests check.
@@ -1045,7 +1081,8 @@ Generation and the client:
 - [ ] Request and result types generated from the protos, never edited by
   hand, checked current in CI; protos from a released tag (2).
 - [ ] Field names on the wire exactly the protos', case-sensitive; zero
-  scalars not sent; message fields optional, sent whenever set (2).
+  values not sent; presence wrappers optional and sent whenever set, even
+  empty (2).
 - [ ] `BoolValue` fields optional, with a helper; PRO-only methods marked
   (2).
 - [ ] Safe for concurrent use; creation validates all it can, with
@@ -1101,7 +1138,7 @@ Payloads and validation:
 - [ ] Results encoded as JSON the language's way give wire names, and errors
   in them as `{code, message}` (3.7).
 - [ ] `<method>_all` for every paged method, in the language's iterator,
-  fetching a page when reached; `history_all` refuses `limit` 0 and -1 and
+  fetching a page when reached; `history_all` refuses a `limit` below 1 and
   `reverse`; results with `offset` and `epoch` give a `StreamPosition` (3.8).
 
 Errors and retries:
@@ -1240,8 +1277,10 @@ here; the sections they belong to say what they are for.
 
 Rules added:
 
-- A message field has presence: optional in the SDK, sent whenever set, even
-  empty - `device_update`'s updates clear with an empty value (2).
+- Presence wrappers - `BoolValue`, and the update messages of
+  `device_update`, which clear with an empty value - are optional in the SDK
+  and sent whenever set, even empty; a generator finds them in the proto's
+  comments. Other message fields stay values (2).
 - A "Required." field is checked before sending where the signature cannot
   require it, but for those whose empty value has a meaning (3.3, 3.5).
 - Constants for the fields whose comments list their values, generated from
@@ -1266,6 +1305,72 @@ Corrections, where 0.2 said what Centrifugo does not do:
   subscribe, publish, rpc, map publish or map remove as sent; it refuses a
   connect, unless anonymous connections are allowed, and expires a refresh
   or sub refresh (14).
+
+#### Upgrading an SDK from 0.2
+
+The steps an SDK conforming to 0.2 takes to conform to 0.3, in this order:
+each names the sections holding the rule in full, and the tests which show
+it done. gocent made each in its own commit, on its `v4_dev` branch.
+
+1. **Sync the protos.** Copy `api.proto` and `proxy.proto` from a Centrifugo
+   release with the "One of:" sentences in both - centrifugal/centrifugo#1308
+   for `api.proto`, and the change following it for `proxy.proto` - until
+   one is tagged, from `master`, and again from the tag before the SDK's
+   release. The comments change and `ConnectResult` gains `profile`; the
+   messages are otherwise as before.
+2. **Fix the docs the corrections touch.** Nothing in an SDK's behaviour
+   changes, but its docs and messages may repeat what 0.2 said: that a
+   Centrifugo version stops accepting other spellings of field names (2,
+   16); that the API never redirects, in the redirect hint (3.2); that
+   consumers drop a string payload, in the commands' docs (9); that a proxy
+   response with nothing in it accepts any request, in the proxy handlers'
+   docs (14). The idempotency docs name the Redis plus NATS broker among
+   those keeping keys (5).
+3. **Presence wrappers** (2). The generator finds them - a `*Value` message
+   whose one field is `value`, or a message whose one field's comment gives
+   its empty value a meaning after "Required." - and represents the fields
+   holding them as optional, sent whenever set, even empty. Today that is
+   `BoolValue`, already optional in 0.2, and `device_update`'s
+   `user_update`, `timezone_update`, `locale_update` and `meta_update`. In a
+   typed language those four fields change type: a breaking change for code
+   setting them, which until now could not clear or detach anything. Every
+   other message field stays as it was. Tests: the wrappers pinned; an empty
+   one sent as `{}`; against PRO, an empty timezone update clears it.
+4. **Required fields checked before sending** (3.3, 3.5), where the
+   language's signature cannot require a field - Go's structs; in Python,
+   PHP, TypeScript the signature already does, and this step is only the
+   test. Generated from the "Required." marks, skipping "Required unless
+   ..." and the fields whose empty value has a meaning. A nested message is
+   checked when set, a required one must be set, and a list's elements are
+   checked each: the error names the path, `TopicsUpdate.Op is required`.
+   The hand-written checks of `publish`'s `channel` and `broadcast`'s
+   `channels` give way to the generated ones, with the same messages; the
+   `data` rules stay. Users see a call which Centrifugo refused with code 107
+   fail before sending, with `InvalidRequest`: a change their changelog
+   says. Every check gocent generates was compared with Centrifugo PRO's own
+   validation; none refuses what Centrifugo accepts. Tests: the endpoint
+   test fills every field; a missing field fails with its path and nothing
+   is sent.
+5. **Constants** (3.3). The generator reads the sentence `One of: a, b, c.`
+   - after "One of:", up to the period, values separated by commas,
+   lowercase letters, digits and underscores - and fails on a malformed one.
+   A constant per value, named by the field and the value, the collision
+   rule of 3.3 for fields of one name listing different values. The fields
+   stay strings. Tests: the parser, the naming rule, a tie.
+6. **Pages and positions** (3.8): the five `<method>_all` iterators,
+   written once over the cursor and once for `history`, and `position()` on
+   the four results holding `offset` and `epoch`. Tests: section 15.
+7. **Token claims** (11.2): `client` on subscription tokens, `profile` on
+   connection tokens, written after the claims 15.1 lists them after. The
+   vectors do not change: neither claim is in them.
+8. **Tests** (15): the new unit tests of steps 3 to 6, and the PRO
+   integration tests of push with rate and time limits - the test
+   Centrifugo PRO needs `distributed_rate_limit` enabled with Redis (gocent:
+   `testdata/centrifugo-pro.compose.yml`).
+9. **Say so**: the README's "implements spec 0.3", and a changelog entry
+   naming the user-visible changes - the four field types of step 3, the
+   earlier failures of step 4, and the new constants, iterators, positions
+   and claims.
 
 ### 0.2 - 2026-10-28
 

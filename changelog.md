@@ -32,6 +32,21 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   `{"code": ..., "message": ...}`.
 * **Testing.** `gocent.NewBatchResult` and `gocent.NewPending` make a batch's
   results for test doubles; the README shows a fake Centrifugo.
+* **Constants for fixed values.** A string field taking one of a few values
+  has a constant per value, generated from the protos: `gocent.ProviderFCM`,
+  `gocent.OpAdd`, `gocent.KeyModeIfNew`, and in the proxy package
+  `proxy.EncodingBinary`, `proxy.ProtocolJSON`. The fields stay strings.
+* **Pages.** `HistoryAll`, `DeviceListAll`, `DeviceTopicListAll`,
+  `UserTopicListAll` and `MapReadStateAll` iterate every item, a page at a
+  time, as an `iter.Seq2`. `Position()` on the results of publish, history
+  and the map reads gives a `StreamPosition` to read from.
+* **Clearing device fields.** `DeviceUpdateRequest`'s `UserUpdate`,
+  `TimezoneUpdate`, `LocaleUpdate` and `MetaUpdate` are pointers: an empty
+  one is sent, and clears - `UserUpdate: &gocent.DeviceUserUpdate{}`
+  detaches the devices from their user.
+* **Token claims.** `SubscriptionClaims.Client` binds a subscription token to
+  one connection; `ConnectionClaims.Profile` sets a Centrifugo PRO
+  compression profile.
 * **Automatic batching.** `Config.AutoBatch` sends concurrent calls together
   once `MaxInFlight` requests are in flight, with no delay otherwise.
 * **Retries.** `gocent.Retryable(err)` tells whether retrying a call may
@@ -162,11 +177,13 @@ Behaviour to check when migrating:
   a batch to its broker together: each channel's publications still take
   effect in order, but publications into different channels may not. A
   namespace with `publication_grouping_disabled` keeps the strict order.
-* **Invalid requests are not sent.** A publication or broadcast without a
-  channel or data, a broadcast with an empty channel name, or data which is
-  not valid JSON, fails before sending with an
-  error wrapping `gocent.ErrInvalidRequest`; in a batch it fails the whole
-  batch.
+* **Invalid requests are not sent.** A request leaving unset a field the
+  API marks required - a presence call without a channel, a device
+  registration without a provider, a rate limit policy without a rate - a
+  publication or broadcast without data, a broadcast with an empty channel
+  name, or data which is not valid JSON, fails before sending with an error
+  wrapping `gocent.ErrInvalidRequest` and naming the field; in a batch it
+  fails the whole batch.
 * **A failed broadcast still has every channel.** v3 returned no responses
   when the request failed as a whole; v4 returns an entry per channel, each
   with that error. A channel's `Result` is a value, not a pointer: check
