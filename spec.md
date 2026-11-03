@@ -791,8 +791,13 @@ except BroadcastFailedChannelsError as e:
   took;
 - `max_attempts` - a default (section 17); `attempt_timeout` is each
   attempt's own timeout, replacing `request_timeout` for it as a per-call
-  timeout does (section 3.2), while the call's deadline still bounds all,
-  waits included: an attempt ends at the earlier of the two;
+  timeout does (section 3.2); without it, each attempt gets
+  `request_timeout`. The call as a whole is bounded by its deadline - the
+  context or token it runs under, and its per-call timeout where the
+  language takes one (C#'s `WithTimeout`, Python's `timeout`) - waits
+  included, never by `request_timeout`: so for this call a per-call timeout
+  bounds the whole retry, not each attempt. An attempt ends at the earlier
+  of its own timeout and the call's deadline;
 - `on_attempt_err(attempt)` is called after each failed attempt a retry may
   fix, except the last, with the attempt number, its error, the channels to
   retry, the result so far and the key. It waits, logs or stops by returning
