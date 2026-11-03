@@ -47,13 +47,13 @@ func ExampleClient_HistoryAll() {
 		log.Fatal(err)
 	}
 	// Later: every publication after that one, a hundred at a time.
-	for pub, err := range client.HistoryAll(ctx, gocent.HistoryRequest{Channel: "news", Limit: 100, Since: res.Position()}) {
+	for item, err := range client.HistoryAll(ctx, gocent.HistoryRequest{Channel: "news", Limit: 100, Since: res.Position()}) {
 		if err != nil {
 			// ErrUnrecoverablePosition: the history was lost since, and only
 			// reading it from the start is left.
 			log.Fatal(err)
 		}
-		log.Printf("offset %d: %s", pub.Offset, pub.Data)
+		log.Printf("offset %d: %s", item.Offset, item.Data)
 	}
 }
 

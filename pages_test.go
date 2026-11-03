@@ -276,3 +276,30 @@ func TestValuesWithoutConstantsAreSent(t *testing.T) {
 		}
 	}
 }
+
+// HistoryAll and MapReadStateAll yield each item with its position, so that
+// a caller who stops can resume, or follow the state, with no fields copied.
+func TestPagedItemsCarryPositions(t *testing.T) {
+	p := &pagedCentrifugo{n: 3}
+	c := pagedClient(t, p)
+	var positions []gocent.StreamPosition
+	for item, err := range c.HistoryAll(t.Context(), gocent.HistoryRequest{Channel: "news", Limit: 2}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		positions = append(positions, item.Position())
+	}
+	want := []gocent.StreamPosition{{Offset: 1, Epoch: "e"}, {Offset: 2, Epoch: "e"}, {Offset: 3, Epoch: "e"}}
+	if !slices.Equal(positions, want) {
+		t.Errorf("history positions %v, want %v", positions, want)
+	}
+
+	for item, err := range c.MapReadStateAll(t.Context(), gocent.MapReadStateRequest{Channel: "m", Limit: 2}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if item.State != (gocent.StreamPosition{Offset: 9, Epoch: "e"}) {
+			t.Errorf("entry %s read at %+v, want the state's position", item.Key, item.State)
+		}
+	}
+}

@@ -39,17 +39,42 @@ func (r MapRemoveResult) Position() StreamPosition {
 	return StreamPosition{Offset: r.Offset, Epoch: r.Epoch}
 }
 
+// HistoryItem is a publication read by [Client.HistoryAll], with the epoch of
+// the stream it was read from: its Position is where to resume reading, or
+// the RecoverSince of a subscription, without fields copied by hand.
+type HistoryItem struct {
+	Publication
+	// Epoch is the epoch of the channel's stream the publication is in.
+	Epoch string
+}
+
+// Position returns where the publication is in the channel's stream.
+func (i HistoryItem) Position() StreamPosition {
+	return StreamPosition{Offset: i.Offset, Epoch: i.Epoch}
+}
+
+// MapStateItem is an entry read by [Client.MapReadStateAll], with the
+// position of the state it was read at: following the state with
+// [Client.MapReadStream] from State gets every change made since.
+type MapStateItem struct {
+	MapEntry
+	// State is the position of the map's state the entry was read at: the
+	// first page's, every later page being read at it.
+	State StreamPosition
+}
+
 // HistoryAll returns the publications of a channel's history, oldest first,
 // a page of req.Limit at a time: from req.Since when it is set, from the
 // start of what the channel keeps otherwise. A page is read when the
 // iteration reaches it, and the iteration ends after a page shorter than
 // req.Limit, or with an error:
 //
-//	for pub, err := range client.HistoryAll(ctx, gocent.HistoryRequest{Channel: "news", Limit: 100}) {
+//	for item, err := range client.HistoryAll(ctx, gocent.HistoryRequest{Channel: "news", Limit: 100}) {
 //		if err != nil {
 //			return err
 //		}
-//		handle(pub)
+//		handle(item.Data)
+//		last = item.Position() // to resume from later
 //	}
 //
 // req.Limit is the page size, so it must be 1 or more, and req.Reverse is
@@ -58,24 +83,24 @@ func (r MapRemoveResult) Position() StreamPosition {
 // was lost, with a Redis restart say - fails with [ErrUnrecoverablePosition]:
 // the publications after the last one seen are gone, and reading again from
 // the start is the only way on.
-func (c *Client) HistoryAll(ctx context.Context, req HistoryRequest) iter.Seq2[Publication, error] {
-	return func(yield func(Publication, error) bool) {
+func (c *Client) HistoryAll(ctx context.Context, req HistoryRequest) iter.Seq2[HistoryItem, error] {
+	return func(yield func(HistoryItem, error) bool) {
 		switch {
 		case req.Limit < 1:
-			yield(Publication{}, invalidRequest("history", "HistoryAll needs a Limit of 1 or more: the page size"))
+			yield(HistoryItem{}, invalidRequest("history", "HistoryAll needs a Limit of 1 or more: the page size"))
 			return
 		case req.Reverse:
-			yield(Publication{}, invalidRequest("history", "HistoryAll reads forward only: Reverse is not supported"))
+			yield(HistoryItem{}, invalidRequest("history", "HistoryAll reads forward only: Reverse is not supported"))
 			return
 		}
 		for {
 			res, err := c.History(ctx, req)
 			if err != nil {
-				yield(Publication{}, err)
+				yield(HistoryItem{}, err)
 				return
 			}
 			for _, pub := range res.Publications {
-				if !yield(pub, nil) {
+				if !yield(HistoryItem{Publication: pub, Epoch: res.Epoch}, nil) {
 					return
 				}
 			}
@@ -121,11 +146,11 @@ func (c *Client) UserTopicListAll(ctx context.Context, req UserTopicListRequest)
 // RevisionEpoch - so that a state reset between pages fails with
 // [ErrUnrecoverablePosition] instead of mixing two states: read again from
 // the start then. Entries changed while iterating may be seen in either
-// version; for a consistent view, read the changes since the first page's
-// position with [Client.MapReadStream].
-func (c *Client) MapReadStateAll(ctx context.Context, req MapReadStateRequest) iter.Seq2[MapEntry, error] {
+// version; for a consistent view, read the changes since with
+// [Client.MapReadStream], from the State every [MapStateItem] carries.
+func (c *Client) MapReadStateAll(ctx context.Context, req MapReadStateRequest) iter.Seq2[MapStateItem, error] {
 	pinned := req.RevisionOffset > 0 || req.RevisionEpoch != ""
-	return byCursor(ctx, req, c.MapReadState,
+	entries := byCursor(ctx, req, c.MapReadState,
 		func(r MapReadStateResult) ([]MapEntry, string) {
 			if !pinned {
 				req.RevisionOffset, req.RevisionEpoch = r.Offset, r.Epoch
@@ -137,6 +162,14 @@ func (c *Client) MapReadStateAll(ctx context.Context, req MapReadStateRequest) i
 			r.Cursor = cursor
 			r.RevisionOffset, r.RevisionEpoch = req.RevisionOffset, req.RevisionEpoch
 		})
+	return func(yield func(MapStateItem, error) bool) {
+		for e, err := range entries {
+			state := StreamPosition{Offset: req.RevisionOffset, Epoch: req.RevisionEpoch}
+			if !yield(MapStateItem{MapEntry: e, State: state}, err) {
+				return
+			}
+		}
+	}
 }
 
 // byCursor iterates the items of a method paged by a cursor: it sends req,
