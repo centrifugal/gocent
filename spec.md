@@ -163,9 +163,9 @@ saying to create one per loop, rather than with an error of the event loop's.
 | Option | Meaning | Rules |
 |---|---|---|
 | `api_endpoint` | Base URL of the API, `http://localhost:8000/api` | Absolute `http`/`https` URL with a host; no query, fragment or credentials; a trailing `/` is dropped; a path ending in a method name (`/api/publish`) is refused with a hint |
-| `api_endpoint_func` | Returns the base URL per request, for discovered addresses | Exactly one of the two is set; its result is validated per request by `api_endpoint`'s rules, and one failing them fails the call with `InvalidConfig`; the function's own error fails the call wrapped, naming the function (section 4.1) |
+| `api_endpoint_func` | Returns the base URL per request, for discovered addresses | Exactly one of the two is set; its result is validated per request by `api_endpoint`'s rules, and one failing them fails the call with `InvalidConfig`; the function's own error fails the call with `FunctionError` (section 4.1) |
 | `api_key` | Sent as `X-API-Key` | No control characters but tab |
-| `bearer_token_func` | Returns a token sent as `Authorization: Bearer <token>`, per request | Not together with `api_key`: Centrifugo PRO judges a request with a bearer token by the token alone. An empty token or one with control characters fails the call before sending, with `InvalidConfig`; the function's own error fails the call wrapped, naming the function (section 4.1) |
+| `bearer_token_func` | Returns a token sent as `Authorization: Bearer <token>`, per request | Not together with `api_key`: Centrifugo PRO judges a request with a bearer token by the token alone. An empty token or one with control characters fails the call before sending, with `InvalidConfig`; the function's own error fails the call with `FunctionError` (section 4.1) |
 | `http_client` | The HTTP client | Default: section 3.2. The SDK MUST NOT change a client the caller passed - its headers, pool or redirect policy: credentials and headers go on each request |
 | `request_timeout` | Bounds every request: the most a call waits, unless the call gives a timeout of its own (section 3.2) | A default (section 17); negative refused. Unset is the default - zero in Go, where unset and zero are one value - never "no timeout": it cannot be turned off, since an unbounded call is what the rule exists to prevent; a caller wanting long calls sets a large value. Where the language tells unset from zero - Python's `None` - zero is refused |
 | `header` | Extra headers on every request | MUST refuse `X-API-Key`, `Authorization`, `Content-Type`, invalid names and values with control characters but tab; `User-Agent` replaces the SDK's own; `Host`, with exactly one non-empty value, sets the request's host |
@@ -1250,8 +1250,8 @@ Generation and the client:
   `bearer_token_func` not together (3.1).
 - [ ] An endpoint from `api_endpoint_func` validated per request; an empty
   bearer token, or one with control characters, fails the call before
-  sending; both with `InvalidConfig`, and the functions' own errors wrapped,
-  naming the function (3.1, 4.1).
+  sending; both with `InvalidConfig`, and the functions' own errors with
+  `FunctionError` (3.1, 4.1).
 - [ ] `header` refuses credentials, `Content-Type` and invalid names and
   values (3.1).
 - [ ] `POST {api_endpoint}/{method}`, never the legacy `/api` (3.2).
