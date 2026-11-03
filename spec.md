@@ -249,7 +249,8 @@ also checks before sending that each such field has a value - not empty,
 not zero, not the language's unset, a nested message not empty - where a
 payload's JSON `null` is a value, as section 3.4 says (JavaScript's `null`,
 raw JSON `null` elsewhere) - and fails with
-`InvalidRequest` naming its path (section 3.5); a Go struct, which cannot
+`InvalidRequest` naming its path (section 3.5) - in the names the SDK's
+other request errors use, its own or the wire's, the same in all of them; a Go struct, which cannot
 require a field at all, has the check only. Either way a call missing a
 required field fails before anything is sent, in every language, and in the
 signature where there is one. A field "Required unless ..." or "Required
@@ -274,7 +275,10 @@ and the value - `ProviderFCM`, `PlatformIOS`, `OpAdd`, `StatusDelivered`,
 `PROVIDER_FCM`, Python `PROVIDER_FCM`;
 where the language puts constants in a type, one per field, named so that it
 does not clash with the platform's own types - C# `ProviderValues.Fcm`, not
-`Encoding` or `Type`, which `System` already has - so that a typo fails
+`Encoding` or `Type`, which `System` already has; PHP `Provider::FCM` - and
+where a field's name is a reserved word, the constants take its message's
+name before it, as for a collision: PHP's `ChannelsCapabilityMatch`, since
+`match` cannot name a class - so that a typo fails
 at compile or import time rather than at Centrifugo - or, in a proxy
 handler comparing a request's `encoding` with a value, rather than never. Where fields of one
 name list different values in different messages, the set listed in the
@@ -528,9 +532,9 @@ bounds each page; a deadline or cancellation the caller holds across the
 loop - a Go context, an `AbortSignal` - ends the iteration when it ends.
 `history_all` refuses with `InvalidRequest`, before sending anything - at
 the call where the language can, on the first iteration otherwise; in a
-language whose generator functions run nothing until iterated, as Python's,
-"at the call" means a plain function which checks, then returns the
-iterator - a
+language whose generator functions run nothing until iterated, as Python's
+and PHP's, "at the call" means a plain function which checks, then returns
+the iterator - a
 `limit` below 1 - 0 asks for the position alone, -1 for everything in one
 call - and `reverse`, since `since` has no counterpart running back; it
 stops at a page shorter than `limit`, so a full last page costs one more
