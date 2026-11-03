@@ -79,9 +79,11 @@ type Config struct {
 	// error matches errors.Is(err, context.DeadlineExceeded).
 	HTTPClient *http.Client
 
-	// RequestTimeout bounds each request whose context has no deadline of
-	// its own. A context deadline always takes precedence. Zero means 10
-	// seconds.
+	// RequestTimeout bounds every call: the most it waits. A context
+	// deadline only shortens a call, never extends it - a call made with
+	// the context of an HTTP handler which lives for minutes still gives up
+	// on a stuck Centrifugo after RequestTimeout. To let calls take longer,
+	// raise RequestTimeout. Zero means 10 seconds.
 	RequestTimeout time.Duration
 
 	// Header holds extra headers sent with every request, for a proxy in
@@ -165,8 +167,9 @@ type RequestInfo struct {
 // Centrifugo or a proxy in front of it - every call in it fails with that
 // error. Keep payloads well within the body limit, or send large ones from a
 // client without AutoBatch. Each call keeps its own deadline in a batch: the
-// batch request lasts until the latest deadline of the calls in it, and a
-// call without one gets RequestTimeout, as when sent alone. A call which
+// batch request lasts until the latest deadline of the calls in it, each the
+// one it has sent alone - RequestTimeout, shortened by its context - and at
+// least RequestTimeout from when it is sent. A call which
 // times out before its batch's request ends may still be carried out - as
 // after any timeout - so retry a publication only with an IdempotencyKey;
 // BroadcastWithRetry does. The values of a
@@ -548,13 +551,33 @@ func (c *Client) reportRequest(ctx context.Context, info RequestInfo, start time
 	c.onRequest(ctx, info)
 }
 
+// callTimeoutKey marks a context whose call has a timeout of its own,
+// replacing RequestTimeout: a broadcast retry's AttemptTimeout, or an
+// automatic batch's deadline.
+type callTimeoutKey struct{}
+
+// withCallTimeout gives the calls made with ctx the timeout d instead of
+// RequestTimeout. A deadline of ctx earlier than d still ends them first.
+func withCallTimeout(ctx context.Context, d time.Duration) context.Context {
+	return context.WithValue(ctx, callTimeoutKey{}, d)
+}
+
+// bound returns ctx bounded by the call's timeout: RequestTimeout, or the
+// call's own timeout set with withCallTimeout. A deadline of ctx only
+// shortens it: a context living for minutes - an HTTP handler's, say - does
+// not let a call wait on a stuck Centrifugo longer than its timeout.
+func (c *Client) bound(ctx context.Context) (context.Context, context.CancelFunc) {
+	d := c.timeout
+	if own, ok := ctx.Value(callTimeoutKey{}).(time.Duration); ok {
+		d = own
+	}
+	return context.WithTimeout(ctx, d)
+}
+
 // post sends body to the method's endpoint and decodes the reply into out.
 func (c *Client) post(ctx context.Context, method string, body, out any, status *int) error {
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, c.timeout)
-		defer cancel()
-	}
+	ctx, cancel := c.bound(ctx)
+	defer cancel()
 	base := c.addr
 	if c.addrFunc != nil {
 		addr, err := c.addrFunc(ctx)

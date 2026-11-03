@@ -241,11 +241,24 @@ func TestRequestTimeout(t *testing.T) {
 		t.Fatalf("error %v, want DeadlineExceeded", err)
 	}
 
-	// A deadline on the context wins over RequestTimeout.
+	// A later deadline on the context does not extend the call: a
+	// handler's long-lived context leaves RequestTimeout in force.
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if _, err := c.Publish(ctx, gocent.PublishRequest{Channel: "news", Data: jsontext.Value(`{}`)}); err != nil {
-		t.Fatalf("with a longer context deadline: %v", err)
+	start := time.Now()
+	_, err = c.Publish(ctx, gocent.PublishRequest{Channel: "news", Data: jsontext.Value(`{}`)})
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 150*time.Millisecond {
+		t.Fatalf("with a longer context deadline: %v after %v, want DeadlineExceeded at RequestTimeout", err, time.Since(start))
+	}
+
+	// An earlier deadline on the context shortens it.
+	slow := newClient(t, f, func(cfg *gocent.Config) { cfg.RequestTimeout = time.Minute })
+	ctx, cancel = context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	start = time.Now()
+	_, err = slow.Publish(ctx, gocent.PublishRequest{Channel: "news", Data: jsontext.Value(`{}`)})
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 150*time.Millisecond {
+		t.Fatalf("with a shorter context deadline: %v after %v", err, time.Since(start))
 	}
 }
 

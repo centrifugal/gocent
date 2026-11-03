@@ -41,12 +41,11 @@ type BroadcastRetryOptions struct {
 	// log, count, or stop. Nil means waiting
 	// ExponentialBackoff(100*time.Millisecond, 5*time.Second)(a.Attempt).
 	OnAttemptErr BroadcastAttemptErrFunc
-	// AttemptTimeout bounds each attempt, while the call's context bounds
-	// them all, waits between them included: an attempt which hangs times
-	// out, and its channels are retried while the context has time left.
-	// Zero means no bound of its own: the context alone bounds each attempt.
-	// To bound every request of the client instead, set http.Client.Timeout
-	// in Config.HTTPClient.
+	// AttemptTimeout is each attempt's own timeout, replacing
+	// Config.RequestTimeout for it, longer or shorter, while the call's
+	// context bounds them all, waits between them included: an attempt which
+	// hangs times out, and its channels are retried while the context has
+	// time left. Zero means RequestTimeout bounds each attempt.
 	AttemptTimeout time.Duration
 }
 
@@ -297,13 +296,12 @@ func (c *Client) BroadcastWithRetry(ctx context.Context, req BroadcastRequest, o
 	return final, err
 }
 
-// broadcastAttempt sends one attempt of BroadcastWithRetry, bounded by
-// timeout when it is set.
+// broadcastAttempt sends one attempt of BroadcastWithRetry. A timeout, when
+// set, is the attempt's own, replacing RequestTimeout; the call's context
+// still ends it sooner.
 func (c *Client) broadcastAttempt(ctx context.Context, req BroadcastRequest, timeout time.Duration) (BroadcastResult, error) {
 	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
+		ctx = withCallTimeout(ctx, timeout)
 	}
 	return c.Broadcast(ctx, req)
 }

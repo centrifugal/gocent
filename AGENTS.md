@@ -77,9 +77,13 @@ passes; if you find yourself about to break one, stop and say so instead.
 6. **`New` catches configuration mistakes.** Anything wrong with a `Config` that
    can be seen without a request is an error from `New` wrapping
    `ErrInvalidConfig`, naming the field and the fix.
-7. **One timeout story.** Every request carries a context with a deadline (the
-   caller's, or `RequestTimeout`), and `DefaultHTTPClient` sets no timeouts of
-   its own, so a request has one deadline. Whatever times out - the context,
+7. **One timeout story.** Every call is bounded by `RequestTimeout` -
+   `BroadcastRetryOptions.AttemptTimeout` replaces it for an attempt - and a
+   caller's context deadline only shortens it, never extends it (`bound` in
+   client.go). An automatic batch request has its own deadline, the latest
+   of its calls', at least `RequestTimeout` from when it is sent.
+   `DefaultHTTPClient` sets no timeouts of its own, so a request has one
+   deadline. Whatever times out - the context,
    or a caller's `http.Client` - the error matches
    `errors.Is(err, context.DeadlineExceeded)`.
 8. **HTTP hygiene.** Every response body is closed and drained up to a bound,

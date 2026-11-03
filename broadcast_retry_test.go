@@ -447,3 +447,27 @@ func TestBroadcastWithRetryStopNotRepeated(t *testing.T) {
 		t.Errorf("got %q", err)
 	}
 }
+
+// AttemptTimeout is each attempt's own timeout: it replaces RequestTimeout,
+// longer or shorter, while the call's context still ends an attempt sooner.
+func TestBroadcastWithRetryAttemptTimeoutReplacesRequestTimeout(t *testing.T) {
+	f := newFake(t)
+	f.delay = 150 * time.Millisecond
+	for _, auto := range []gocent.AutoBatch{{}, {MaxInFlight: 1}} {
+		c := newClient(t, f, autoBatch(auto), func(cfg *gocent.Config) { cfg.RequestTimeout = 20 * time.Millisecond })
+		req := gocent.BroadcastRequest{Channels: []string{"a"}, Data: data}
+
+		// Longer than RequestTimeout: the attempt waits for the reply.
+		if _, err := c.BroadcastWithRetry(t.Context(), req, gocent.BroadcastRetryOptions{MaxAttempts: 1, AttemptTimeout: time.Second}); err != nil {
+			t.Errorf("AutoBatch %+v, an AttemptTimeout longer than RequestTimeout: %v", auto, err)
+		}
+
+		// The call's context, earlier than AttemptTimeout, ends it.
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+		_, err := c.BroadcastWithRetry(ctx, req, gocent.BroadcastRetryOptions{MaxAttempts: 1, AttemptTimeout: time.Second})
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("AutoBatch %+v, the call's deadline before AttemptTimeout: %v", auto, err)
+		}
+	}
+}

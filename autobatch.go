@@ -51,14 +51,12 @@ type queued struct {
 // the next batch otherwise.
 func batched[W any](ctx context.Context, b *batcher, req request, get func(*reply) *W) (W, error) {
 	var zero W
-	// A call without a deadline gets RequestTimeout from now, as one sent
-	// alone does, so that sharing a batch with a call with a longer deadline
-	// does not make it wait longer.
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, b.client.timeout)
-		defer cancel()
-	}
+	// The call's deadline is the one it has sent alone: RequestTimeout from
+	// now, or its own timeout, a context's earlier deadline shortening it.
+	// So sharing a batch with a call with a longer deadline does not make it
+	// wait longer.
+	ctx, cancel := b.client.bound(ctx)
+	defer cancel()
 	deadline, _ := ctx.Deadline()
 	var encoded jsontext.Value
 	b.mu.Lock()
@@ -222,7 +220,9 @@ func (b *batcher) flush(items []*queued) {
 			deadline = q.deadline
 		}
 	}
-	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	// The batch's deadline is its own: RequestTimeout caps calls, not the
+	// batch request carrying them, which may outlast a call's deadline.
+	ctx, cancel := context.WithDeadline(withCallTimeout(context.Background(), time.Until(deadline)), deadline)
 	defer cancel()
 	if b.client.batchContext != nil {
 		callers := make([]context.Context, len(items))

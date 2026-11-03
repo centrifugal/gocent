@@ -150,37 +150,37 @@ func TestAutoBatchKeepsCallDeadlines(t *testing.T) {
 	f := newFake(t)
 	f.delay = 300 * time.Millisecond
 	c := newClient(t, f, autoBatch(gocent.AutoBatch{MaxInFlight: 1}), func(cfg *gocent.Config) {
-		cfg.RequestTimeout = 100 * time.Millisecond
+		cfg.RequestTimeout = 2 * time.Second
 	})
-	long := func() context.Context {
-		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-		t.Cleanup(cancel)
-		return ctx
-	}
 
 	// Occupy the only slot.
 	first := make(chan error, 1)
 	go func() {
-		_, err := c.Publish(long(), gocent.PublishRequest{Channel: "first", Data: data})
+		_, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "first", Data: data})
 		first <- err
 	}()
 	time.Sleep(20 * time.Millisecond)
 
+	// Two calls queue for the next batch: one with RequestTimeout, one
+	// whose context ends before the batch's reply. The short one returns at
+	// its own deadline; the batch goes on for the other.
 	batched := make(chan error, 1)
 	go func() {
-		_, err := c.Publish(long(), gocent.PublishRequest{Channel: "batched", Data: data})
+		_, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "batched", Data: data})
 		batched <- err
 	}()
 	time.Sleep(20 * time.Millisecond)
-	_, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "no-deadline", Data: data})
+	short, cancel := context.WithTimeout(t.Context(), 400*time.Millisecond)
+	defer cancel()
+	_, err := c.Publish(short, gocent.PublishRequest{Channel: "short", Data: data})
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("call without a deadline: error %v, want DeadlineExceeded", err)
+		t.Errorf("call with a short deadline: error %v, want DeadlineExceeded", err)
 	}
 	if err := <-first; err != nil {
 		t.Fatal(err)
 	}
 	if err := <-batched; err != nil {
-		t.Fatalf("call with a longer deadline than RequestTimeout: %v", err)
+		t.Fatalf("call sharing a batch with a shorter deadline: %v", err)
 	}
 	var sentInBatch bool
 	for _, r := range f.recorded() {
