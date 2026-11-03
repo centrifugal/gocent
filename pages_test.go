@@ -255,3 +255,24 @@ func TestMapReadStateAllRevision(t *testing.T) {
 		})
 	}
 }
+
+// A constant is only a name of a field's value: the field is a string, and
+// a value without a constant - one Centrifugo adds later - is sent as it is.
+func TestValuesWithoutConstantsAreSent(t *testing.T) {
+	for _, tc := range []struct {
+		req  gocent.Request
+		want string
+	}{
+		{gocent.DeviceRegisterRequest{Provider: gocent.ProviderFCM, Platform: gocent.PlatformIOS, Token: "t"}, `"provider":"fcm","token":"t","platform":"ios"`},
+		{gocent.DeviceRegisterRequest{Provider: "future", Platform: "watch", Token: "t"}, `"provider":"future","token":"t","platform":"watch"`},
+		{gocent.DeviceTopicUpdateRequest{DeviceID: "d", Op: "merge"}, `"device_id":"d","op":"merge"`},
+	} {
+		cmd, err := gocent.NewCommand(tc.req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "{" + tc.want + "}"; string(cmd.Payload) != want {
+			t.Errorf("payload %s, want %s", cmd.Payload, want)
+		}
+	}
+}
