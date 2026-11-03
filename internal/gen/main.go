@@ -114,7 +114,31 @@ func isEnvelope(s *schema, name string) bool {
 // server's setting alone", which a false or a zero cannot express. In Go it is
 // a pointer.
 func isWrapper(m *message) bool {
-	return m != nil && strings.HasSuffix(m.name, "Value") && len(m.fields) == 1 && m.fields[0].name == "value"
+	if m == nil || len(m.fields) != 1 {
+		return false
+	}
+	if strings.HasSuffix(m.name, "Value") && m.fields[0].name == "value" {
+		return true
+	}
+	return emptyHasMeaning(m.fields[0])
+}
+
+// required reports a field the proto marks "Required." without a condition:
+// "Required unless ..." is conditional, and so is not.
+func required(f *field) bool {
+	return strings.Contains(strings.Join(f.doc, " "), "Required.")
+}
+
+// emptyHasMeaning reports a required field whose comment gives its empty
+// value a meaning - `"" detaches the devices`, `An empty map clears it.` - in
+// what follows "Required.". Such a field is not checked before sending, since
+// empty is a value of it. A message holding only such a field is a presence
+// wrapper, as the update messages of device_update are: Centrifugo reads
+// whether it is there, so an empty one says something an absent one does not,
+// and in Go it is a pointer, as BoolValue is.
+func emptyHasMeaning(f *field) bool {
+	_, after, ok := strings.Cut(strings.Join(f.doc, " "), "Required.")
+	return ok && (strings.Contains(after, `""`) || strings.Contains(strings.ToLower(after), "empty"))
 }
 
 // Handwritten forms of messages which appear inside generated types.
@@ -228,11 +252,13 @@ func (g *constGroup) constName(value string) string {
 // listed in the most messages keeps the short name and the others are named
 // by their message too - OpAdd for the topic updates, FilterNodeOpAnd for
 // FilterNode - and a tie names all of them so.
-func constGroups(s *schema) ([]*constGroup, error) {
+// Only the messages include accepts count: those the generated package has
+// types for.
+func constGroups(s *schema, include func(name string) bool) ([]*constGroup, error) {
 	byField := map[string][]*constGroup{}
 	var order []string
 	for _, m := range s.messages {
-		if skipType(s, m.name) {
+		if !include(m.name) {
 			continue
 		}
 		for _, f := range m.fields {
@@ -271,6 +297,210 @@ func constGroups(s *schema) ([]*constGroup, error) {
 		out = append(out, groups...)
 	}
 	return out, nil
+}
+
+// checks finds the messages whose required fields the client checks: every
+// request, and each message a request holds - directly, in a list or in a
+// map - which has required fields of its own or holds such a message. zero
+// finds the messages whose emptiness a check must test: an optional nested
+// message is checked only when it is set, and a required one must be set.
+type checks struct {
+	s    *schema
+	need map[string]bool
+	zero map[string]bool
+}
+
+// needs reports whether a message has fields to check, itself or below.
+func (c *checks) needs(name string) bool {
+	if v, ok := c.need[name]; ok {
+		return v
+	}
+	c.need[name] = false // a message holding itself checks nothing more
+	m := c.s.byName[name]
+	v := false
+	for _, f := range m.fields {
+		if required(f) && !emptyHasMeaning(f) {
+			v = true
+		}
+		if c.s.byName[f.typ] != nil && !isWrapper(c.s.byName[f.typ]) && c.needs(f.typ) {
+			v = true
+		}
+	}
+	c.need[name] = v
+	return v
+}
+
+// markZero records that a message needs an isZero method, and so does each
+// message held by value in it.
+func (c *checks) markZero(name string) {
+	if c.zero[name] {
+		return
+	}
+	c.zero[name] = true
+	for _, f := range c.s.byName[name].fields {
+		if m := c.s.byName[f.typ]; m != nil && !isWrapper(m) && !f.repeated && f.mapKey == "" {
+			c.markZero(f.typ)
+		}
+	}
+}
+
+// emptyCheck returns the Go condition true when field f of r is unset.
+func emptyCheck(s *schema, f *field) (string, error) {
+	name := "r." + goName(f.name)
+	switch {
+	case f.repeated || f.mapKey != "":
+		return "len(" + name + ") == 0", nil
+	case isWrapper(s.byName[f.typ]):
+		return name + " == nil", nil
+	case s.byName[f.typ] != nil:
+		return name + ".isZero()", nil
+	}
+	switch scalarTypes[f.typ] {
+	case "string", "jsontext.Value":
+		if scalarTypes[f.typ] == "string" {
+			return name + ` == ""`, nil
+		}
+		return "len(" + name + ") == 0", nil
+	case "bool":
+		return "", fmt.Errorf("bool field %s cannot be required: false and unset are one value", f.name)
+	}
+	return name + " == 0", nil
+}
+
+func emitRequired(w *writer, s *schema, cmds []command) error {
+	c := &checks{s: s, need: map[string]bool{}, zero: map[string]bool{}}
+	isRequest := map[string]bool{}
+	for _, cmd := range cmds {
+		isRequest[cmd.request.name] = true
+	}
+	// The messages to write a required method for, in proto order.
+	var visit func(name string)
+	seen := map[string]bool{}
+	visit = func(name string) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
+		for _, f := range s.byName[name].fields {
+			if m := s.byName[f.typ]; m != nil && !isWrapper(m) && c.needs(f.typ) {
+				if f.mapKey != "" {
+					panic("unreachable") // refused below
+				}
+				visit(f.typ)
+				if !f.repeated {
+					c.markZero(f.typ)
+				}
+			}
+			if m := s.byName[f.typ]; m != nil && !isWrapper(m) && required(f) && !f.repeated && f.mapKey == "" {
+				c.markZero(f.typ)
+			}
+		}
+	}
+	for _, cmd := range cmds {
+		for _, f := range cmd.request.fields {
+			if f.mapKey != "" && s.byName[f.typ] != nil && c.needs(f.typ) {
+				return fmt.Errorf("api.proto: %s.%s: a map of messages with required fields is not supported", cmd.request.name, f.name)
+			}
+		}
+		visit(cmd.request.name)
+	}
+
+	for _, m := range s.messages {
+		if !seen[m.name] || (!isRequest[m.name] && !c.needs(m.name)) {
+			continue
+		}
+		w.p("")
+		w.p("// required returns the path of a field the proto marks required which r")
+		w.p("// leaves unset, or \"\" when there is none.")
+		w.p("func (r *%s) required() string {", m.name)
+		for _, f := range m.fields {
+			if required(f) && !emptyHasMeaning(f) {
+				cond, err := emptyCheck(s, f)
+				if err != nil {
+					return fmt.Errorf("api.proto: %s: %w", m.name, err)
+				}
+				w.p("\tif %s {", cond)
+				w.p("\t\treturn %q", goName(f.name))
+				w.p("\t}")
+			}
+			nested := s.byName[f.typ]
+			if nested == nil || isWrapper(nested) || !c.needs(f.typ) {
+				continue
+			}
+			g := goName(f.name)
+			if f.repeated {
+				w.p("\tfor i := range r.%s {", g)
+				w.p("\t\tif p := r.%s[i].required(); p != \"\" {", g)
+				w.p("\t\t\treturn indexPath(%q, i) + \".\" + p", g)
+				w.p("\t\t}")
+				w.p("\t}")
+				continue
+			}
+			w.p("\tif !r.%s.isZero() {", g)
+			w.p("\t\tif p := r.%s.required(); p != \"\" {", g)
+			w.p("\t\t\treturn %q + p", g+".")
+			w.p("\t\t}")
+			w.p("\t}")
+		}
+		w.p("\treturn \"\"")
+		w.p("}")
+	}
+
+	for _, m := range s.messages {
+		if !c.zero[m.name] {
+			continue
+		}
+		var conds []string
+		for _, f := range m.fields {
+			name := "r." + goName(f.name)
+			switch {
+			case f.repeated || f.mapKey != "" || scalarTypes[f.typ] == "jsontext.Value":
+				conds = append(conds, "len("+name+") == 0")
+			case isWrapper(s.byName[f.typ]):
+				conds = append(conds, name+" == nil")
+			case s.byName[f.typ] != nil:
+				conds = append(conds, name+".isZero()")
+			case scalarTypes[f.typ] == "string":
+				conds = append(conds, name+` == ""`)
+			case scalarTypes[f.typ] == "bool":
+				conds = append(conds, "!"+name)
+			default:
+				conds = append(conds, name+" == 0")
+			}
+		}
+		w.p("")
+		w.p("// isZero reports whether r is unset: every field at its zero value.")
+		w.p("func (r *%s) isZero() bool {", m.name)
+		if len(conds) == 0 {
+			w.p("\treturn true")
+		} else {
+			w.p("\treturn %s", strings.Join(conds, " &&\n\t\t"))
+		}
+		w.p("}")
+	}
+	return nil
+}
+
+// emitConsts writes a const block per group of fields listing their values.
+func emitConsts(w *writer, s *schema, include func(name string) bool) error {
+	groups, err := constGroups(s, include)
+	if err != nil {
+		return err
+	}
+	for _, g := range groups {
+		names := make([]string, len(g.values))
+		for i, v := range g.values {
+			names[i] = g.constName(v)
+		}
+		w.p("")
+		w.doc("", wrap(fmt.Sprintf("%s are the values of the %s field of %s. The field is a string: a value Centrifugo sends or accepts which these do not name is still a valid one.", joinAnd(names), goName(g.field), joinAnd(g.messages)), 77), "", "")
+		w.p("const (")
+		for i, v := range g.values {
+			w.p("\t%s = %q", names[i], v)
+		}
+		w.p(")")
+	}
+	return nil
 }
 
 // joinAnd joins words as a sentence does: "a, b and c".
@@ -469,22 +699,16 @@ func generate(s *schema) ([]byte, error) {
 	}
 
 	// The values of the string fields with a fixed set, as constants.
-	groups, err := constGroups(s)
+	err = emitConsts(&w, s, func(name string) bool { return !skipType(s, name) })
 	if err != nil {
 		return nil, fmt.Errorf("api.proto: %w", err)
 	}
-	for _, g := range groups {
-		names := make([]string, len(g.values))
-		for i, v := range g.values {
-			names[i] = g.constName(v)
-		}
-		w.p("")
-		w.doc("", wrap(fmt.Sprintf("%s are the values of the %s field of %s. The field is a string: a value Centrifugo accepts which these do not name can still be sent.", joinAnd(names), goName(g.field), joinAnd(g.messages)), 77), "", "")
-		w.p("const (")
-		for i, v := range g.values {
-			w.p("\t%s = %q", names[i], v)
-		}
-		w.p(")")
+
+	// What the client checks before sending: the fields the proto marks
+	// required.
+	err = emitRequired(&w, s, cmds)
+	if err != nil {
+		return nil, err
 	}
 
 	// Every request knows its method name, and how it sits in a batch.

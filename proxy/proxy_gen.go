@@ -8,15 +8,15 @@ import "encoding/json/jsontext"
 // compares one tag: it sets key, cmp and val or vals, and leaves op empty. A
 // logical node combines its nodes: it sets op and nodes only.
 type FilterNode struct {
-	// Op is the logical operation: "and", "or" or "not". Empty for a leaf node.
+	// Op is the logical operation. Empty for a leaf node. One of: and, or, not.
 	Op string `json:"op,omitzero"`
 
 	// Key is the tag a leaf node compares.
 	Key string `json:"key,omitzero"`
 
-	// Cmp is the comparison of a leaf node: "eq", "neq", "in", "nin", "ex"
-	// (exists), "nex" (does not exist), "sw" (starts with), "ew" (ends with), "ct"
-	// (contains), "gt", "gte", "lt" or "lte".
+	// Cmp is the comparison of a leaf node: ex is exists, nex does not exist,
+	// sw starts with, ew ends with, ct contains. One of: eq, neq, in, nin, ex,
+	// nex, sw, ew, ct, gt, gte, lt, lte.
 	Cmp string `json:"cmp,omitzero"`
 
 	// Val is the value most comparisons compare the tag with.
@@ -69,11 +69,12 @@ type ConnectRequest struct {
 	// the like.
 	Transport string `json:"transport,omitzero"`
 
-	// Protocol is the client protocol: "json" or "protobuf".
+	// Protocol is the client protocol. One of: json, protobuf.
 	Protocol string `json:"protocol,omitzero"`
 
-	// Encoding is "binary" when the proxy has binary_encoding enabled, so that
-	// payloads come in the b64 fields, and "json" otherwise.
+	// Encoding is binary when the proxy has binary_encoding enabled, so that
+	// payloads come in the b64 fields, and json otherwise.
+	// One of: json, binary.
 	Encoding string `json:"encoding,omitzero"`
 
 	// Data is the custom data the client sent with its connect command, if any.
@@ -190,12 +191,12 @@ type ChannelsCapability struct {
 	// Channels are the channels, or channel patterns, it applies to.
 	Channels []string `json:"channels,omitzero"`
 
-	// Allow are the operations it grants: "sub" (subscribe), "pub" (publish),
-	// "hst" (history) and "prs" (presence).
+	// Allow are the operations it grants: sub is subscribe, pub publish, hst
+	// history, prs presence. One of: sub, pub, hst, prs.
 	Allow []string `json:"allow,omitzero"`
 
-	// Match is how channels are matched: empty for exact names, "wildcard" or
-	// "regex".
+	// Match is how channels are matched: empty for exact names. One of:
+	// wildcard, regex.
 	Match string `json:"match,omitzero"`
 }
 
@@ -215,11 +216,12 @@ type RefreshRequest struct {
 	// Transport is the connection's transport.
 	Transport string `json:"transport,omitzero"`
 
-	// Protocol is the client protocol: "json" or "protobuf".
+	// Protocol is the client protocol. One of: json, protobuf.
 	Protocol string `json:"protocol,omitzero"`
 
-	// Encoding is "binary" when the proxy has binary_encoding enabled, so that
-	// payloads come in the b64 fields, and "json" otherwise.
+	// Encoding is binary when the proxy has binary_encoding enabled, so that
+	// payloads come in the b64 fields, and json otherwise.
+	// One of: json, binary.
 	Encoding string `json:"encoding,omitzero"`
 
 	// User is the connection's user ID.
@@ -272,11 +274,12 @@ type SubscribeRequest struct {
 	// Transport is the connection's transport.
 	Transport string `json:"transport,omitzero"`
 
-	// Protocol is the client protocol: "json" or "protobuf".
+	// Protocol is the client protocol. One of: json, protobuf.
 	Protocol string `json:"protocol,omitzero"`
 
-	// Encoding is "binary" when the proxy has binary_encoding enabled, so that
-	// payloads come in the b64 fields, and "json" otherwise.
+	// Encoding is binary when the proxy has binary_encoding enabled, so that
+	// payloads come in the b64 fields, and json otherwise.
+	// One of: json, binary.
 	Encoding string `json:"encoding,omitzero"`
 
 	// User is the connection's user ID.
@@ -353,8 +356,8 @@ type SubscribeResult struct {
 	// subscription.
 	Override SubscribeOptionOverride `json:"override,omitzero"`
 
-	// Allow are capabilities granted in the channel for this subscription:
-	// "sub", "pub", "hst" and "prs". Centrifugo PRO only.
+	// Allow are capabilities granted in the channel for this subscription.
+	// Centrifugo PRO only. One of: sub, pub, hst, prs.
 	Allow []string `json:"allow,omitzero"`
 
 	// ServerTagsFilter makes the subscription receive only publications
@@ -379,11 +382,12 @@ type PublishRequest struct {
 	// Transport is the connection's transport.
 	Transport string `json:"transport,omitzero"`
 
-	// Protocol is the client protocol: "json" or "protobuf".
+	// Protocol is the client protocol. One of: json, protobuf.
 	Protocol string `json:"protocol,omitzero"`
 
-	// Encoding is "binary" when the proxy has binary_encoding enabled, so that
-	// payloads come in the b64 fields, and "json" otherwise.
+	// Encoding is binary when the proxy has binary_encoding enabled, so that
+	// payloads come in the b64 fields, and json otherwise.
+	// One of: json, binary.
 	Encoding string `json:"encoding,omitzero"`
 
 	// User is the connection's user ID.
@@ -458,11 +462,12 @@ type MapPublishRequest struct {
 	// Transport is the connection's transport.
 	Transport string `json:"transport,omitzero"`
 
-	// Protocol is the client protocol: "json" or "protobuf".
+	// Protocol is the client protocol. One of: json, protobuf.
 	Protocol string `json:"protocol,omitzero"`
 
-	// Encoding is "binary" when the proxy has binary_encoding enabled, so that
-	// payloads come in the b64 fields, and "json" otherwise.
+	// Encoding is binary when the proxy has binary_encoding enabled, so that
+	// payloads come in the b64 fields, and json otherwise.
+	// One of: json, binary.
 	Encoding string `json:"encoding,omitzero"`
 
 	// User is the connection's user ID.
@@ -508,8 +513,9 @@ type MapPublishResult struct {
 	// Score is not used by Centrifugo yet.
 	Score int64 `json:"score,omitzero"`
 
-	// KeyMode makes the publication conditional: "if_new" publishes only a key
-	// which does not exist yet, "if_exists" only one which does.
+	// KeyMode makes the publication conditional: if_new publishes only a key
+	// which does not exist yet, if_exists only one which does.
+	// One of: if_new, if_exists.
 	KeyMode string `json:"key_mode,omitzero"`
 
 	// StreamData is not used by Centrifugo yet.
@@ -551,11 +557,12 @@ type MapRemoveRequest struct {
 	// Transport is the connection's transport.
 	Transport string `json:"transport,omitzero"`
 
-	// Protocol is the client protocol: "json" or "protobuf".
+	// Protocol is the client protocol. One of: json, protobuf.
 	Protocol string `json:"protocol,omitzero"`
 
-	// Encoding is "binary" when the proxy has binary_encoding enabled, so that
-	// payloads come in the b64 fields, and "json" otherwise.
+	// Encoding is binary when the proxy has binary_encoding enabled, so that
+	// payloads come in the b64 fields, and json otherwise.
+	// One of: json, binary.
 	Encoding string `json:"encoding,omitzero"`
 
 	// User is the connection's user ID.
@@ -607,11 +614,12 @@ type RPCRequest struct {
 	// Transport is the connection's transport.
 	Transport string `json:"transport,omitzero"`
 
-	// Protocol is the client protocol: "json" or "protobuf".
+	// Protocol is the client protocol. One of: json, protobuf.
 	Protocol string `json:"protocol,omitzero"`
 
-	// Encoding is "binary" when the proxy has binary_encoding enabled, so that
-	// payloads come in the b64 fields, and "json" otherwise.
+	// Encoding is binary when the proxy has binary_encoding enabled, so that
+	// payloads come in the b64 fields, and json otherwise.
+	// One of: json, binary.
 	Encoding string `json:"encoding,omitzero"`
 
 	// User is the connection's user ID.
@@ -660,11 +668,12 @@ type SubRefreshRequest struct {
 	// Transport is the connection's transport.
 	Transport string `json:"transport,omitzero"`
 
-	// Protocol is the client protocol: "json" or "protobuf".
+	// Protocol is the client protocol. One of: json, protobuf.
 	Protocol string `json:"protocol,omitzero"`
 
-	// Encoding is "binary" when the proxy has binary_encoding enabled, so that
-	// payloads come in the b64 fields, and "json" otherwise.
+	// Encoding is binary when the proxy has binary_encoding enabled, so that
+	// payloads come in the b64 fields, and json otherwise.
+	// One of: json, binary.
 	Encoding string `json:"encoding,omitzero"`
 
 	// User is the connection's user ID.
@@ -747,9 +756,9 @@ type ChannelEvent struct {
 	// Channel is the channel it happened in.
 	Channel string `json:"channel,omitzero"`
 
-	// Type is "occupied" when the channel got its first subscriber, "vacated"
+	// Type is occupied when the channel got its first subscriber, vacated
 	// when it lost its last one. More types may come; the field is a string,
-	// not an enum, for JSON interoperability.
+	// not an enum, for JSON interoperability. One of: occupied, vacated.
 	Type string `json:"type,omitzero"`
 }
 
@@ -826,3 +835,86 @@ type SharedPollRefreshResponse struct {
 	Result *SharedPollRefreshResult `json:"result,omitzero"`
 	Error  *Error                   `json:"error,omitzero"`
 }
+
+// OpAnd, OpOr and OpNot are the values of the Op field of FilterNode. The field
+// is a string: a value Centrifugo sends or accepts which these do not name is
+// still a valid one.
+const (
+	OpAnd = "and"
+	OpOr  = "or"
+	OpNot = "not"
+)
+
+// CmpEq, CmpNeq, CmpIn, CmpNin, CmpEx, CmpNex, CmpSw, CmpEw, CmpCt, CmpGt,
+// CmpGte, CmpLt and CmpLte are the values of the Cmp field of FilterNode. The
+// field is a string: a value Centrifugo sends or accepts which these do not
+// name is still a valid one.
+const (
+	CmpEq  = "eq"
+	CmpNeq = "neq"
+	CmpIn  = "in"
+	CmpNin = "nin"
+	CmpEx  = "ex"
+	CmpNex = "nex"
+	CmpSw  = "sw"
+	CmpEw  = "ew"
+	CmpCt  = "ct"
+	CmpGt  = "gt"
+	CmpGte = "gte"
+	CmpLt  = "lt"
+	CmpLte = "lte"
+)
+
+// ProtocolJSON and ProtocolProtobuf are the values of the Protocol field of
+// ConnectRequest, RefreshRequest, SubscribeRequest, PublishRequest,
+// MapPublishRequest, MapRemoveRequest, RPCRequest and SubRefreshRequest. The
+// field is a string: a value Centrifugo sends or accepts which these do not
+// name is still a valid one.
+const (
+	ProtocolJSON     = "json"
+	ProtocolProtobuf = "protobuf"
+)
+
+// EncodingJSON and EncodingBinary are the values of the Encoding field of
+// ConnectRequest, RefreshRequest, SubscribeRequest, PublishRequest,
+// MapPublishRequest, MapRemoveRequest, RPCRequest and SubRefreshRequest. The
+// field is a string: a value Centrifugo sends or accepts which these do not
+// name is still a valid one.
+const (
+	EncodingJSON   = "json"
+	EncodingBinary = "binary"
+)
+
+// AllowSub, AllowPub, AllowHst and AllowPrs are the values of the Allow field
+// of ChannelsCapability and SubscribeResult. The field is a string: a value
+// Centrifugo sends or accepts which these do not name is still a valid one.
+const (
+	AllowSub = "sub"
+	AllowPub = "pub"
+	AllowHst = "hst"
+	AllowPrs = "prs"
+)
+
+// MatchWildcard and MatchRegex are the values of the Match field of
+// ChannelsCapability. The field is a string: a value Centrifugo sends or
+// accepts which these do not name is still a valid one.
+const (
+	MatchWildcard = "wildcard"
+	MatchRegex    = "regex"
+)
+
+// KeyModeIfNew and KeyModeIfExists are the values of the KeyMode field of
+// MapPublishResult. The field is a string: a value Centrifugo sends or accepts
+// which these do not name is still a valid one.
+const (
+	KeyModeIfNew    = "if_new"
+	KeyModeIfExists = "if_exists"
+)
+
+// TypeOccupied and TypeVacated are the values of the Type field of
+// ChannelEvent. The field is a string: a value Centrifugo sends or accepts
+// which these do not name is still a valid one.
+const (
+	TypeOccupied = "occupied"
+	TypeVacated  = "vacated"
+)

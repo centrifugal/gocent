@@ -58,6 +58,12 @@ func generateProxy(s *schema) ([]byte, error) {
 		w.p("}")
 	}
 
+	// The values of the string fields with a fixed set, as constants: what a
+	// handler compares a request's fields with, or sets in a result.
+	if err := emitConsts(&w, s, func(name string) bool { return used[name] }); err != nil {
+		return nil, fmt.Errorf("proxy.proto: %w", err)
+	}
+
 	src, err := format.Source(w.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("formatting generated code: %w\n%s", err, w.Bytes())

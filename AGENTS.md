@@ -238,9 +238,14 @@ comment of the symbol. Code using gocent sees those, not this file.
 - **`rpc` is not offered**, though `api.proto` has it: it calls server API
   extensions, which Centrifugo does not provide. `omittedCommands` in
   `internal/gen/main.go` leaves it out with its request and result types.
-- **`BoolValue` fields are pointers.** Absent means "leave the server's setting
-  alone", which `false` cannot say. Every other message field is a value, sent
-  only when non-zero.
+- **Presence wrappers are pointers; every other message field is a value.**
+  A `BoolValue` absent means "leave the server's setting alone", which
+  `false` cannot say. `device_update`'s `UserUpdate`, `TimezoneUpdate`,
+  `LocaleUpdate` and `MetaUpdate` alike: an empty one clears, an absent one
+  changes nothing. The generator finds them in `api.proto`'s comments
+  (`isWrapper`), and `TestPresenceFromComments` pins the set. Every other
+  message field is a value, sent only when non-zero: for it, empty and absent
+  mean the same, and a value is easier to write.
 - **An automatic batch always goes to `/api/batch`, even with one command.**
   The command's own endpoint would reply in a different shape; one path keeps
   the reply handling single.

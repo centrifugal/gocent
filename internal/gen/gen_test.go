@@ -112,7 +112,7 @@ message C {
 	if err != nil {
 		t.Fatal(err)
 	}
-	groups, err := constGroups(s)
+	groups, err := constGroups(s, func(string) bool { return true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ message C {
 	if err != nil {
 		t.Fatal(err)
 	}
-	groups, err = constGroups(s)
+	groups, err = constGroups(s, func(string) bool { return true })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,5 +244,43 @@ service S {
 		if got[name] != want {
 			t.Errorf("%s: %v, want %v", name, got[name], want)
 		}
+	}
+}
+
+// The presence wrappers and the required fields left unchecked are found in
+// api.proto's comments. The sets are pinned here, so that a changed comment
+// shows as a failed test rather than as a field changing type or check.
+func TestPresenceFromComments(t *testing.T) {
+	f, err := os.Open("../../api.proto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	s, err := parse(f, "api.proto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wrappers, unchecked []string
+	for _, m := range s.messages {
+		if isWrapper(m) {
+			wrappers = append(wrappers, m.name)
+		}
+		for _, f := range m.fields {
+			if required(f) && emptyHasMeaning(f) {
+				unchecked = append(unchecked, m.name+"."+f.name)
+			}
+		}
+	}
+	wantWrappers := []string{"BoolValue", "Int32Value", "DeviceUserUpdate", "DeviceTimezoneUpdate", "DeviceLocaleUpdate", "DeviceMetaUpdate"}
+	if !slices.Equal(wrappers, wantWrappers) {
+		t.Errorf("wrappers %v, want %v", wrappers, wantWrappers)
+	}
+	wantUnchecked := []string{
+		"InvalidateUserTokensRequest.user",
+		"DeviceUserUpdate.user", "DeviceTimezoneUpdate.timezone", "DeviceLocaleUpdate.locale", "DeviceMetaUpdate.meta",
+		"UserTopicUpdateRequest.user",
+	}
+	if !slices.Equal(unchecked, wantUnchecked) {
+		t.Errorf("required fields left unchecked %v, want %v", unchecked, wantUnchecked)
 	}
 }

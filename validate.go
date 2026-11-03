@@ -8,9 +8,12 @@ import (
 
 // ErrInvalidRequest is wrapped by the error for a request the client can tell
 // is wrong without sending it: one which cannot be encoded - a payload which
-// is not valid JSON, in any request - or a publication without a channel or
-// data. Such a request is never sent.
+// is not valid JSON, in any request - one leaving unset a field the API marks
+// "Required." in its documentation, or a publication without data. Such a
+// request is never sent.
 //
+// A required field whose empty value has a meaning - the empty User of
+// InvalidateUserTokensRequest, which means anonymous users - is not checked.
 // Only rules which hold for every Centrifugo are checked here; everything
 // else Centrifugo checks itself, and reports as [ErrBadRequest].
 var ErrInvalidRequest = errors.New("gocent: invalid request")
@@ -45,19 +48,29 @@ func (e *requestError) Unwrap() []error {
 	return []error{ErrInvalidRequest, e.err}
 }
 
-// validateRequest validates req if it has rules to check.
+// validateRequest checks req's required fields, then its own rules if it has
+// any.
 func validateRequest(req request) error {
+	if p := req.required(); p != "" {
+		return invalidRequest(req.APIMethod(), p+" is required")
+	}
 	if v, ok := req.(validator); ok {
 		return v.validate()
 	}
 	return nil
 }
 
+// indexPath names an element of a list in the path of a required field:
+// Items[2].
+func indexPath(name string, i int) string {
+	return name + "[" + strconv.Itoa(i) + "]"
+}
+
+// The publish and broadcast rules beyond required fields: data, which the
+// proto marks "Required unless b64data is set".
+
 func (r *PublishRequest) validate() error {
-	switch {
-	case r.Channel == "":
-		return invalidRequest("publish", "Channel is required")
-	case len(r.Data) == 0 && r.B64Data == "":
+	if len(r.Data) == 0 && r.B64Data == "" {
 		return invalidRequest("publish", "Data or B64Data is required")
 	}
 	return validateData("publish", r.Data)
@@ -72,10 +85,7 @@ func validateData(method string, data jsontext.Value) error {
 }
 
 func (r *BroadcastRequest) validate() error {
-	switch {
-	case len(r.Channels) == 0:
-		return invalidRequest("broadcast", "Channels is required")
-	case len(r.Data) == 0 && r.B64Data == "":
+	if len(r.Data) == 0 && r.B64Data == "" {
 		return invalidRequest("broadcast", "Data or B64Data is required")
 	}
 	for i, ch := range r.Channels {

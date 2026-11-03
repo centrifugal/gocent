@@ -803,19 +803,19 @@ type DeviceUpdateRequest struct {
 	// UserUpdate changes the user ID of the devices. It does not re-sync
 	// user-bound topics; use DeviceRegisterRequest to assign a device to
 	// another user.
-	UserUpdate DeviceUserUpdate `json:"user_update,omitzero"`
+	UserUpdate *DeviceUserUpdate `json:"user_update,omitzero"`
 
 	// MetaUpdate updates the device meta.
-	MetaUpdate DeviceMetaUpdate `json:"meta_update,omitzero"`
+	MetaUpdate *DeviceMetaUpdate `json:"meta_update,omitzero"`
 
 	// TopicsUpdate updates the device topics.
 	TopicsUpdate DeviceTopicsUpdate `json:"topics_update,omitzero"`
 
 	// TimezoneUpdate updates the device timezone.
-	TimezoneUpdate DeviceTimezoneUpdate `json:"timezone_update,omitzero"`
+	TimezoneUpdate *DeviceTimezoneUpdate `json:"timezone_update,omitzero"`
 
 	// LocaleUpdate updates the device locale.
-	LocaleUpdate DeviceLocaleUpdate `json:"locale_update,omitzero"`
+	LocaleUpdate *DeviceLocaleUpdate `json:"locale_update,omitzero"`
 }
 
 // DeviceRemoveRequest removes devices, selected by ids and/or users.
@@ -1645,8 +1645,8 @@ type SharedPollPublishResult struct {
 }
 
 // FilterNodeOpAnd, FilterNodeOpOr and FilterNodeOpNot are the values of the Op
-// field of FilterNode. The field is a string: a value Centrifugo accepts which
-// these do not name can still be sent.
+// field of FilterNode. The field is a string: a value Centrifugo sends or
+// accepts which these do not name is still a valid one.
 const (
 	FilterNodeOpAnd = "and"
 	FilterNodeOpOr  = "or"
@@ -1655,8 +1655,8 @@ const (
 
 // OpAdd, OpRemove and OpSet are the values of the Op field of
 // DeviceTopicsUpdate, DeviceTopicUpdateRequest and UserTopicUpdateRequest. The
-// field is a string: a value Centrifugo accepts which these do not name can
-// still be sent.
+// field is a string: a value Centrifugo sends or accepts which these do not
+// name is still a valid one.
 const (
 	OpAdd    = "add"
 	OpRemove = "remove"
@@ -1665,8 +1665,8 @@ const (
 
 // CmpEq, CmpNeq, CmpIn, CmpNin, CmpEx, CmpNex, CmpSw, CmpEw, CmpCt, CmpGt,
 // CmpGte, CmpLt and CmpLte are the values of the Cmp field of FilterNode. The
-// field is a string: a value Centrifugo accepts which these do not name can
-// still be sent.
+// field is a string: a value Centrifugo sends or accepts which these do not
+// name is still a valid one.
 const (
 	CmpEq  = "eq"
 	CmpNeq = "neq"
@@ -1685,7 +1685,7 @@ const (
 
 // ProviderFCM, ProviderHMS, ProviderAPNS and ProviderWebpush are the values of
 // the Provider field of DeviceRegisterRequest. The field is a string: a value
-// Centrifugo accepts which these do not name can still be sent.
+// Centrifugo sends or accepts which these do not name is still a valid one.
 const (
 	ProviderFCM     = "fcm"
 	ProviderHMS     = "hms"
@@ -1695,7 +1695,7 @@ const (
 
 // PlatformIOS, PlatformAndroid and PlatformWeb are the values of the Platform
 // field of DeviceRegisterRequest. The field is a string: a value Centrifugo
-// accepts which these do not name can still be sent.
+// sends or accepts which these do not name is still a valid one.
 const (
 	PlatformIOS     = "ios"
 	PlatformAndroid = "android"
@@ -1703,20 +1703,575 @@ const (
 )
 
 // StatusDelivered and StatusInteracted are the values of the Status field of
-// UpdatePushStatusRequest. The field is a string: a value Centrifugo accepts
-// which these do not name can still be sent.
+// UpdatePushStatusRequest. The field is a string: a value Centrifugo sends or
+// accepts which these do not name is still a valid one.
 const (
 	StatusDelivered  = "delivered"
 	StatusInteracted = "interacted"
 )
 
 // KeyModeIfNew and KeyModeIfExists are the values of the KeyMode field of
-// MapPublishRequest. The field is a string: a value Centrifugo accepts which
-// these do not name can still be sent.
+// MapPublishRequest. The field is a string: a value Centrifugo sends or accepts
+// which these do not name is still a valid one.
 const (
 	KeyModeIfNew    = "if_new"
 	KeyModeIfExists = "if_exists"
 )
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *PublishRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *BroadcastRequest) required() string {
+	if len(r.Channels) == 0 {
+		return "Channels"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *SubscribeRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *UnsubscribeRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *DisconnectRequest) required() string {
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *PresenceRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *PresenceStatsRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *HistoryRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *HistoryRemoveRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *InfoRequest) required() string {
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *RefreshRequest) required() string {
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *ChannelsRequest) required() string {
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *ConnectionsRequest) required() string {
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *UpdateUserStatusRequest) required() string {
+	if len(r.Users) == 0 {
+		return "Users"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *GetUserStatusRequest) required() string {
+	if len(r.Users) == 0 {
+		return "Users"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *DeleteUserStatusRequest) required() string {
+	if len(r.Users) == 0 {
+		return "Users"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *BlockUserRequest) required() string {
+	if r.User == "" {
+		return "User"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *UnblockUserRequest) required() string {
+	if r.User == "" {
+		return "User"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *RevokeTokenRequest) required() string {
+	if r.UID == "" {
+		return "UID"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *InvalidateUserTokensRequest) required() string {
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *DeviceRegisterRequest) required() string {
+	if r.Provider == "" {
+		return "Provider"
+	}
+	if r.Token == "" {
+		return "Token"
+	}
+	if r.Platform == "" {
+		return "Platform"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *DeviceUpdateRequest) required() string {
+	if !r.TopicsUpdate.isZero() {
+		if p := r.TopicsUpdate.required(); p != "" {
+			return "TopicsUpdate." + p
+		}
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *DeviceRemoveRequest) required() string {
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *DeviceTopicsUpdate) required() string {
+	if r.Op == "" {
+		return "Op"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *DeviceListRequest) required() string {
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *DeviceTopicListRequest) required() string {
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *UserTopicListRequest) required() string {
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *DeviceTopicUpdateRequest) required() string {
+	if r.DeviceID == "" {
+		return "DeviceID"
+	}
+	if r.Op == "" {
+		return "Op"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *UserTopicUpdateRequest) required() string {
+	if r.Op == "" {
+		return "Op"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *PushNotification) required() string {
+	if !r.FCM.isZero() {
+		if p := r.FCM.required(); p != "" {
+			return "FCM." + p
+		}
+	}
+	if !r.HMS.isZero() {
+		if p := r.HMS.required(); p != "" {
+			return "HMS." + p
+		}
+	}
+	if !r.APNS.isZero() {
+		if p := r.APNS.required(); p != "" {
+			return "APNS." + p
+		}
+	}
+	if !r.Webpush.isZero() {
+		if p := r.Webpush.required(); p != "" {
+			return "Webpush." + p
+		}
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *FcmPushNotification) required() string {
+	if len(r.Message) == 0 {
+		return "Message"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *HmsPushNotification) required() string {
+	if len(r.Message) == 0 {
+		return "Message"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *ApnsPushNotification) required() string {
+	if len(r.Payload) == 0 {
+		return "Payload"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *WebPushPushNotification) required() string {
+	if len(r.Payload) == 0 {
+		return "Payload"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *SendPushNotificationRequest) required() string {
+	if r.Recipient.isZero() {
+		return "Recipient"
+	}
+	if r.Notification.isZero() {
+		return "Notification"
+	}
+	if !r.Notification.isZero() {
+		if p := r.Notification.required(); p != "" {
+			return "Notification." + p
+		}
+	}
+	if !r.LimitStrategy.isZero() {
+		if p := r.LimitStrategy.required(); p != "" {
+			return "LimitStrategy." + p
+		}
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *PushLimitStrategy) required() string {
+	if !r.RateLimit.isZero() {
+		if p := r.RateLimit.required(); p != "" {
+			return "RateLimit." + p
+		}
+	}
+	if !r.TimeLimit.isZero() {
+		if p := r.TimeLimit.required(); p != "" {
+			return "TimeLimit." + p
+		}
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *PushTimeLimitStrategy) required() string {
+	if r.SendAfterTime == "" {
+		return "SendAfterTime"
+	}
+	if r.SendBeforeTime == "" {
+		return "SendBeforeTime"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *PushRateLimitStrategy) required() string {
+	for i := range r.Policies {
+		if p := r.Policies[i].required(); p != "" {
+			return indexPath("Policies", i) + "." + p
+		}
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *RateLimitPolicy) required() string {
+	if r.Rate == 0 {
+		return "Rate"
+	}
+	if r.IntervalMs == 0 {
+		return "IntervalMs"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *UpdatePushStatusRequest) required() string {
+	if r.AnalyticsUID == "" {
+		return "AnalyticsUID"
+	}
+	if r.Status == "" {
+		return "Status"
+	}
+	if r.DeviceID == "" {
+		return "DeviceID"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *CancelPushRequest) required() string {
+	if r.UID == "" {
+		return "UID"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *MapPublishRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	if r.Key == "" {
+		return "Key"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *MapRemoveRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	if r.Key == "" {
+		return "Key"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *MapReadStateRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *MapReadStreamRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *MapStatsRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *MapClearRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	return ""
+}
+
+// required returns the path of a field the proto marks required which r
+// leaves unset, or "" when there is none.
+func (r *SharedPollPublishRequest) required() string {
+	if r.Channel == "" {
+		return "Channel"
+	}
+	if r.Key == "" {
+		return "Key"
+	}
+	if r.Version == 0 {
+		return "Version"
+	}
+	return ""
+}
+
+// isZero reports whether r is unset: every field at its zero value.
+func (r *DeviceTopicsUpdate) isZero() bool {
+	return r.Op == "" &&
+		len(r.Topics) == 0
+}
+
+// isZero reports whether r is unset: every field at its zero value.
+func (r *DeviceFilter) isZero() bool {
+	return len(r.IDs) == 0 &&
+		len(r.Users) == 0 &&
+		len(r.Topics) == 0 &&
+		len(r.Providers) == 0 &&
+		len(r.Platforms) == 0
+}
+
+// isZero reports whether r is unset: every field at its zero value.
+func (r *PushRecipient) isZero() bool {
+	return r.Filter.isZero() &&
+		len(r.FCMTokens) == 0 &&
+		r.FCMTopic == "" &&
+		r.FCMCondition == "" &&
+		len(r.HMSTokens) == 0 &&
+		r.HMSTopic == "" &&
+		r.HMSCondition == "" &&
+		len(r.APNSTokens) == 0 &&
+		len(r.WebpushTokens) == 0
+}
+
+// isZero reports whether r is unset: every field at its zero value.
+func (r *PushNotification) isZero() bool {
+	return r.FCM.isZero() &&
+		r.HMS.isZero() &&
+		r.APNS.isZero() &&
+		r.Webpush.isZero() &&
+		r.ExpireAt == 0
+}
+
+// isZero reports whether r is unset: every field at its zero value.
+func (r *FcmPushNotification) isZero() bool {
+	return len(r.Message) == 0
+}
+
+// isZero reports whether r is unset: every field at its zero value.
+func (r *HmsPushNotification) isZero() bool {
+	return len(r.Message) == 0
+}
+
+// isZero reports whether r is unset: every field at its zero value.
+func (r *ApnsPushNotification) isZero() bool {
+	return len(r.Headers) == 0 &&
+		len(r.Payload) == 0
+}
+
+// isZero reports whether r is unset: every field at its zero value.
+func (r *WebPushPushNotification) isZero() bool {
+	return len(r.Headers) == 0 &&
+		len(r.Payload) == 0
+}
+
+// isZero reports whether r is unset: every field at its zero value.
+func (r *PushLimitStrategy) isZero() bool {
+	return r.RateLimit.isZero() &&
+		r.TimeLimit.isZero()
+}
+
+// isZero reports whether r is unset: every field at its zero value.
+func (r *PushTimeLimitStrategy) isZero() bool {
+	return r.SendAfterTime == "" &&
+		r.SendBeforeTime == "" &&
+		!r.NoTzSendNow
+}
+
+// isZero reports whether r is unset: every field at its zero value.
+func (r *PushRateLimitStrategy) isZero() bool {
+	return r.Key == "" &&
+		len(r.Policies) == 0 &&
+		!r.DropIfRateLimited
+}
 
 // APIMethod returns "publish", the Centrifugo server API method a [PublishRequest] is sent to.
 // With the request encoded as JSON it makes the method and payload of an

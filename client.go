@@ -483,6 +483,9 @@ func checkAddr(addr string) (string, error) {
 type request interface {
 	APIMethod() string
 	addTo(*command)
+	// required returns the path of a field the proto marks required which
+	// the request leaves unset, or "" when there is none. Generated.
+	required() string
 }
 
 // response is the envelope every method replies with.

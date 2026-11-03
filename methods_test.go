@@ -174,14 +174,50 @@ func TestEveryMethodReachesItsEndpoint(t *testing.T) {
 
 // minimalRequest is the zero request of a type, or for the types the client
 // checks before sending, the least that passes the check.
+// minimalRequest returns a request of type t which the client sends: every
+// field set, so that every field the API marks required is - the test then
+// needs nothing to know which those are. Payloads are the JSON {}; nesting
+// stops six levels down, where FilterNode holds itself.
 func minimalRequest(t reflect.Type) reflect.Value {
-	switch t {
-	case reflect.TypeFor[gocent.PublishRequest]():
-		return reflect.ValueOf(gocent.PublishRequest{Channel: "c", Data: data})
-	case reflect.TypeFor[gocent.BroadcastRequest]():
-		return reflect.ValueOf(gocent.BroadcastRequest{Channels: []string{"c"}, Data: data})
+	return filled(t, 0)
+}
+
+func filled(t reflect.Type, depth int) reflect.Value {
+	v := reflect.New(t).Elem()
+	if depth > 6 {
+		return v
 	}
-	return reflect.Zero(t)
+	if t == reflect.TypeFor[jsontext.Value]() {
+		return reflect.ValueOf(jsontext.Value("{}"))
+	}
+	switch t.Kind() {
+	case reflect.String:
+		v.SetString("x")
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.Int, reflect.Int32, reflect.Int64:
+		v.SetInt(1)
+	case reflect.Uint32, reflect.Uint64:
+		v.SetUint(1)
+	case reflect.Float32, reflect.Float64:
+		v.SetFloat(1)
+	case reflect.Pointer:
+		p := reflect.New(t.Elem())
+		p.Elem().Set(filled(t.Elem(), depth+1))
+		return p
+	case reflect.Slice:
+		v = reflect.Append(reflect.MakeSlice(t, 0, 1), filled(t.Elem(), depth+1))
+	case reflect.Map:
+		v = reflect.MakeMap(t)
+		v.SetMapIndex(filled(t.Key(), depth+1), filled(t.Elem(), depth+1))
+	case reflect.Struct:
+		for i := range t.NumField() {
+			if t.Field(i).IsExported() {
+				v.Field(i).Set(filled(t.Field(i).Type, depth+1))
+			}
+		}
+	}
+	return v
 }
 
 // snake turns "PresenceStats" into "presence_stats", for methods which take
