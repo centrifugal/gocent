@@ -542,9 +542,10 @@ position apart, as `since_offset` and `since_epoch`: an SDK MAY give its
 request a setter taking a `StreamPosition`, where the language has one for
 its requests (Rust's builders), and otherwise the caller copies the two.
 Where results are structural types - TypeScript interfaces - a position is
-a getter of the decoded result, and section 15.3's test doubles get it from
-a constructor or helper of the SDK's, never from the application writing
-it out. A position whose epoch is no
+a getter of the decoded result: a result answered by section 15.3's fake
+transport has it, being decoded, and so does a partial-failure result built
+with the SDK's constructor. A result an application builds by hand is its
+own, and needs no position unless its code reads one. A position whose epoch is no
 longer the stream's fails with code 112, `UnrecoverablePosition`: the
 stream was reset, and reading from its start is the only recovery. Docs
 SHOULD show reading what came after a publication.
