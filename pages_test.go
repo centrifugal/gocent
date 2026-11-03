@@ -44,6 +44,17 @@ func (p *pagedCentrifugo) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			pubs = append(pubs, map[string]any{"offset": i, "data": i})
 		}
 		out = map[string]any{"publications": pubs, "epoch": "e", "offset": p.n}
+	case "/api/map_read_state":
+		from, _ := strconv.Atoi(stringOr(req["cursor"]))
+		var entries []map[string]any
+		for i := from; i < p.n && len(entries) < int(limit); i++ {
+			entries = append(entries, map[string]any{"key": "k" + strconv.Itoa(i)})
+		}
+		res := map[string]any{"entries": entries, "offset": 9, "epoch": "e"}
+		if from+int(limit) < p.n {
+			res["cursor"] = strconv.Itoa(from + int(limit))
+		}
+		out = res
 	case "/api/device_list":
 		from, _ := strconv.Atoi(stringOr(req["cursor"]))
 		size := int(limit)
@@ -204,5 +215,41 @@ func TestPosition(t *testing.T) {
 		if got != want {
 			t.Errorf("%s: %+v", name, got)
 		}
+	}
+}
+
+// Every page of a map state after the first is read at the first one's
+// revision, so that a reset between pages fails instead of mixing states;
+// a revision the caller set is kept.
+func TestMapReadStateAllRevision(t *testing.T) {
+	for name, tc := range map[string]struct {
+		req          gocent.MapReadStateRequest
+		first, later any // revision_offset of the first and later requests
+	}{
+		"from the first page": {gocent.MapReadStateRequest{Channel: "m", Limit: 2}, nil, float64(9)},
+		"the caller's":        {gocent.MapReadStateRequest{Channel: "m", Limit: 2, RevisionOffset: 4, RevisionEpoch: "x"}, float64(4), float64(4)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := &pagedCentrifugo{n: 5}
+			c := pagedClient(t, p)
+			var keys []string
+			for e, err := range c.MapReadStateAll(t.Context(), tc.req) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				keys = append(keys, e.Key)
+			}
+			if len(keys) != 5 || len(p.requests) != 3 {
+				t.Fatalf("keys %v in %d requests", keys, len(p.requests))
+			}
+			if got := p.requests[0]["revision_offset"]; got != tc.first {
+				t.Errorf("first request revision_offset %v, want %v", got, tc.first)
+			}
+			for i, r := range p.requests[1:] {
+				if r["revision_offset"] != tc.later || r["revision_epoch"] == nil {
+					t.Errorf("request %d revision %v %v", i+2, r["revision_offset"], r["revision_epoch"])
+				}
+			}
+		})
 	}
 }

@@ -131,8 +131,9 @@ Choosing keys:
   and so is a *different* publication into the same channel under the same key.
   A key built from an ID must name the event too: `order-42-paid`, not
   `order-42`.
-- The memory, Redis and PostgreSQL brokers keep keys. The NATS broker ignores
-  them, so with it a retry publishes again.
+- The memory, Redis and PostgreSQL brokers keep keys, and so does the Redis
+  plus NATS broker, through Redis. The plain NATS broker ignores them, so
+  with it a retry publishes again.
 
 Retry a broadcast with `client.BroadcastWithRetry` rather than a retry library:
 see below. With a retry library for other calls, give it `gocent.Retryable` as

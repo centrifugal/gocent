@@ -27,8 +27,9 @@ import (
 //
 // Most callers need no more than err != nil. A broadcast retried with the same
 // IdempotencyKey is not published again into the channels which already have
-// it, so retrying the whole broadcast is safe - with the memory, Redis and
-// PostgreSQL brokers, which keep keys; the NATS broker ignores them.
+// it, so retrying the whole broadcast is safe - with the memory, Redis,
+// PostgreSQL and Redis plus NATS brokers, which keep keys; the plain NATS
+// broker ignores them.
 //
 // To retry a broadcast, use [Client.BroadcastWithRetry]: it sends again only
 // the channels which may still succeed, with one IdempotencyKey - made for the

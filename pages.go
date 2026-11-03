@@ -106,14 +106,27 @@ func (c *Client) UserTopicListAll(ctx context.Context, req UserTopicListRequest)
 
 // MapReadStateAll returns every entry of a map channel's state, a page at a
 // time, each page read when the iteration reaches it: req.Limit is the page
-// size. An entry changed while iterating may be seen in either version, or
-// not at all; for a consistent view, read the state with [Client.MapReadState]
-// and the changes since its [MapReadStateResult.Position] with
-// [Client.MapReadStream].
+// size. Every page after the first is read at the first one's revision - its
+// [MapReadStateResult.Position], unless req sets RevisionOffset or
+// RevisionEpoch - so that a state reset between pages fails with
+// [ErrUnrecoverablePosition] instead of mixing two states: read again from
+// the start then. Entries changed while iterating may be seen in either
+// version; for a consistent view, read the changes since the first page's
+// position with [Client.MapReadStream].
 func (c *Client) MapReadStateAll(ctx context.Context, req MapReadStateRequest) iter.Seq2[MapEntry, error] {
+	pinned := req.RevisionOffset > 0 || req.RevisionEpoch != ""
 	return byCursor(ctx, req, c.MapReadState,
-		func(r MapReadStateResult) ([]MapEntry, string) { return r.Entries, r.Cursor },
-		func(r *MapReadStateRequest, cursor string) { r.Cursor = cursor })
+		func(r MapReadStateResult) ([]MapEntry, string) {
+			if !pinned {
+				req.RevisionOffset, req.RevisionEpoch = r.Offset, r.Epoch
+				pinned = true
+			}
+			return r.Entries, r.Cursor
+		},
+		func(r *MapReadStateRequest, cursor string) {
+			r.Cursor = cursor
+			r.RevisionOffset, r.RevisionEpoch = req.RevisionOffset, req.RevisionEpoch
+		})
 }
 
 // byCursor iterates the items of a method paged by a cursor: it sends req,

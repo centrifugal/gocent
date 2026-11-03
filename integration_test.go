@@ -483,6 +483,38 @@ func TestIntegrationMap(t *testing.T) {
 	}
 }
 
+// A map state read page by page: every page after the first carries the
+// first one's revision, which Centrifugo accepts with a cursor.
+func TestIntegrationMapReadStateAll(t *testing.T) {
+	c := realClient(t, gocent.AutoBatch{})
+	ch := "map:" + uniqueChannel(t)
+	want := map[string]bool{}
+	for i := range 5 {
+		key := "k" + strconv.Itoa(i)
+		want[key] = true
+		if _, err := c.MapPublish(t.Context(), gocent.MapPublishRequest{Channel: ch, Key: key, Data: jsontext.Value(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := map[string]bool{}
+	for e, err := range c.MapReadStateAll(t.Context(), gocent.MapReadStateRequest{Channel: ch, Limit: 2}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[e.Key] = true
+	}
+	if len(got) != len(want) {
+		t.Errorf("MapReadStateAll: %v, want %v", got, want)
+	}
+	// A revision from another epoch fails: the state was reset since.
+	for _, err := range c.MapReadStateAll(t.Context(), gocent.MapReadStateRequest{Channel: ch, Limit: 2, RevisionOffset: 1, RevisionEpoch: "gone"}) {
+		if !errors.Is(err, gocent.ErrUnrecoverablePosition) {
+			t.Errorf("a stale revision: %v", err)
+		}
+		break
+	}
+}
+
 func TestIntegrationSharedPollPublish(t *testing.T) {
 	c := realClient(t, gocent.AutoBatch{})
 	if _, err := c.SharedPollPublish(t.Context(), gocent.SharedPollPublishRequest{Channel: "poll:" + uniqueChannel(t), Key: "k", Version: 1, Data: jsontext.Value(`{"v":1}`)}); err != nil {

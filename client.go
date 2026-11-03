@@ -65,8 +65,10 @@ type Config struct {
 	// scratch, or on http.DefaultTransport, keeps only 2 idle connections per
 	// host, so concurrent calls open and close connections all the time.
 	//
-	// Redirects are not followed: Centrifugo's API never redirects, so one
-	// means APIEndpoint is wrong - http where a proxy wants https, say - and
+	// Redirects are not followed: Centrifugo's API never redirects a call -
+	// its router redirects only a path not in canonical form, with a doubled
+	// slash say - so one means APIEndpoint is wrong - http where a proxy wants
+	// https, or a malformed path - and
 	// following it would send the API key to wherever it points, and turn a
 	// publication into a GET without a body. The redirect is returned as an
 	// [HTTPError]. A client with a CheckRedirect of its own is left to it;

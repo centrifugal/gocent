@@ -112,9 +112,10 @@ func (e *HTTPError) Error() string {
 	b.WriteString(strconv.Itoa(e.StatusCode))
 	switch {
 	case e.StatusCode >= 300 && e.StatusCode < 400:
-		// Centrifugo's API never redirects: something in front of it does,
-		// which gocent does not follow - see Config.HTTPClient.
-		b.WriteString(" (a redirect, which gocent does not follow: check APIEndpoint, http or https say)")
+		// Centrifugo's API never redirects a call: a proxy in front of it
+		// does, or its router does for a path not in canonical form. gocent
+		// does not follow it - see Config.HTTPClient.
+		b.WriteString(" (a redirect, which gocent does not follow: check APIEndpoint's scheme and path - http or https, a doubled slash)")
 	case e.StatusCode == http.StatusNotFound && e.proMethod != "":
 		b.WriteString(" (" + e.proMethod + " is a Centrifugo PRO method: if other methods work, the server is Centrifugo OSS)")
 	case e.StatusCode == http.StatusNotFound:

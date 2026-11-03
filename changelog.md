@@ -94,9 +94,9 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   256 connections to the server, all kept while idle, so bursts of calls do
   not open and close connections - and a per-request timeout when the context
   has none. Redirects are not followed:
-  Centrifugo's API never redirects, and following one would send the API key
-  to wherever it points. A redirect is an `HTTPError` naming the likely
-  cause, a wrong `APIEndpoint`.
+  Centrifugo's API never redirects a call, and following one would send the
+  API key to wherever it points. A redirect is an `HTTPError` naming the
+  likely cause, a wrong scheme or path in `APIEndpoint`.
 * **Async consumers.** `gocent.NewCommand(req)` makes the command an async
   consumer runs - its method and JSON payload, or the `{"method", "payload"}`
   message as a whole - checking the request as a call would, so that an

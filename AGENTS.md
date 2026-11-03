@@ -88,7 +88,8 @@ passes; if you find yourself about to break one, stop and say so instead.
    so a burst never opens connections only to close them -
    `TestDefaultHTTPClientConnections` checks both. A request's
    body is never reused: the transport may read it after `Do` returns.
-   Redirects are never followed - Centrifugo's API does not redirect, and
+   Redirects are never followed - Centrifugo's API does not redirect a call,
+   only its router a path not in canonical form - and
    following one would send the API key wherever it points - unless the
    caller's `http.Client` has its own `CheckRedirect`. Header values which
    net/http would refuse at send time (control characters in the API key or
