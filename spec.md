@@ -48,6 +48,10 @@ Conventions:
   way that language's own SDKs take parameters. Almost every user and agent
   sees one SDK only, and writes it the way its language writes calls; what
   carries between languages is the meaning, which the docs explain once.
+  The one known exception is `on_attempt_err` (section 7.3): in Go it stops
+  a retry by returning an error, while in a language with exceptions it MAY
+  return the wait and stops by raising, so that a callback which only logs
+  cannot stop the retries by accident.
 - **Blocking and async alike.** Where a language has both blocking and async
   I/O in common use - Python, Rust - an SDK SHOULD provide both clients, with
   the same methods, options, errors and behaviour: an application uses the
@@ -144,7 +148,10 @@ its README.
 A client is created once from a configuration and shared; it MUST be safe for
 concurrent use. Creating it MUST validate everything that can be validated
 without a request and fail with an `InvalidConfig` error naming the field and
-the fix.
+the fix. `InvalidConfig` is the error for a client the SDK refuses to use as
+configured, at creation or on a call: an async client used from a second
+event loop, below, and an endpoint or token from `api_endpoint_func` or
+`bearer_token_func` which the SDK cannot send, in the table.
 
 It is shared within one process - and an async client within one event loop.
 Where applications fork after creating clients (Puma, Unicorn, Gunicorn
@@ -156,11 +163,11 @@ saying to create one per loop, rather than with an error of the event loop's.
 | Option | Meaning | Rules |
 |---|---|---|
 | `api_endpoint` | Base URL of the API, `http://localhost:8000/api` | Absolute `http`/`https` URL with a host; no query, fragment or credentials; a trailing `/` is dropped; a path ending in a method name (`/api/publish`) is refused with a hint |
-| `api_endpoint_func` | Returns the base URL per request, for discovered addresses | Exactly one of the two is set; its result is validated per request |
+| `api_endpoint_func` | Returns the base URL per request, for discovered addresses | Exactly one of the two is set; its result is validated per request by `api_endpoint`'s rules, and one failing them fails the call with `InvalidConfig`; the function's own error fails the call wrapped, naming the function (section 4.1) |
 | `api_key` | Sent as `X-API-Key` | No control characters but tab |
-| `bearer_token_func` | Returns a token sent as `Authorization: Bearer <token>`, per request | Not together with `api_key`: Centrifugo PRO judges a request with a bearer token by the token alone. An empty token or one with control characters fails the call before sending |
+| `bearer_token_func` | Returns a token sent as `Authorization: Bearer <token>`, per request | Not together with `api_key`: Centrifugo PRO judges a request with a bearer token by the token alone. An empty token or one with control characters fails the call before sending, with `InvalidConfig`; the function's own error fails the call wrapped, naming the function (section 4.1) |
 | `http_client` | The HTTP client | Default: section 3.2. The SDK MUST NOT change a client the caller passed - its headers, pool or redirect policy: credentials and headers go on each request |
-| `request_timeout` | Bounds every request: the most a call waits, unless the call gives a timeout of its own (section 3.2) | A default (section 17); negative refused |
+| `request_timeout` | Bounds every request: the most a call waits, unless the call gives a timeout of its own (section 3.2) | A default (section 17); negative refused. Zero is the default, not "no timeout": it cannot be turned off, since an unbounded call is what the rule exists to prevent; a caller wanting long calls sets a large value |
 | `header` | Extra headers on every request | MUST refuse `X-API-Key`, `Authorization`, `Content-Type`, invalid names and values with control characters but tab; `User-Agent` replaces the SDK's own; `Host`, with exactly one non-empty value, sets the request's host |
 | `auto_batch` | Section 8 | |
 | `on_request` | Section 10 | |
@@ -199,6 +206,11 @@ call.
   the call's start, or the call's own timeout where the language takes one
   per call - Python's, Ruby's and PHP's `timeout` argument, JavaScript's
   `timeout` option, C#'s and Rust's `with_timeout` - which replaces it. A
+  per-call timeout means one of three things, by the kind of call: for a
+  method it replaces `request_timeout`; for `broadcast_with_retry` it bounds
+  the whole call, waits included, while `attempt_timeout` bounds each attempt
+  (section 7.3); for a `<method>_all` iterator it bounds each page (section
+  3.8). A
   deadline or cancellation the call runs under - a Go `context`, an
   `AbortSignal`, Python's `asyncio.timeout` - only shortens that deadline,
   never lengthens it: a call inside an HTTP handler whose context lives for
@@ -318,6 +330,10 @@ Where a name in the table would clash with a platform type in a language
 which puts constants in a type of their own, the language's suffix for it
 is added, the same for every field - C#'s `Values`, `EncodingValues` beside
 `System.Text.Encoding`.
+
+A pinned name never changes. A later field whose name would clash with one
+in the table - a second `status` with other values, say - gets a qualified
+name of its own, `PushStatus`, and the existing name stays.
 
 
 ### 3.4 Payloads
@@ -596,7 +612,8 @@ SHOULD show reading what came after a publication.
 | `HTTPError` | The request did not reach the API method | `status_code`, `body` (start of it), `header` (always present: request IDs, `Retry-After`) |
 | `DecodeError` | The reply is not Centrifugo's - usually a wrong endpoint | the cause |
 | `InvalidRequest` | Not sent: sections 3.4 and 3.5 | its message names the method and problem; the cause, when there is one, is wrapped |
-| `InvalidConfig` | Client not created: section 3.1 | its message names the field and the fix |
+| `InvalidConfig` | A client the SDK refuses to use as configured: not created, used from a second event loop, or given an endpoint or token by a configured function which it cannot send (section 3.1) | its message names the field and the fix |
+| a function's error | `api_endpoint_func` or `bearer_token_func` failed | the function's own error, wrapped; the message names the function; judged by section 4.4 |
 | `Closed` | Call after `close` | |
 | `BatchSent` / `BatchNotSent` | Batch misuse: section 7.2 | |
 | network / timeout | From the transport, wrapped | the cause |
@@ -717,7 +734,8 @@ the error:
   entry carries that error.
 
 `result.replied` is true exactly when the error is nil or a
-`BroadcastFailedChannelsError`; `result.failed` lists the failed channels - a
+`BroadcastFailedChannelsError`; `result.failed` lists the failed channels -
+every channel, each with that error, when the broadcast failed as a whole - a
 property or field where the language has them, as `failed` on the error is
 (gocent: the method `Failed()`).
 They MUST never disagree with the error. A partial error MUST NOT match its
@@ -768,13 +786,18 @@ except BroadcastFailedChannelsError as e:
   (`failed` with index, method, error; `total`) when some failed, each pending
   holding its own outcome; any other error when the batch failed as a whole,
   every pending returning that error. `replied` and `failed` as for
-  broadcast. A broadcast in a batch returns exactly what a direct broadcast
+  broadcast: on a failure as a whole, `failed` holds every command, each with
+  that error. A broadcast in a batch returns exactly what a direct broadcast
   returns.
 - A command the client can tell is invalid fails the whole batch before
   sending, naming its index.
 - A batch is sent once, whatever happened: sending again returns `BatchSent`,
   and adding a command to a sent batch is a programming error the SDK refuses
-  loudly (gocent panics). An empty batch does nothing and succeeds - but
+  loudly (gocent panics). The two differ in kind: `send` is a call, and a
+  call returns an error under the core rule; adding a command builds the
+  batch, which has no error path, and a pending resolving to `BatchSent`
+  would drop the command silently until someone read it. Failing at the line
+  with the bug is the loud way. An empty batch does nothing and succeeds - but
   returns `Closed` from a closed client. A batch is not safe for concurrent
   use.
 - A reply count different from the command count is a `DecodeError`.
@@ -1194,7 +1217,8 @@ Generation and the client:
   `bearer_token_func` not together (3.1).
 - [ ] An endpoint from `api_endpoint_func` validated per request; an empty
   bearer token, or one with control characters, fails the call before
-  sending (3.1).
+  sending; both with `InvalidConfig`, and the functions' own errors wrapped,
+  naming the function (3.1, 4.1).
 - [ ] `header` refuses credentials, `Content-Type` and invalid names and
   values (3.1).
 - [ ] `POST {api_endpoint}/{method}`, never the legacy `/api` (3.2).
@@ -1263,8 +1287,9 @@ Errors and retries:
 Broadcast, batch, automatic batching, commands, observability:
 
 - [ ] A broadcast's result holds every channel, whatever the error;
-  `replied` and `failed` never disagree with it; a partial error does not
-  match its parts (7.1).
+  `replied` and `failed` never disagree with it, `failed` holding every
+  part on a failure as a whole; a partial error does not match its parts
+  (7.1).
 - [ ] Where errors are exceptions, the exception carries the result (7.1).
 - [ ] A batch: options fixed at creation, pending handles, sent once,
   `BatchSent` and `BatchNotSent`, a wrong reply count a `DecodeError`; docs
@@ -1417,6 +1442,17 @@ Rules added:
 - The endpoints for client SDKs fail with `Forbidden`, not `Unauthorized`,
   the API client's error for refused credentials (12).
 - The required-field rules are given as three tiers (3.3).
+- `InvalidConfig` is the error for a client refused as configured on a call
+  too: a second event loop, an endpoint or token from a configured function
+  which cannot be sent; the functions' own errors are a kind of their own,
+  wrapped and naming the function (3.1, 4.1).
+- On a failure as a whole, `failed` holds every channel or command, each
+  with that error (7.1, 7.2).
+- `request_timeout` cannot be turned off: zero is the default (3.1).
+- A per-call timeout's three meanings named in one place (3.2); a later
+  field clashing with a pinned constant name gets a qualified name (3.3);
+  `on_attempt_err` named as the known exception to unified meaning
+  (conventions); why adding to a sent batch fails loudly (7.2).
 
 Corrections, where 0.2 said what Centrifugo does not do:
 
@@ -1491,8 +1527,11 @@ it done. gocent made each in its own commit, on its `v4_dev` branch.
 7. **Timeouts and the endpoints' error** (3.2, 7.3, 8, 12):
    `request_timeout` bounds every call, a per-call timeout replaces it, a
    caller's deadline only shortens it; `attempt_timeout` replaces it per
-   attempt. The endpoints' error is renamed `Forbidden`. Both change what an
-   SDK released on 0.2 does: its changelog says so. Tests: section 15.
+   attempt. The endpoints' error is renamed `Forbidden`. An empty or
+   malformed bearer token, and an endpoint from `api_endpoint_func` failing
+   `api_endpoint`'s rules, fail the call with `InvalidConfig` (3.1, 4.1).
+   All three change what an SDK released on 0.2 does: its changelog says so.
+   Tests: section 15.
 8. **Token claims** (11.2): `profile` on connection tokens, written after
    `labels`, as 15.1 lists it. The vectors do not change: the claim is not in
    them.
