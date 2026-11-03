@@ -112,7 +112,9 @@ its README.
 - A field left at its zero value is not sent - a message field too, when
   every field in it is zero, whether the language holds it as a value, an
   `Option` or a nullable reference: an SDK MUST NOT send a set but empty
-  message which is not a presence wrapper. Centrifugo reads some messages by
+  message which is not a presence wrapper. This is the rule for requests: a
+  proxy handler's answer is section 14's, where an empty `result` is sent,
+  `{"result":{}}`, since it accepts the request as sent. Centrifugo reads some messages by
   whether they are there: `send_push_notification` with `"limit_strategy":
   {}` is refused with code 107 for want of `expire_at`, while the same
   request without it is sent. The
@@ -234,7 +236,12 @@ A field the protos mark "Required." without a condition is a required
 parameter where the language can say so - a keyword or named argument
 without a default, a non-optional TypeScript property - so that a call
 missing it fails as the language fails such a call, before anything is sent,
-and type checkers and editors show it. A signature makes the caller pass
+and type checkers and editors show it. This holds for nested messages too:
+a required field of a nested type is a required argument of its
+constructor - `DeviceTopicsUpdate(op=...)` - where the language says so for
+the request's own fields; a field whose empty value has a meaning is then
+written out empty, `DeviceUserUpdate(user="")`, rather than as an empty
+message. A signature makes the caller pass
 the field, not give it a value: `channel=""`, a C# `required` member set to
 `null`, Rust's `new("")` all pass it empty, and since a zero value is not
 sent, an empty required field is a missing one on the wire. So every SDK
@@ -508,15 +515,22 @@ items of every page in the language's iterator - Go `iter.Seq2[T, error]`,
 a Python generator, a JavaScript async iterator, a PHP `Generator`, a C#
 `IAsyncEnumerable<T>`; in Rust, whose `Stream` is a pre-1.0 type, a pager of
 the SDK's own with an async `next`, and an `Iterator` on the blocking
-client - so that paging is written once, in the SDK. The name takes the
+client - so that paging is written once, in the SDK. They are the client's
+only: a batch or a command reads one page, as its method does. The name takes the
 language's suffix for async methods where it has one (C#
 `HistoryAllAsync`). It sends `req` as given, then the next
 page as the table says, until there is none, and yields each page's items in
 order; an error ends it with that error, the language's way (yielded beside
 the item in Go, raised elsewhere). A page is fetched when the iteration
 reaches it, not ahead; leaving the loop early reads no further page.
+A call's own timeout - `request_timeout`, a per-call timeout argument -
+bounds each page; a deadline or cancellation the caller holds across the
+loop - a Go context, an `AbortSignal` - ends the iteration when it ends.
 `history_all` refuses with `InvalidRequest`, before sending anything - at
-the call where the language can, on the first iteration otherwise - a
+the call where the language can, on the first iteration otherwise; in a
+language whose generator functions run nothing until iterated, as Python's,
+"at the call" means a plain function which checks, then returns the
+iterator - a
 `limit` below 1 - 0 asks for the position alone, -1 for everything in one
 call - and `reverse`, since `since` has no counterpart running back; it
 stops at a page shorter than `limit`, so a full last page costs one more
