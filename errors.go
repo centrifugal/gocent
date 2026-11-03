@@ -154,10 +154,34 @@ func (e *DecodeError) Error() string {
 
 func (e *DecodeError) Unwrap() error { return e.Err }
 
+// FunctionError is the error of a call whose Config.APIEndpointFunc or
+// Config.BearerTokenFunc failed: Function names it, and Err is the
+// function's own error, which [Retryable] judges the call by - a discovery
+// service or token issuer which is down may be up for the next attempt.
+//
+//	if fe, ok := errors.AsType[*gocent.FunctionError](err); ok {
+//		log.Printf("%s failed: %v", fe.Function, fe.Err)
+//	}
+//
+// A function which returns an endpoint or token the client cannot send has
+// not failed: its configuration is wrong, which no retry fixes, so that call
+// fails with [ErrInvalidConfig] instead.
+type FunctionError struct {
+	// Function is the Config field holding the function: "APIEndpointFunc"
+	// or "BearerTokenFunc".
+	Function string
+	// Err is the error the function returned.
+	Err error
+}
+
+func (e *FunctionError) Error() string { return "gocent: " + e.Function + ": " + e.Err.Error() }
+
+func (e *FunctionError) Unwrap() error { return e.Err }
+
 // ErrInvalidConfig is wrapped by every error [New] returns, and by the error
 // of a call whose Config.APIEndpointFunc or Config.BearerTokenFunc returned
 // an endpoint or token the client cannot send: the client is refused as
-// configured. A function's own error is returned wrapped, naming the function.
+// configured. A function's own error is a [*FunctionError] instead.
 var ErrInvalidConfig = errors.New("gocent: invalid config")
 
 // maxErrorItems bounds how many failures an aggregate error names in its

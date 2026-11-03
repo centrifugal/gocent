@@ -89,6 +89,8 @@ which hangs leaves time to retry.
 | `*gocent.HTTPError` | the request did not reach the API method | `errors.Is(err, gocent.ErrUnauthorized)` for rejected credentials |
 | `*gocent.DecodeError` | the reply was not Centrifugo's - usually `APIEndpoint` points elsewhere | `errors.AsType` |
 | `gocent.ErrInvalidRequest` | the client could tell the request is wrong and did not send it | `errors.Is` |
+| `gocent.ErrInvalidConfig` | `New` refused the config, or `APIEndpointFunc` or `BearerTokenFunc` returned an endpoint or token the client cannot send | `errors.Is` |
+| `*gocent.FunctionError` | `APIEndpointFunc` or `BearerTokenFunc` failed: `Function` names it, `Err` is its error | `errors.AsType`; `gocent.Retryable` judges it by `Err` |
 | network, context | as usual | `errors.Is(err, context.DeadlineExceeded)` for any timeout |
 
 Centrifugo adds error codes over time: an unknown code is still an
@@ -310,11 +312,11 @@ is called for every request, so return a cached token, as an
 `oauth2.TokenSource` does. Leave both unset when mutual TLS, configured in
 `HTTPClient`, or a proxy authenticates instead.
 
-To sign the tokens yourself, `token.APITokens` issues them and reuses each for
+To sign the tokens yourself, `token.APITokenSource` issues them and reuses each for
 half its lifetime:
 
 ```go
-apiTokens := &token.APITokens{
+apiTokens := &token.APITokenSource{
 	Key:    apiKey, // its own key - never one of the client tokens
 	Claims: token.APIClaims{Audience: "centrifugo-api", Scope: []string{"centrifugo:api"}},
 }
@@ -474,7 +476,7 @@ disconnect them with the server API if needed.
 
 Centrifugo PRO's API tokens rotate the same way, from a set of their own at
 `http_api.jwks.endpoint` (see [Authentication](#authentication)).
-`token.APITokens.CurrentKey` returns the key to sign with, so it can switch
+`token.APITokenSource.CurrentKey` returns the key to sign with, so it can switch
 to the new key at step 2. Each API token is reused for half its `TTL`, so in
 step 3 wait at least `TTL` after the switch.
 

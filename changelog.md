@@ -84,7 +84,7 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   each caller's.
 * **Bearer token authentication.** `Config.BearerTokenFunc` sends a token
   with every request as `Authorization: Bearer`, for Centrifugo PRO's JWKS
-  authentication of the API. `token.APITokens` signs such tokens and reuses
+  authentication of the API. `token.APITokenSource` signs such tokens and reuses
   each for half its lifetime - its `Token` method is the `BearerTokenFunc` -
   and `token.API` signs one. They refuse claims without an audience or scope,
   or without an expiry: sign API tokens with keys of their own, and have
@@ -94,7 +94,8 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   malformed `APIEndpoint`, and contradictory settings, wrapping
   `gocent.ErrInvalidConfig`. A call fails with it too when `APIEndpointFunc`
   or `BearerTokenFunc` returns an endpoint or token the client cannot send;
-  an error of the function's own is returned wrapped, naming the function.
+  an error of the function's own is a `*gocent.FunctionError` naming the
+  function, which `gocent.Retryable` judges by its cause.
 * **Safer defaults.** A default HTTP client with a connection pool - at most
   256 connections to the server, all kept while idle, so bursts of calls do
   not open and close connections - and a per-request timeout when the context

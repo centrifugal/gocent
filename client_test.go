@@ -993,3 +993,48 @@ func TestPayloadRoundTrip(t *testing.T) {
 		t.Errorf("published %s, want %s", published, payload)
 	}
 }
+
+// A configured function's own failure is a *FunctionError naming it, judged
+// by Retryable through its cause: a function which timed out may succeed
+// next time, one which failed otherwise may not.
+func TestFunctionError(t *testing.T) {
+	f := newFake(t)
+	for _, tc := range []struct {
+		function  string
+		cause     error
+		retryable bool
+	}{
+		{"APIEndpointFunc", errors.New("no instance"), false},
+		{"APIEndpointFunc", context.DeadlineExceeded, true},
+		{"BearerTokenFunc", errors.New("issuer refused"), false},
+		{"BearerTokenFunc", context.DeadlineExceeded, true},
+	} {
+		cfg := gocent.Config{APIEndpoint: f.addr(), APIKey: f.key}
+		if tc.function == "APIEndpointFunc" {
+			cfg.APIEndpoint = ""
+			cfg.APIEndpointFunc = func(context.Context) (string, error) { return "", tc.cause }
+		} else {
+			cfg.APIKey = ""
+			cfg.BearerTokenFunc = func(context.Context) (string, error) { return "", tc.cause }
+		}
+		c, err := gocent.New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data})
+		fe, ok := errors.AsType[*gocent.FunctionError](err)
+		if !ok || fe.Function != tc.function || !errors.Is(err, tc.cause) {
+			t.Errorf("%s failing with %v: %v, want a *FunctionError naming it", tc.function, tc.cause, err)
+			continue
+		}
+		if errors.Is(err, gocent.ErrInvalidConfig) {
+			t.Errorf("%s failing: %v matches ErrInvalidConfig", tc.function, err)
+		}
+		if got := gocent.Retryable(err); got != tc.retryable {
+			t.Errorf("%s failing with %v: Retryable = %t, want %t", tc.function, tc.cause, got, tc.retryable)
+		}
+	}
+	if n := len(f.recorded()); n != 0 {
+		t.Errorf("%d requests sent", n)
+	}
+}

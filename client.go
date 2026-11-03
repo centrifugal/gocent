@@ -48,7 +48,7 @@ type Config struct {
 	// has the callers' values only through BatchContext, so a token should
 	// not depend on them.
 	//
-	// [github.com/centrifugal/gocent/v4/token.APITokens] signs and caches
+	// [github.com/centrifugal/gocent/v4/token.APITokenSource] signs and caches
 	// such tokens. Centrifugo PRO accepts a token signed with any key of its
 	// JWKS endpoint, checking audience, issuer and scope only when configured
 	// to: sign API tokens with keys of their own, never published for client
@@ -583,7 +583,7 @@ func (c *Client) post(ctx context.Context, method string, body, out any, status 
 	if c.addrFunc != nil {
 		addr, err := c.addrFunc(ctx)
 		if err != nil {
-			return fmt.Errorf("gocent: APIEndpointFunc: %w", err)
+			return &FunctionError{Function: "APIEndpointFunc", Err: err}
 		}
 		if base, err = checkAddr(addr); err != nil {
 			return fmt.Errorf("%w: APIEndpointFunc: %w", ErrInvalidConfig, err)
@@ -593,7 +593,7 @@ func (c *Client) post(ctx context.Context, method string, body, out any, status 
 	if c.token != nil {
 		token, err := c.token(ctx)
 		if err != nil {
-			return fmt.Errorf("gocent: BearerTokenFunc: %w", err)
+			return &FunctionError{Function: "BearerTokenFunc", Err: err}
 		}
 		if token == "" || !validHeaderValue(token) {
 			return fmt.Errorf("%w: BearerTokenFunc returned an empty token or one with a line break or another control character", ErrInvalidConfig)

@@ -79,8 +79,9 @@ passes; if you find yourself about to break one, stop and say so instead.
    `ErrInvalidConfig`, naming the field and the fix. What can only be seen per
    request - an endpoint from `APIEndpointFunc` failing `APIEndpoint`'s rules,
    an empty or malformed token from `BearerTokenFunc` - fails the call with an
-   error wrapping `ErrInvalidConfig` too; the function's own error is wrapped
-   as it is, naming the function.
+   error wrapping `ErrInvalidConfig` too; the function's own error is a
+   `*FunctionError` naming the function, which `Retryable` judges by its
+   cause.
 7. **One timeout story.** Every call is bounded by `RequestTimeout` -
    `BroadcastRetryOptions.AttemptTimeout` replaces it for an attempt - and a
    caller's context deadline only shortens it, never extends it (`bound` in
