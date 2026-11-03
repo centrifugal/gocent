@@ -206,11 +206,13 @@ call.
   the call's start, or the call's own timeout where the language takes one
   per call - Python's, Ruby's and PHP's `timeout` argument, JavaScript's
   `timeout` option, C#'s and Rust's `with_timeout` - which replaces it. A
-  per-call timeout means one of three things, by the kind of call: for a
-  method it replaces `request_timeout`; for `broadcast_with_retry` it bounds
-  the whole call, waits included, while `attempt_timeout` bounds each attempt
-  (section 7.3); for a `<method>_all` iterator it bounds each page (section
-  3.8). A
+  per-call timeout always bounds the whole call it is given to: for a method
+  that is one request; for `broadcast_with_retry` every attempt, waits
+  included. A call made of several requests bounds each with a timeout named
+  for it, replacing `request_timeout` for that request:
+  `broadcast_with_retry`'s `attempt_timeout` (section 7.3), and the
+  `<method>_all` iterators' `page_timeout` (section 3.8), which take no
+  per-call timeout, since an iteration's length is its caller's loop. A
   deadline or cancellation the call runs under - a Go `context`, an
   `AbortSignal`, Python's `asyncio.timeout` - only shortens that deadline,
   never lengthens it: a call inside an HTTP handler whose context lives for
@@ -560,10 +562,14 @@ written once, in the SDK:
   with `map_read_stream`, without copying fields by hand. The item is a
   small type of the SDK's holding the two (gocent: `HistoryItem`,
   `MapStateItem`). The other iterators yield the items as they are.
-- **Timeouts**: a call's timeout - `request_timeout`, or the call's own
-  (section 3.2) - bounds each page; a deadline or cancellation the caller
-  holds across the loop - a Go context, an `AbortSignal` - ends the
-  iteration when it ends.
+- **Timeouts**: each page is bounded by `page_timeout` where the SDK takes
+  per-call timeouts, replacing `request_timeout` for it, as `attempt_timeout`
+  does for a retry's attempt; by `request_timeout` without one, and in Go,
+  which takes none. The iterator takes no per-call timeout: the iteration
+  lasts as long as its caller's loop, which no timeout of the SDK's should
+  bound. A deadline or cancellation the caller holds across the loop - a Go
+  context, an `AbortSignal` - ends the iteration when it ends. A
+  `page_timeout` of zero is refused, as a per-call timeout's is.
 - **`history_all`** refuses with `InvalidRequest`, before sending anything,
   a `limit` below 1 - 0 asks for the position alone, -1 for everything in
   one call - and `reverse`, since `since` has no counterpart running back.
@@ -613,11 +619,18 @@ SHOULD show reading what came after a publication.
 | `DecodeError` | The reply is not Centrifugo's - usually a wrong endpoint | the cause |
 | `InvalidRequest` | Not sent: sections 3.4 and 3.5 | its message names the method and problem; the cause, when there is one, is wrapped |
 | `InvalidConfig` | A client the SDK refuses to use as configured: not created, used from a second event loop, or given an endpoint or token by a configured function which it cannot send (section 3.1) | its message names the field and the fix |
-| `FunctionError` | `api_endpoint_func` or `bearer_token_func` failed | `function`, the option's name, which the message names too; the function's own error as its cause; judged by section 4.4 by that cause. Where errors are values wrapped by the call, as in Go, the function's error wrapped, naming the function, is the kind (gocent: `"gocent: BearerTokenFunc: ..."`) |
+| `FunctionError` | `api_endpoint_func` or `bearer_token_func` failed | `function`, the option's name, which the message names too; the function's own error as its cause; judged by section 4.4 by that cause (gocent: `*FunctionError`, unwrapping to it) |
 | `Closed` | Call after `close` | |
 | `BatchSent` / `BatchNotSent` | Batch misuse: section 7.2 | |
 | network / timeout | From the transport, wrapped | the cause |
 
+- `InvalidConfig` and `FunctionError` are kept apart, though both come from
+  the configured functions: a function which failed is a runtime failure -
+  a discovery service or token issuer down - which a retry may fix, so
+  `retryable` judges it by its cause; a function which returned an endpoint
+  or token the SDK cannot send is wrong configuration, which no retry fixes.
+  A caller handling discovery failures matches `FunctionError`, and fixes
+  what `InvalidConfig` names.
 - An `Error` MUST be matched against known codes by code alone, never by
   message: `errors.Is(err, ErrUnknownChannel)`, `err.code == 102`.
 - Known codes: 100 internal (temporary), 102 unknown channel, 104 not found,
@@ -1012,7 +1025,7 @@ keys by ID. An example SHOULD show rotation by activation time (gocent:
 one without an ID (PRO verifies through JWKS by `kid`), claims with neither
 audience nor scope, a missing expiry.
 
-`api_tokens` is a token source for `bearer_token_func`: it signs with a key
+`api_token_source` is a token source for `bearer_token_func`: it signs with a key
 (or the key a function returns, for rotation), reuses each token for half its
 TTL (its default: section 17), and is safe for concurrent use. It
 refuses an expiry or issue time set in its claims, and a negative TTL.
@@ -1149,7 +1162,8 @@ An SDK MUST have:
   `request_timeout` ends at `request_timeout`; one under an earlier deadline
   ends at it; a per-call timeout replaces `request_timeout`, longer or
   shorter; a broadcast retry's attempt ends at the earlier of
-  `attempt_timeout` and the call's deadline.
+  `attempt_timeout` and the call's deadline; a `<method>_all` page ends at
+  `page_timeout`, where the SDK takes one, and zero is refused.
 - Automatic batching under random concurrency, with a race detector where the
   language has one.
 - Integration tests of every OSS method against the `centrifugo/centrifugo`
@@ -1272,7 +1286,9 @@ Payloads and validation:
   fetching a page when reached; `history_all` refuses a `limit` below 1 and
   `reverse`; `map_read_state_all` pins later pages to the first one's
   revision; `history_all` and `map_read_state_all` yield each item with its
-  position; results with `offset` and `epoch` give a `StreamPosition` (3.8).
+  position; each page bounded by `page_timeout` where the SDK takes per-call
+  timeouts, the iterator taking no per-call timeout; results with `offset`
+  and `epoch` give a `StreamPosition` (3.8).
 
 Errors and retries:
 
@@ -1342,7 +1358,7 @@ Tokens, endpoints, shared poll, proxy:
 - [ ] `api_token` refuses HMAC keys, keys without an ID, neither audience
   nor scope, no expiry, an empty scope or one with a space; docs: keys and
   an endpoint of their own (11.4).
-- [ ] `api_tokens` reuses a token for half its TTL, is safe for concurrent
+- [ ] `api_token_source` reuses a token for half its TTL, is safe for concurrent
   use, and refuses an expiry or issue time in its claims and a negative TTL
   (11.4).
 - [ ] HTTP handlers require no particular framework (conventions).
@@ -1404,7 +1420,7 @@ here; the sections they belong to say what they are for.
 | `broadcast_with_retry` | `max_attempts` 2 (one retry); waits `exponential_backoff(100 ms, 5 s)`; key `gocent-` + 26 base32 characters | 7.3 |
 | Automatic batching | `max_batch_size` 1000; `max_in_flight` suggested at about half the calls a process makes at once | 8 |
 | JWKS endpoint | `Cache-Control: public, max-age=300` | 11.3 |
-| `api_tokens` | TTL 5 minutes | 11.4 |
+| `api_token_source` | TTL 5 minutes | 11.4 |
 | Endpoints for client SDKs | bodies up to 1 MiB | 12 |
 | Proxy handlers | bodies up to 16 MiB, configurable | 14 |
 
@@ -1447,8 +1463,12 @@ Rules added:
 - `InvalidConfig` is the error for a client refused as configured on a call
   too: a second event loop, an endpoint or token from a configured function
   which cannot be sent; the functions' own errors are `FunctionError`, with
-  the function's name and its error as the cause - in Go, that error wrapped
-  naming the function (3.1, 4.1).
+  the function's name and its error as the cause, in every SDK, Go's
+  included; why the two kinds are apart (3.1, 4.1).
+- A per-call timeout always bounds the whole call; the `<method>_all`
+  iterators take `page_timeout` for each page instead (3.2, 3.8).
+- `api_tokens` is renamed `api_token_source`, read apart from `api_token`
+  (11.4).
 - On a failure as a whole, `failed` holds every channel or command, each
   with that error (7.1, 7.2).
 - `request_timeout` cannot be turned off: zero is the default (3.1).
@@ -1532,8 +1552,11 @@ it done. gocent made each in its own commit, on its `v4_dev` branch.
    caller's deadline only shortens it; `attempt_timeout` replaces it per
    attempt. The endpoints' error is renamed `Forbidden`. An empty or
    malformed bearer token, and an endpoint from `api_endpoint_func` failing
-   `api_endpoint`'s rules, fail the call with `InvalidConfig` (3.1, 4.1).
-   All three change what an SDK released on 0.2 does: its changelog says so.
+   `api_endpoint`'s rules, fail the call with `InvalidConfig`, and the
+   functions' own errors are `FunctionError` (3.1, 4.1). The `<method>_all`
+   iterators take `page_timeout`, not a per-call timeout (3.2, 3.8).
+   `api_tokens` is renamed `api_token_source` (11.4). These change what an
+   SDK released on 0.2 does: its changelog says so.
    Tests: section 15.
 8. **Token claims** (11.2): `profile` on connection tokens, written after
    `labels`, as 15.1 lists it. The vectors do not change: the claim is not in
