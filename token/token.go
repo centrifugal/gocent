@@ -120,11 +120,6 @@ type SubscriptionClaims struct {
 	User string
 	// Channel is the channel the token allows to subscribe to. Required.
 	Channel string
-	// Client binds the token to one connection: the "client" claim, the
-	// client ID Centrifugo gave it. A subscribe or subscription refresh from
-	// any other connection is refused, so a token which leaks cannot be used
-	// elsewhere. Empty leaves the token usable by any connection of User.
-	Client string
 	// ExpiresAt is until when the token is accepted: the "exp" claim. The
 	// subscription expires then too, unless SubscriptionExpiresAt or
 	// SubscriptionNoExpiry say otherwise: Centrifugo asks the client for a new
@@ -193,7 +188,6 @@ type connectionWire struct {
 type subscriptionWire struct {
 	registered
 	Channel          string                         `json:"channel"`
-	Client           string                         `json:"client,omitzero"`
 	ExpireAt         *int64                         `json:"expire_at,omitzero"`
 	Info             jsontext.Value                 `json:"info,omitzero"`
 	B64Info          string                         `json:"b64info,omitzero"`
@@ -284,7 +278,6 @@ func Subscription(key Key, c SubscriptionClaims) (string, error) {
 	return sign(key, subscriptionWire{
 		registered:       newRegistered(c.User, c.ExpiresAt, c.IssuedAt, c.ID, c.Audience, c.Issuer),
 		Channel:          c.Channel,
-		Client:           c.Client,
 		ExpireAt:         expireAt(c.SubscriptionExpiresAt, c.SubscriptionNoExpiry),
 		Info:             c.Info,
 		B64Info:          c.B64Info,

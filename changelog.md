@@ -44,8 +44,7 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   `TimezoneUpdate`, `LocaleUpdate` and `MetaUpdate` are pointers: an empty
   one is sent, and clears - `UserUpdate: &gocent.DeviceUserUpdate{}`
   detaches the devices from their user.
-* **Token claims.** `SubscriptionClaims.Client` binds a subscription token to
-  one connection; `ConnectionClaims.Profile` sets a Centrifugo PRO
+* **Token claims.** `ConnectionClaims.Profile` sets a Centrifugo PRO
   compression profile.
 * **Automatic batching.** `Config.AutoBatch` sends concurrent calls together
   once `MaxInFlight` requests are in flight, with no delay otherwise.

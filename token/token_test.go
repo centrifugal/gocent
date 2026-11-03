@@ -223,12 +223,12 @@ func TestProClaims(t *testing.T) {
 	if string(raw) != want {
 		t.Errorf("connection claims\n%s\nwant\n%s", raw, want)
 	}
-	sub, err := Subscription(HMAC([]byte("k")), SubscriptionClaims{User: "42", Channel: "c", Client: "client-id", IssuedAt: iat, NoExpiry: true, Allow: []string{"pub"}, ServerTagsFilter: filter})
+	sub, err := Subscription(HMAC([]byte("k")), SubscriptionClaims{User: "42", Channel: "c", IssuedAt: iat, NoExpiry: true, Allow: []string{"pub"}, ServerTagsFilter: filter})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _, raw, _, _ = parts(t, sub)
-	want = `{"sub":"42","iat":1700000000,"channel":"c","client":"client-id","allow":["pub"],"server_tags_filter":{"key":"role","cmp":"eq","val":"admin"}}`
+	want = `{"sub":"42","iat":1700000000,"channel":"c","allow":["pub"],"server_tags_filter":{"key":"role","cmp":"eq","val":"admin"}}`
 	if string(raw) != want {
 		t.Errorf("subscription claims\n%s\nwant\n%s", raw, want)
 	}

@@ -890,7 +890,6 @@ JSON fails at signing.
 | `meta` (connection) | `meta` | Not visible to other clients, but visible to the user owning the token: docs warn against putting in it what that user must not see |
 | `caps`, `labels`, `profile` (connection, PRO) | `caps`, `labels`, `profile` | `profile`: the compression profile |
 | `channel` (subscription) | `channel` | Required |
-| `client` (subscription) | `client` | Binds the token to one connection: a subscribe or subscription refresh from another client ID is refused. For a token made for one connection, whose client ID the application knows. Empty: any connection of the user |
 | `data` / `b64data`, `override`, `allow`, `server_tags_filter` (subscription) | same names | `allow` and `server_tags_filter`: PRO |
 
 Each expiry is one value, and "never" is always chosen explicitly. An SDK
@@ -1098,8 +1097,8 @@ matches byte for byte when its JSON is written compactly, the header as
 
 - connection: `sub, exp, iat, jti, aud, iss, expire_at, info, b64info,
   channels, subs, meta, caps, labels, profile`;
-- subscription: `sub, exp, iat, jti, aud, iss, channel, client, expire_at,
-  info, b64info, data, b64data, override, allow, server_tags_filter`.
+- subscription: `sub, exp, iat, jti, aud, iss, channel, expire_at, info,
+  b64info, data, b64data, override, allow, server_tags_filter`.
 
 Byte equality is a convenience for tests, not a requirement: Centrifugo reads
 claims in any order.
@@ -1236,7 +1235,7 @@ Tokens, endpoints, shared poll, proxy:
   P-384 and P-521 refused; a payload claim which is not valid JSON fails
   signing (11.1).
 - [ ] An expiry required, "never" chosen explicitly, contradictions refused;
-  `channels` and `subs` not both; the `client` and `profile` claims; docs on
+  `channels` and `subs` not both; the `profile` claim; docs on
   `meta` (11.2).
 - [ ] `jwks` refuses no keys, HMAC keys, keys without an ID, an ID used
   twice; its endpoint's headers; docs on rotation (11.3).
@@ -1329,9 +1328,8 @@ Rules added:
   the proto's "One of:" sentence; the fields stay strings (2, 3.3).
 - `<method>_all` iterators for the paged methods; `StreamPosition` from the
   results holding `offset` and `epoch` (3.8).
-- The `client` claim of subscription tokens and the `profile` claim of
-  connection tokens; a subscription token's `sub` is the connection's user
-  (11.2).
+- The `profile` claim of connection tokens; a subscription token's `sub` is
+  the connection's user (11.2).
 
 Corrections, where 0.2 said what Centrifugo does not do:
 
@@ -1402,9 +1400,9 @@ it done. gocent made each in its own commit, on its `v4_dev` branch.
 6. **Pages and positions** (3.8): the five `<method>_all` iterators,
    written once over the cursor and once for `history`, and `position()` on
    the four results holding `offset` and `epoch`. Tests: section 15.
-7. **Token claims** (11.2): `client` on subscription tokens, `profile` on
-   connection tokens, written after the claims 15.1 lists them after. The
-   vectors do not change: neither claim is in them.
+7. **Token claims** (11.2): `profile` on connection tokens, written after
+   `labels`, as 15.1 lists it. The vectors do not change: the claim is not in
+   them.
 8. **Tests** (15): the new unit tests of steps 3 to 6, and the PRO
    integration tests of push with rate and time limits - the test
    Centrifugo PRO needs `distributed_rate_limit` enabled with Redis (gocent:
