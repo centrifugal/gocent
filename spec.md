@@ -110,11 +110,16 @@ its README.
   `idempotencyKey` is dropped without a word. The exact name is the one
   spelling every version accepts.
 - A field left at its zero value is not sent - a message field too, when
-  every field in it is zero: for almost every field, absent and empty mean
-  the same, and an SDK represents it by value. The exception is a presence
+  every field in it is zero, whether the language holds it as a value, an
+  `Option` or a nullable reference: an SDK MUST NOT send a set but empty
+  message which is not a presence wrapper. Centrifugo reads some messages by
+  whether they are there: `send_push_notification` with `"limit_strategy":
+  {}` is refused with code 107 for want of `expire_at`, while the same
+  request without it is sent. The
+  exception is a presence
   wrapper: a message with one field, which Centrifugo reads by whether it is
   there. A `BoolValue` is one - absent leaves the server's setting alone,
-  which `false` cannot say. So are `device_update`'s `user_update`,
+  which `false` cannot say, and `Int32Value` alike. So are `device_update`'s `user_update`,
   `timezone_update`, `locale_update` and `meta_update`: an empty `user`
   detaches the devices from their user, an empty timezone, locale or meta
   clears it, and an absent one changes nothing. A generator finds them in
@@ -229,10 +234,14 @@ A field the protos mark "Required." without a condition is a required
 parameter where the language can say so - a keyword or named argument
 without a default, a non-optional TypeScript property - so that a call
 missing it fails as the language fails such a call, before anything is sent,
-and type checkers and editors show it. Where the language cannot say so - a
-Go struct, in which a missing field and an empty one are the same value -
-the SDK checks before sending that each such field is set, and fails with
-`InvalidRequest` naming it (section 3.5). Either way a call missing a
+and type checkers and editors show it. A signature makes the caller pass
+the field, not give it a value: `channel=""`, a C# `required` member set to
+`null`, Rust's `new("")` all pass it empty, and since a zero value is not
+sent, an empty required field is a missing one on the wire. So every SDK
+also checks before sending that each such field has a value - not empty,
+not zero, not null, a nested message not empty - and fails with
+`InvalidRequest` naming its path (section 3.5); a Go struct, which cannot
+require a field at all, has the check only. Either way a call missing a
 required field fails before anything is sent, in every language, and in the
 signature where there is one. A field "Required unless ..." or "Required
 when ..." is required under a condition, and stays optional: only the
@@ -252,13 +261,19 @@ in the SDK, generated from that
 sentence as the types are from the messages, so that a value Centrifugo
 adds reaches every SDK with its next sync. A constant is named by the field
 and the value - `ProviderFCM`, `PlatformIOS`, `OpAdd`, `StatusDelivered`,
-`KeyModeIfNew`, `CmpEq`, spelled the language's way - so that a typo fails
+`KeyModeIfNew`, `CmpEq`, spelled the language's way: Rust `PROVIDER_FCM`;
+where the language puts constants in a type, one per field, named so that it
+does not clash with the platform's own types - C# `ProviderValues.Fcm`, not
+`Encoding` or `Type`, which `System` already has - so that a typo fails
 at compile or import time rather than at Centrifugo - or, in a proxy
 handler comparing a request's `encoding` with a value, rather than never. Where fields of one
 name list different values in different messages, the set listed in the
 most messages keeps the short name and the others are named by their
 message too - `OpAdd` for the topic updates, `FilterNodeOpAnd` for
-`FilterNode` - and a tie names all of them so. The field stays a string,
+`FilterNode` - and a tie names all of them so. The rule runs over each proto
+on its own, as the API's and the proxy's types live apart: `FilterNode.op`
+is the API's `FilterNodeOpAnd`, but the proxy's `OpAnd` (gocent:
+`proxy.OpAnd`), since no other proxy field is named `op`. The field stays a string,
 never a closed enum: Centrifugo adds values, and one the SDK does not name
 MUST still be sendable. The fields today, for reference; the proto is the
 source:
@@ -278,7 +293,7 @@ source:
 | proxy: `ChannelsCapability.match` | `wildcard`, `regex` |
 | proxy: `key_mode` of the map publish proxy | `if_new`, `if_exists` |
 | proxy: `type` of a channel state event | `occupied`, `vacated` |
-| proxy: `FilterNode.op` and `cmp` | as in the API |
+| proxy: `FilterNode.op` and `cmp` | the API's values, named by the rule within `proxy.proto` |
 
 The `provider` and `platform` constants serve `device_list`'s filter too,
 whose `providers` and `platforms` take the same values.
@@ -443,9 +458,9 @@ A request the client can tell is wrong MUST NOT be sent, and fails with an
 
 - a request which cannot be encoded: a payload which is not valid JSON, a
   string which is not valid UTF-8;
-- a field marked "Required." left unset, where the language's signature
-  could not require it (section 3.3): `presence` without a `channel`,
-  `shared_poll_publish` without a `version`;
+- a field marked "Required." without a value - unset, or given empty
+  (section 3.3): `presence` without a `channel`, `shared_poll_publish`
+  without a `version`;
 - `publish`: neither `data` nor `b64data`;
 - `broadcast`: an empty channel name (naming its index); neither `data` nor
   `b64data`.
@@ -487,24 +502,40 @@ Some methods give their items a page at a time:
 
 For each of them an SDK MUST provide `<method>_all(req)`, returning the
 items of every page in the language's iterator - Go `iter.Seq2[T, error]`,
-a Python generator, a JavaScript async iterator, a PHP `Generator` - so that
-paging is written once, in the SDK. It sends `req` as given, then the next
+a Python generator, a JavaScript async iterator, a PHP `Generator`, a C#
+`IAsyncEnumerable<T>`; in Rust, whose `Stream` is a pre-1.0 type, a pager of
+the SDK's own with an async `next`, and an `Iterator` on the blocking
+client - so that paging is written once, in the SDK. The name takes the
+language's suffix for async methods where it has one (C#
+`HistoryAllAsync`). It sends `req` as given, then the next
 page as the table says, until there is none, and yields each page's items in
 order; an error ends it with that error, the language's way (yielded beside
 the item in Go, raised elsewhere). A page is fetched when the iteration
 reaches it, not ahead; leaving the loop early reads no further page.
-`history_all` refuses with `InvalidRequest`, before sending anything, a
+`history_all` refuses with `InvalidRequest`, before sending anything - at
+the call where the language can, on the first iteration otherwise - a
 `limit` below 1 - 0 asks for the position alone, -1 for everything in one
 call - and `reverse`, since `since` has no counterpart running back; it
-stops at a page shorter than `limit`. The others take `limit` as the
-method does. Docs SHOULD say that the items of a paged method change under
+stops at a page shorter than `limit`, so a full last page costs one more
+request, which comes back empty. Offsets missing in the history - expired,
+or beyond its size - are not the iterator's to find: it reads what
+Centrifugo returns. `map_read_state_all` reads every page after the first
+at the first one's revision - its `offset` and `epoch` as
+`revision_offset` and `revision_epoch`, unless `req` sets them - so that
+the map's stream reset between pages fails with code 112,
+`UnrecoverablePosition`, instead of mixing two states: reading again from
+the first page is the recovery. The others take `limit` as the method
+does. Docs SHOULD say that the items of a paged method change under
 the iteration: a device registered while listing may or may not be seen.
 
 A result holding `offset` and `epoch` - `publish`'s, `history`'s,
 `map_read_state`'s, `map_read_stream`'s - MUST give them as a `StreamPosition`, the type of
 `history`'s `since` and of `subscribe`'s `recover_since` (gocent: the method
 `Position()`), so that what a publish returned is what the next history call
-asks from, with no fields copied by hand. A position whose epoch is no
+asks from, with no fields copied by hand. `map_read_stream` takes its
+position apart, as `since_offset` and `since_epoch`: an SDK MAY give its
+request a setter taking a `StreamPosition`, where the language has one for
+its requests (Rust's builders), and otherwise the caller copies the two. A position whose epoch is no
 longer the stream's fails with code 112, `UnrecoverablePosition`: the
 stream was reset, and reading from its start is the only recovery. Docs
 SHOULD show reading what came after a publication.
@@ -1016,9 +1047,10 @@ An SDK MUST have:
   `LimitStrategy.RateLimit.Policies[0].Rate` - and nothing is sent; an
   optional nested message left unset is not checked; a field whose empty
   value has a meaning is sent empty; a presence wrapper set empty is sent
-  as `{}`, and one left unset is not sent. A test pins the presence wrappers
-  and the unchecked required fields the generator finds in the proto, so
-  that a changed comment fails it. Each constant generated from a "One of:"
+  as `{}`, and one left unset is not sent; any other message set but empty
+  is not sent; a required field given empty fails like a missing one. A test pins the presence wrappers
+  and the required fields whose empty value has a meaning, as the generator
+  finds them in the proto, so that a changed comment fails it. Each constant generated from a "One of:"
   sentence equals its value, and a value without a constant is still sent.
   The test that every API method reaches its endpoint fills every field of
   its requests, so that the required-field checks let them through.
@@ -1027,7 +1059,8 @@ An SDK MUST have:
   request after the first carries the cursor, or `since`, of the reply
   before; leaving the loop early reads no further page; an error ends the
   iteration after the items before it; `history_all`'s refusals send
-  nothing. Each `position()` gives its result's offset and epoch.
+  nothing; `map_read_state_all`'s later pages carry the first page's
+  revision, or the caller's. Each `position()` gives its result's offset and epoch.
 - Automatic batching under random concurrency, with a race detector where the
   language has one.
 - Integration tests of every OSS method against the `centrifugo/centrifugo`
@@ -1085,8 +1118,8 @@ Generation and the client:
 - [ ] Request and result types generated from the protos, never edited by
   hand, checked current in CI; protos from a released tag (2).
 - [ ] Field names on the wire exactly the protos', case-sensitive; zero
-  values not sent; presence wrappers optional and sent whenever set, even
-  empty (2).
+  values not sent, a set but empty message included; presence wrappers
+  optional and sent whenever set, even empty (2).
 - [ ] `BoolValue` fields optional, with a helper; PRO-only methods marked
   (2).
 - [ ] Safe for concurrent use; creation validates all it can, with
@@ -1115,8 +1148,8 @@ Generation and the client:
 - [ ] Every API method but `rpc`, on the client, on a batch and for
   commands; a request in the language's idiom; a plain-object request's
   unknown fields refused; fields marked "Required." required where the
-  language can say so, and checked before sending where it cannot, but for
-  those whose empty value has a meaning; constants for the fields with
+  language can say so, and checked for a value before sending in every SDK,
+  but for those whose empty value has a meaning; constants for the fields with
   listed values, the fields still strings (3.3).
 - [ ] A client shared within a process: after a fork it uses connections
   and workers of its own; an async client from another event loop fails with
@@ -1135,15 +1168,16 @@ Payloads and validation:
 - [ ] JavaScript: `bigIntegers`, off by default, refused with
   `InvalidConfig` where it cannot work (3.4).
 - [ ] A request the client can tell is wrong is not sent: `InvalidRequest`
-  for what cannot be encoded, an unset "Required." field the signature could
-  not require, and the `data` rules; no other Centrifugo rule copied (3.5).
+  for what cannot be encoded, a "Required." field without a value, and the
+  `data` rules; no other Centrifugo rule copied (3.5).
 - [ ] `close` refuses new calls with `Closed` and waits for those in progress
   (3.6).
 - [ ] Results encoded as JSON the language's way give wire names, and errors
   in them as `{code, message}` (3.7).
 - [ ] `<method>_all` for every paged method, in the language's iterator,
   fetching a page when reached; `history_all` refuses a `limit` below 1 and
-  `reverse`; results with `offset` and `epoch` give a `StreamPosition` (3.8).
+  `reverse`; `map_read_state_all` pins later pages to the first one's
+  revision; results with `offset` and `epoch` give a `StreamPosition` (3.8).
 
 Errors and retries:
 
@@ -1285,8 +1319,13 @@ Rules added:
   `device_update`, which clear with an empty value - are optional in the SDK
   and sent whenever set, even empty; a generator finds them in the proto's
   comments. Other message fields stay values (2).
-- A "Required." field is checked before sending where the signature cannot
-  require it, but for those whose empty value has a meaning (3.3, 3.5).
+- A "Required." field is checked for a value before sending in every SDK,
+  the signature requiring it where it can, but for those whose empty value
+  has a meaning (3.3, 3.5).
+- A message set but empty which is not a presence wrapper is not sent, in
+  every SDK: `limit_strategy: {}` is refused (2).
+- `map_read_state_all` reads later pages at the first one's revision
+  (3.8).
 - Constants for the fields whose comments list their values, generated from
   the proto's "One of:" sentence; the fields stay strings (2, 3.3).
 - `<method>_all` iterators for the paged methods; `StreamPosition` from the
@@ -1339,12 +1378,13 @@ it done. gocent made each in its own commit, on its `v4_dev` branch.
    `user_update`, `timezone_update`, `locale_update` and `meta_update`. In a
    typed language those four fields change type: a breaking change for code
    setting them, which until now could not clear or detach anything. Every
-   other message field stays as it was. Tests: the wrappers pinned; an empty
-   one sent as `{}`; against PRO, an empty timezone update clears it.
-4. **Required fields checked before sending** (3.3, 3.5), where the
-   language's signature cannot require a field - Go's structs; in Python,
-   PHP, TypeScript the signature already does, and this step is only the
-   test. Generated from the "Required." marks, skipping "Required unless
+   other message field stays as it was in type, but one set and empty is no
+   longer sent, if the SDK sent it: csharpcent 0.1 and rustcent 0.1 did.
+   Tests: the wrappers pinned; an empty one sent as `{}`; any other message
+   set but empty not sent; against PRO, an empty timezone update clears it.
+4. **Required fields checked before sending** (3.3, 3.5), in every SDK: a
+   signature which requires a field still lets it be passed empty, and an
+   empty one goes out as a missing one. Generated from the "Required." marks, skipping "Required unless
    ...", "Required when ..." and the fields whose empty value has a meaning. A nested message is
    checked when set, a required one must be set, and a list's elements are
    checked each: the error names the path, `TopicsUpdate.Op is required`.
@@ -1376,6 +1416,12 @@ it done. gocent made each in its own commit, on its `v4_dev` branch.
    naming the user-visible changes - the four field types of step 3, the
    earlier failures of step 4, and the new constants, iterators, positions
    and claims.
+
+In an SDK whose message fields were already optional in the language's own
+way, and whose required fields were already constructor arguments - Rust's
+`Option` and `new`, C#'s nullable references and `required` - no field
+changes type in step 3, but an empty non-wrapper message stops being sent,
+and step 4 adds the check of the values: its changelog names those two.
 
 ### 0.2 - 2026-10-28
 
