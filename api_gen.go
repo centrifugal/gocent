@@ -1203,6 +1203,7 @@ type PushNotification struct {
 
 	// ExpireAt is the Unix time in seconds when Centrifugo stops trying to
 	// send the notification. Not related to the providers' TTL fields.
+	// Required when the request sets LimitStrategy.
 	ExpireAt int64 `json:"expire_at,omitzero"`
 }
 
@@ -1265,7 +1266,8 @@ type SendPushNotificationRequest struct {
 
 	// LimitStrategy sets time constraints and rate limits. Only applies
 	// with a filter recipient; devices are then processed one by one
-	// instead of in batches.
+	// instead of in batches. Needs notification.ExpireAt: a push the limits
+	// hold back is not tried forever.
 	LimitStrategy PushLimitStrategy `json:"limit_strategy,omitzero"`
 
 	// AnalyticsUID is the identifier for push notification analytics. If
