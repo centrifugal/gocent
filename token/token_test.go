@@ -209,25 +209,26 @@ func TestProClaims(t *testing.T) {
 	filter := gocent.FilterNode{Key: "role", Cmp: "eq", Val: "admin"}
 	conn, err := Connection(HMAC([]byte("k")), ConnectionClaims{
 		User: "42", IssuedAt: iat, NoExpiry: true,
-		Caps:   []ChannelsCapability{{Channels: []string{"user_*"}, Allow: []string{"sub", "pub"}, Match: "wildcard"}},
-		Labels: map[string]string{"region": "eu"},
-		Subs:   map[string]SubscribeOptions{"feed": {ServerTagsFilter: filter}},
+		Caps:    []ChannelsCapability{{Channels: []string{"user_*"}, Allow: []string{"sub", "pub"}, Match: "wildcard"}},
+		Labels:  map[string]string{"region": "eu"},
+		Subs:    map[string]SubscribeOptions{"feed": {ServerTagsFilter: filter}},
+		Profile: "chat",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _, raw, _, _ := parts(t, conn)
 	want := `{"sub":"42","iat":1700000000,"subs":{"feed":{"server_tags_filter":{"key":"role","cmp":"eq","val":"admin"}}},` +
-		`"caps":[{"channels":["user_*"],"allow":["sub","pub"],"match":"wildcard"}],"labels":{"region":"eu"}}`
+		`"caps":[{"channels":["user_*"],"allow":["sub","pub"],"match":"wildcard"}],"labels":{"region":"eu"},"profile":"chat"}`
 	if string(raw) != want {
 		t.Errorf("connection claims\n%s\nwant\n%s", raw, want)
 	}
-	sub, err := Subscription(HMAC([]byte("k")), SubscriptionClaims{User: "42", Channel: "c", IssuedAt: iat, NoExpiry: true, Allow: []string{"pub"}, ServerTagsFilter: filter})
+	sub, err := Subscription(HMAC([]byte("k")), SubscriptionClaims{User: "42", Channel: "c", Client: "client-id", IssuedAt: iat, NoExpiry: true, Allow: []string{"pub"}, ServerTagsFilter: filter})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _, raw, _, _ = parts(t, sub)
-	want = `{"sub":"42","iat":1700000000,"channel":"c","allow":["pub"],"server_tags_filter":{"key":"role","cmp":"eq","val":"admin"}}`
+	want = `{"sub":"42","iat":1700000000,"channel":"c","client":"client-id","allow":["pub"],"server_tags_filter":{"key":"role","cmp":"eq","val":"admin"}}`
 	if string(raw) != want {
 		t.Errorf("subscription claims\n%s\nwant\n%s", raw, want)
 	}
