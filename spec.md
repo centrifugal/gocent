@@ -787,12 +787,14 @@ which drops it. Encoded as JSON it is the `{"method": ..., "payload": ...}`
 message consumers take whole (Kafka, NATS JetStream). Encoded through the
 language's own JSON mechanism - `json.Marshal`, `JSON.stringify` of a value
 holding it, `json_encode`, `as_json` - a command MUST give `payload` as the
-JSON object, never as a string of it. The PostgreSQL outbox consumer reads
-the `payload` column as the request itself, so a column holding a JSON
-string is a bad request, dropped with only Centrifugo's log saying so. The
-other consumers unwrap a string which holds JSON, for CDC pipelines
-(Debezium writes a `jsonb` column as a string): a courtesy to them, not a
-format for an SDK to rely on. Docs SHOULD show
+JSON object, never as a string of it. Where the method comes apart from the
+payload - the outbox table's `method` column, a message header or
+attribute - Centrifugo reads the payload as the request itself, so a string
+is a bad request, dropped with only Centrifugo's log saying so. Only a
+message which is a whole command, `{"method": ..., "payload": ...}`, may
+hold its payload as a string of JSON, for CDC pipelines (Debezium writes a
+`jsonb` column as a string): a courtesy to them, not a format for an SDK to
+rely on. Docs SHOULD show
 writing `payload` to a `jsonb` column, as the PostgreSQL outbox has it. Docs MUST say that a
 consumer keeps commands in order only within a partition: a channel's
 commands keep their order only when every writer derives their partition from
@@ -1299,8 +1301,9 @@ Corrections, where 0.2 said what Centrifugo does not do:
   spellings (2, 16).
 - Centrifugo's router redirects a non-canonical path; the API itself never
   redirects (3.2).
-- Consumers other than the PostgreSQL outbox unwrap a string payload holding
-  JSON; the outbox drops it (9).
+- A consumer unwraps a string payload holding JSON only in a message which
+  is a whole command; with the method given apart - the outbox's column, a
+  header, an attribute - it drops it (9).
 - A proxy response with none of result, error and disconnect accepts a
   subscribe, publish, rpc, map publish or map remove as sent; it refuses a
   connect, unless anonymous connections are allowed, and expires a refresh
@@ -1321,7 +1324,7 @@ it done. gocent made each in its own commit, on its `v4_dev` branch.
 2. **Fix the docs the corrections touch.** Nothing in an SDK's behaviour
    changes, but its docs and messages may repeat what 0.2 said: that a
    Centrifugo version stops accepting other spellings of field names (2,
-   16); that the API never redirects, in the redirect hint (3.2); that
+   16); that the API never redirects, in the redirect hint (3.2); when
    consumers drop a string payload, in the commands' docs (9); that a proxy
    response with nothing in it accepts any request, in the proxy handlers'
    docs (14). The idempotency docs name the Redis plus NATS broker among
