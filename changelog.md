@@ -38,9 +38,11 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   `proxy.EncodingBinary`, `proxy.ProtocolJSON`. The fields stay strings.
 * **Pages.** `HistoryAll`, `DeviceListAll`, `DeviceTopicListAll`,
   `UserTopicListAll` and `MapReadStateAll` iterate every item, a page at a
-  time, as an `iter.Seq2`. `Position()` on the results of publish, history,
-  map publish, map remove and the map reads gives a `StreamPosition` to read
-  from.
+  time, as an `iter.Seq2`: history's publications as `HistoryItem`s and map
+  state entries as `MapStateItem`s, each with its position, to resume from or
+  to follow with `MapReadStream`. `Position()` on the results of publish,
+  history, map publish, map remove and the map reads gives a `StreamPosition`
+  to read from.
 * **Clearing device fields.** `DeviceUpdateRequest`'s `UserUpdate`,
   `TimezoneUpdate`, `LocaleUpdate` and `MetaUpdate` are pointers: an empty
   one is sent, and clears - `UserUpdate: &gocent.DeviceUserUpdate{}`
@@ -109,7 +111,7 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   claims included: capabilities, labels,
   server-side tag filters - and `token.Handlers` serves the
   endpoints the `getToken` callbacks of client SDKs call: `{"token": ...}`,
-  never cached, 403 for `token.ErrUnauthorized`. Every token states its
+  never cached, 403 for `token.ErrForbidden`. Every token states its
   expiry: `ExpiresAt`, or `NoExpiry` for a token accepted forever.
   `token.JWKS` and `Handlers.JWKS` publish RSA, ECDSA and Ed25519 public keys
   as a JSON Web Key Set for Centrifugo's JWKS endpoint, for key rotation:
@@ -118,7 +120,7 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   client may track - `sharedpoll.Sign`, with an expiry, or
   `sharedpoll.SignNoExpiry` - and `sharedpoll.Handlers` serves the
   endpoint centrifuge-js's `getSignature` calls: keys left out are revoked,
-  `sharedpoll.ErrUnauthorized` ends the subscription.
+  `sharedpoll.ErrForbidden` ends the subscription.
 * **Proxy handlers.** The new `proxy` package serves Centrifugo's HTTP proxy:
   the request and result types of every proxy type, generated from
   Centrifugo's `proxy.proto`, and `proxy.Handlers` making an `http.Handler`
@@ -188,9 +190,11 @@ Behaviour to check when migrating:
   when the request failed as a whole; v4 returns an entry per channel, each
   with that error. A channel's `Result` is a value, not a pointer: check
   `Err`, not `Result != nil`. See [MIGRATING.md](MIGRATING.md#broadcast-checklist).
-* **Timeouts.** v3's default HTTP client gave up after 1 second. v4 bounds a
-  call by its context's deadline, or by `Config.RequestTimeout`, 10 seconds by
-  default.
+* **Timeouts.** v3's default HTTP client gave up after 1 second. v4 bounds
+  every call by `Config.RequestTimeout`, 10 seconds by default; a context
+  deadline shortens a call, never extends it, so a call made with a
+  long-lived context still gives up on a stuck Centrifugo.
+  `BroadcastRetryOptions.AttemptTimeout` replaces it for each attempt.
 * **The API key** is sent in the `X-API-Key` header instead of
   `Authorization: apikey <key>`. Centrifugo accepts both; a proxy in front of
   it which looks at the header needs updating.

@@ -160,7 +160,7 @@ saying to create one per loop, rather than with an error of the event loop's.
 | `api_key` | Sent as `X-API-Key` | No control characters but tab |
 | `bearer_token_func` | Returns a token sent as `Authorization: Bearer <token>`, per request | Not together with `api_key`: Centrifugo PRO judges a request with a bearer token by the token alone. An empty token or one with control characters fails the call before sending |
 | `http_client` | The HTTP client | Default: section 3.2. The SDK MUST NOT change a client the caller passed - its headers, pool or redirect policy: credentials and headers go on each request |
-| `request_timeout` | Bounds a call without a deadline of its own | A default (section 17); negative refused |
+| `request_timeout` | Bounds every request: the most a call waits, unless the call gives a timeout of its own (section 3.2) | A default (section 17); negative refused |
 | `header` | Extra headers on every request | MUST refuse `X-API-Key`, `Authorization`, `Content-Type`, invalid names and values with control characters but tab; `User-Agent` replaces the SDK's own; `Host`, with exactly one non-empty value, sets the request's host |
 | `auto_batch` | Section 8 | |
 | `on_request` | Section 10 | |
@@ -194,8 +194,18 @@ call.
   (values: section 17).
 - A request body MUST NOT be reused or pooled while the transport may still
   read it.
-- One timeout story: every request has exactly one deadline - the caller's, or
-  `request_timeout` - and the default client sets no timeouts of its own.
+- One timeout story: every request has exactly one deadline, and the default
+  client sets no timeouts of its own. The deadline is `request_timeout` from
+  the call's start, or the call's own timeout where the language takes one
+  per call - Python's, Ruby's and PHP's `timeout` argument, JavaScript's
+  `timeout` option, C#'s and Rust's `with_timeout` - which replaces it. A
+  deadline or cancellation the call runs under - a Go `context`, an
+  `AbortSignal`, Python's `asyncio.timeout` - only shortens that deadline,
+  never lengthens it: a call inside an HTTP handler whose context lives for
+  minutes still gives up on a stuck Centrifugo after `request_timeout`. Go
+  takes no per-call timeout, so there `request_timeout` is a cap which only
+  the configuration raises, as `http.Client.Timeout` is: its docs MUST say
+  that a context with a later deadline does not extend a call.
   How it is enforced is the language's: a deadline or cancellation where the
   platform has one (Go's `context`, JavaScript's `AbortSignal`, Python's
   `asyncio.timeout`); where the HTTP library's timeouts bound each operation
@@ -232,85 +242,83 @@ it, rather than dropped: a typo or a field spelled as on the wire
 request is one value - a Go struct - its type tells its API method (gocent:
 `APIMethod()`).
 
-A field the protos mark "Required." without a condition is a required
-parameter where the language can say so - a keyword or named argument
-without a default, a non-optional TypeScript property - so that a call
-missing it fails as the language fails such a call, before anything is sent,
-and type checkers and editors show it. This holds for nested messages too:
-a required field of a nested type is a required argument of its
-constructor - `DeviceTopicsUpdate(op=...)` - where the language says so for
-the request's own fields; a field whose empty value has a meaning is then
-written out empty, `DeviceUserUpdate(user="")`, rather than as an empty
-message. A signature makes the caller pass
-the field, not give it a value: `channel=""`, a C# `required` member set to
-`null`, Rust's `new("")` all pass it empty, and since a zero value is not
-sent, an empty required field is a missing one on the wire. So every SDK
-also checks before sending that each such field has a value - not empty,
-not zero, not the language's unset, a nested message not empty - where a
-payload's JSON `null` is a value, as section 3.4 says (JavaScript's `null`,
-raw JSON `null` elsewhere) - and fails with
-`InvalidRequest` naming its path (section 3.5) - in the names the SDK's
-other request errors use, its own or the wire's, the same in all of them; a Go struct, which cannot
-require a field at all, has the check only. Either way a call missing a
-required field fails before anything is sent, in every language, and in the
-signature where there is one. A field "Required unless ..." or "Required
-when ..." is required under a condition, and stays optional: only the
-exact "Required." - the word and its period - marks a field required.
-A field whose comment gives its empty value a meaning - after "Required.",
-it mentions `""` or the word "empty" - is required in the signature but not
-checked, since a check could not tell empty from missing:
-`invalidate_user_tokens`'s `user`, where empty means anonymous users;
-`user_topic_update`'s `user`, where empty is the global binding; the `user`,
-`timezone`, `locale` and `meta` of `device_update`'s updates, where empty
-clears.
+The protos' "Required." marks give three tiers of fields. Only the exact
+"Required." - the word and its period - marks a field required.
+
+- **Required and checked**: a field marked "Required." without a
+  condition. It is a required parameter where the language can say so - a
+  keyword or named argument without a default, a non-optional TypeScript
+  property - so that a call missing it fails as the language fails such a
+  call, and type checkers and editors show it. A nested type's required
+  field is a required argument of its constructor too,
+  `DeviceTopicsUpdate(op=...)`. Every SDK also checks before sending that
+  the field has a value, since a signature makes the caller pass a field,
+  not give it a value: `channel=""`, a C# `required` member set to `null`,
+  Rust's `new("")` all pass it empty, and an empty field is a missing one on
+  the wire. Unset means empty, zero, the language's unset, or a nested
+  message with nothing set; a payload's JSON `null` is a value (section
+  3.4). The call fails with `InvalidRequest` naming the field's path
+  (section 3.5), in the names the SDK's other request errors use - its own
+  or the wire's - the same in all of them. A Go struct cannot require a
+  field, so it has the check only.
+- **Required under a condition**: "Required unless ..." or "Required when
+  ...". The field stays optional, and is not checked: the condition is
+  Centrifugo's to judge.
+- **Required but unchecked**: a required field whose comment gives its empty
+  value a meaning - after "Required.", it mentions `""` or the word
+  "empty". It is required in the signature but not checked, since a check
+  could not tell empty from missing, and it is written out empty,
+  `DeviceUserUpdate(user="")`, rather than as an empty message. Today:
+  `invalidate_user_tokens`'s `user`, where empty means anonymous users;
+  `user_topic_update`'s `user`, where empty is the global binding; the
+  `user`, `timezone`, `locale` and `meta` of `device_update`'s updates,
+  where empty clears.
+
+Either way a call missing a required field fails before anything is sent,
+in every language, and in the signature where there is one.
 
 A field whose comment lists its values - in the sentence `One of: add,
 remove, set.`, which the protos write for every string field with a fixed
 set of values, `proxy.proto`'s as `api.proto`'s - gets a constant per value
-in the SDK, generated from that
-sentence as the types are from the messages, so that a value Centrifugo
-adds reaches every SDK with its next sync. A constant is named by the field
-and the value - `ProviderFCM`, `PlatformIOS`, `OpAdd`, `StatusDelivered`,
-`KeyModeIfNew`, `CmpEq`, spelled the language's way: Rust and JavaScript
-`PROVIDER_FCM`, Python `PROVIDER_FCM`;
-where the language puts constants in a type, one per field, named so that it
-does not clash with the platform's own types - C# `ProviderValues.Fcm`, not
-`Encoding` or `Type`, which `System` already has; PHP `Provider::FCM` - and
-where a field's name is a reserved word, the constants take its message's
-name before it, as for a collision: PHP's `ChannelsCapabilityMatch`, since
-`match` cannot name a class - so that a typo fails
-at compile or import time rather than at Centrifugo - or, in a proxy
-handler comparing a request's `encoding` with a value, rather than never. Where fields of one
-name list different values in different messages, the set listed in the
-most messages keeps the short name and the others are named by their
-message too - `OpAdd` for the topic updates, `FilterNodeOpAnd` for
-`FilterNode` - and a tie names all of them so. The rule runs over each proto
-on its own, as the API's and the proxy's types live apart: `FilterNode.op`
-is the API's `FilterNodeOpAnd`, but the proxy's `OpAnd` (gocent:
-`proxy.OpAnd`), since no other proxy field is named `op`. The field stays a string,
-never a closed enum: Centrifugo adds values, and one the SDK does not name
-MUST still be sendable. The fields today, for reference; the proto is the
-source:
+in the SDK, generated from that sentence, so that a value Centrifugo adds
+reaches every SDK with its next sync, and a typo fails at compile or import
+time rather than at Centrifugo - or, in a proxy handler comparing a
+request's `encoding` with a value, rather than never. The field stays a
+string, never a closed enum: Centrifugo adds values, and one the SDK does
+not name MUST still be sendable.
 
-| Field | Values |
-|---|---|
-| `device_register.provider` | `fcm`, `hms`, `apns`, `webpush` |
-| `device_register.platform` | `ios`, `android`, `web` |
-| `op` of `device_update`'s `topics_update`, of `device_topic_update` and of `user_topic_update` | `add`, `remove`, `set` |
-| `update_push_status.status` | `delivered`, `interacted` |
-| `map_publish.key_mode` | `if_new`, `if_exists` |
-| `FilterNode.op` | `and`, `or`, `not` |
-| `FilterNode.cmp` | `eq`, `neq`, `in`, `nin`, `ex`, `nex`, `sw`, `ew`, `ct`, `gt`, `gte`, `lt`, `lte` |
-| proxy: `protocol`, in every request | `json`, `protobuf` |
-| proxy: `encoding`, in every request | `json`, `binary` |
-| proxy: `allow` of `ChannelsCapability` and of the subscribe result | `sub`, `pub`, `hst`, `prs` |
-| proxy: `ChannelsCapability.match` | `wildcard`, `regex` |
-| proxy: `key_mode` of the map publish proxy | `if_new`, `if_exists` |
-| proxy: `type` of a channel state event | `occupied`, `vacated` |
-| proxy: `FilterNode.op` and `cmp` | the API's values, named by the rule within `proxy.proto` |
+A constant's name is the field's name from the table below, then the value,
+spelled the language's way: `ProviderFCM` in Go, `PROVIDER_FCM` in Rust,
+Python and JavaScript; where the language puts constants in a type, one per
+field - C# `ProviderValues.Fcm`, PHP `Provider::FCM`. The names are pinned
+here rather than derived, so that they never change because an unrelated
+message appeared, and they are chosen so that no language's reserved words
+or platform types clash with them. Each SDK's generator holds the table as a
+list of its own, like the required fields' (section 2), and fails when a
+"One of:" sentence of the protos is not in it, or one in it is gone: a
+person then names the new field here, for every SDK at once. The same field
+in both protos has the same name.
 
-The `provider` and `platform` constants serve `device_list`'s filter too,
-whose `providers` and `platforms` take the same values.
+| Field | Name | Values |
+|---|---|---|
+| `device_register.provider`, `device_list`'s filter `providers` | `Provider` | `fcm`, `hms`, `apns`, `webpush` |
+| `device_register.platform`, `device_list`'s filter `platforms` | `Platform` | `ios`, `android`, `web` |
+| `op` of `device_update`'s `topics_update`, of `device_topic_update` and of `user_topic_update` | `Op` | `add`, `remove`, `set` |
+| `update_push_status.status` | `Status` | `delivered`, `interacted` |
+| `map_publish.key_mode`; proxy: the map publish proxy's `key_mode` | `KeyMode` | `if_new`, `if_exists` |
+| `FilterNode.op`, in both protos | `FilterNodeOp` | `and`, `or`, `not` |
+| `FilterNode.cmp`, in both protos | `Cmp` | `eq`, `neq`, `in`, `nin`, `ex`, `nex`, `sw`, `ew`, `ct`, `gt`, `gte`, `lt`, `lte` |
+| proxy: `protocol`, in every request | `Protocol` | `json`, `protobuf` |
+| proxy: `encoding`, in every request | `Encoding` | `json`, `binary` |
+| proxy: `allow` of `ChannelsCapability` and of the subscribe result | `Allow` | `sub`, `pub`, `hst`, `prs` |
+| proxy: `ChannelsCapability.match` | `CapabilityMatch` | `wildcard`, `regex` |
+| proxy: `ChannelEvent.type` | `ChannelEventType` | `occupied`, `vacated` |
+
+Where a name in the table would clash with a platform type in a language
+which puts constants in a type of their own, the language's suffix for it
+is added, the same for every field - C#'s `Values`, `EncodingValues` beside
+`System.Text.Encoding`.
+
 
 ### 3.4 Payloads
 
@@ -514,40 +522,50 @@ Some methods give their items a page at a time:
 | `device_list`, `device_topic_list`, `user_topic_list` | `cursor`, `limit` | `items`, `next_cursor` | `cursor` = `next_cursor`; empty: no more |
 | `map_read_state` | `cursor`, `limit` | `entries`, `offset`, `epoch`, `cursor` | `cursor` = the result's `cursor`; empty: no more |
 
-For each of them an SDK MUST provide `<method>_all(req)`, returning the
-items of every page in the language's iterator - Go `iter.Seq2[T, error]`,
-a Python generator, a JavaScript async iterator, a PHP `Generator`, a C#
-`IAsyncEnumerable<T>`; in Rust, whose `Stream` is a pre-1.0 type, a pager of
-the SDK's own with an async `next`, and an `Iterator` on the blocking
-client - so that paging is written once, in the SDK. They are the client's
-only: a batch or a command reads one page, as its method does. The name takes the
-language's suffix for async methods where it has one (C#
-`HistoryAllAsync`). It sends `req` as given, then the next
-page as the table says, until there is none, and yields each page's items in
-order; an error ends it with that error, the language's way (yielded beside
-the item in Go, raised elsewhere). A page is fetched when the iteration
-reaches it, not ahead; leaving the loop early reads no further page.
-A call's own timeout - `request_timeout`, a per-call timeout argument -
-bounds each page; a deadline or cancellation the caller holds across the
-loop - a Go context, an `AbortSignal` - ends the iteration when it ends.
-`history_all` refuses with `InvalidRequest`, before sending anything - at
-the call where the language can, on the first iteration otherwise; in a
-language whose generator functions run nothing until iterated, as Python's
-and PHP's, "at the call" means a plain function which checks, then returns
-the iterator - a
-`limit` below 1 - 0 asks for the position alone, -1 for everything in one
-call - and `reverse`, since `since` has no counterpart running back; it
-stops at a page shorter than `limit`, so a full last page costs one more
-request, which comes back empty. Offsets missing in the history - expired,
-or beyond its size - are not the iterator's to find: it reads what
-Centrifugo returns. `map_read_state_all` reads every page after the first
-at the first one's revision - its `offset` and `epoch` as
-`revision_offset` and `revision_epoch`, unless `req` sets them - so that
-the map's stream reset between pages fails with code 112,
-`UnrecoverablePosition`, instead of mixing two states: reading again from
-the first page is the recovery. The others take `limit` as the method
-does. Docs SHOULD say that the items of a paged method change under
-the iteration: a device registered while listing may or may not be seen.
+For each of them an SDK MUST provide `<method>_all(req)`, so that paging is
+written once, in the SDK:
+
+- **The iterator** is the language's: Go `iter.Seq2[T, error]`, a Python
+  generator, a JavaScript async iterator, a PHP `Generator`, a C#
+  `IAsyncEnumerable<T>`, a Ruby `Enumerator`; in Rust, whose `Stream` is a
+  pre-1.0 type, a pager of the SDK's own with an async `next`, and an
+  `Iterator` on the blocking client. The name takes the language's suffix
+  for async methods where it has one (C# `HistoryAllAsync`). They are the
+  client's only: a batch or a command reads one page, as its method does.
+- **Paging**: it sends `req` as given, then the next page as the table says,
+  until there is none, and yields each page's items in order. A page is
+  fetched when the iteration reaches it, not ahead; leaving the loop early
+  reads no further page. An error ends the iteration with that error, the
+  language's way: yielded beside the item in Go, raised elsewhere.
+- **Positions**: `history_all` yields each publication with its position -
+  its `offset` and the page's `epoch`, as a `StreamPosition` - and
+  `map_read_state_all` each entry with the state's position, the revision
+  it reads at: so that a caller who stops can resume, or follow the state
+  with `map_read_stream`, without copying fields by hand. The item is a
+  small type of the SDK's holding the two (gocent: `HistoryItem`,
+  `MapStateItem`). The other iterators yield the items as they are.
+- **Timeouts**: a call's timeout - `request_timeout`, or the call's own
+  (section 3.2) - bounds each page; a deadline or cancellation the caller
+  holds across the loop - a Go context, an `AbortSignal` - ends the
+  iteration when it ends.
+- **`history_all`** refuses with `InvalidRequest`, before sending anything,
+  a `limit` below 1 - 0 asks for the position alone, -1 for everything in
+  one call - and `reverse`, since `since` has no counterpart running back.
+  It refuses at the call where the language can, on the first iteration
+  otherwise; where generator functions run nothing until iterated, as in
+  Python and PHP, "at the call" means a plain function which checks, then
+  returns the iterator. It stops at a page shorter than `limit`, so a full
+  last page costs one more request, which comes back empty. Offsets missing
+  in the history - expired, or beyond its size - are not the iterator's to
+  find: it reads what Centrifugo returns.
+- **`map_read_state_all`** reads every page after the first at the first
+  one's revision - its `offset` and `epoch` as `revision_offset` and
+  `revision_epoch`, unless `req` sets them - so that the map's stream reset
+  between pages fails with code 112, `UnrecoverablePosition`, instead of
+  mixing two states: reading again from the first page is the recovery.
+- **Limits**: the others take `limit` as the method does. Docs SHOULD say
+  that the items of a paged method change under the iteration: a device
+  registered while listing may or may not be seen.
 
 Every result holding `offset` and `epoch` - `publish`'s, `history`'s,
 `map_read_state`'s, `map_read_stream`'s, `map_publish`'s and
@@ -771,8 +789,10 @@ except BroadcastFailedChannelsError as e:
   makes a random one for the call (section 17) and returns it in the result;
 - the result holds every channel's last outcome and how many attempts each
   took;
-- `max_attempts` - a default (section 17); `attempt_timeout` bounds each
-  attempt while the call's deadline bounds all, waits included;
+- `max_attempts` - a default (section 17); `attempt_timeout` is each
+  attempt's own timeout, replacing `request_timeout` for it as a per-call
+  timeout does (section 3.2), while the call's deadline still bounds all,
+  waits included: an attempt ends at the earlier of the two;
 - `on_attempt_err(attempt)` is called after each failed attempt a retry may
   fix, except the last, with the attempt number, its error, the channels to
   retry, the result so far and the key. It waits, logs or stops by returning
@@ -820,10 +840,13 @@ out.
   reads its request again.
 - A call whose deadline ends while queued leaves without its command being
   sent. A batch runs on its own, never on a caller's context, until the latest
-  deadline of its calls (`request_timeout` for a call without one), so that no
-  caller's earlier deadline cuts it short for the others - and never less than
-  `request_timeout` from when it is sent, so that a call which waited in the
-  queue still gets a full timeout. A reply arriving as a caller's deadline
+  of its calls' deadlines - each the deadline section 3.2 gives that call -
+  so that no caller's earlier deadline cuts it short for the others, and
+  never less than `request_timeout` from when it is sent, so that a call
+  which waited in the queue still gets a full timeout. So a batch request
+  may outlast a call's own deadline: the call then returns at its deadline,
+  and the batch goes on for the others. `request_timeout` caps calls, not
+  the batch request carrying them. A reply arriving as a caller's deadline
   ends is returned, not a timeout.
 - Calls made one after another keep their order: each waits for its reply.
 - In the transport error mode (section 4.2), a call sent alone gets its error
@@ -979,11 +1002,13 @@ required when the endpoint is built.
 
 - Success: a JSON object, `Content-Type: application/json`, `Cache-Control:
   no-store`.
-- The application's `Unauthorized` error (also wrapped): 403 - client SDKs
-  stop asking, and disconnect or unsubscribe. It is the endpoints' own,
-  named after client SDKs' `UnauthorizedError`, and distinct from the API
-  client's `Unauthorized` (section 4.1), which means Centrifugo refused the
-  SDK's credentials (gocent: `token.ErrUnauthorized`, `gocent.ErrUnauthorized`).
+- The application's `Forbidden` error (also wrapped): 403 - client SDKs
+  stop asking, and disconnect or unsubscribe. Client SDKs report it as their
+  `UnauthorizedError`, which their docs name: the endpoints' docs say so, to
+  link the two names once. It is named apart from the API client's
+  `Unauthorized` (section 4.1), which means Centrifugo refused the SDK's
+  credentials, so that matching one where the other is meant cannot happen
+  silently (gocent: `token.ErrForbidden`, `gocent.ErrUnauthorized`).
 - Any other error: 500, reported to `on_error` - client SDKs retry.
 - A malformed request: 400, reported to `on_error`; a wrong method: 405 with
   `Allow`. Bodies are read up to a limit (section 17).
@@ -1077,7 +1102,8 @@ An SDK MUST have:
   is not sent; a required field given empty fails like a missing one. A test pins the presence wrappers
   and the required fields whose empty value has a meaning, as the generator
   finds them in the proto, so that a changed comment fails it. Each constant generated from a "One of:"
-  sentence equals its value, and a value without a constant is still sent.
+  sentence equals its value, and a value without a constant is still sent;
+  the generator fails on a "One of:" field the pinned names of 3.3 lack.
   The test that every API method reaches its endpoint fills every field of
   its requests, so that the required-field checks let them through.
 - Pages (section 3.8): each `<method>_all` against a fake, over no items,
@@ -1086,7 +1112,14 @@ An SDK MUST have:
   before; leaving the loop early reads no further page; an error ends the
   iteration after the items before it; `history_all`'s refusals send
   nothing; `map_read_state_all`'s later pages carry the first page's
-  revision, or the caller's. Each `position()` gives its result's offset and epoch.
+  revision, or the caller's; `history_all` and `map_read_state_all` yield
+  each item with its position. Each `position()` gives its result's offset
+  and epoch.
+- Timeouts (sections 3.2, 7.3, 8): a call under a deadline later than
+  `request_timeout` ends at `request_timeout`; one under an earlier deadline
+  ends at it; a per-call timeout replaces `request_timeout`, longer or
+  shorter; a broadcast retry's attempt ends at the earlier of
+  `attempt_timeout` and the call's deadline.
 - Automatic batching under random concurrency, with a race detector where the
   language has one.
 - Integration tests of every OSS method against the `centrifugo/centrifugo`
@@ -1165,8 +1198,11 @@ Generation and the client:
   concurrent calls (3.2).
 - [ ] Response bodies closed and drained to a bound; request bodies not
   reused while the transport may read them (3.2).
-- [ ] One deadline per request: the platform's deadline, or the time left
-  given to each operation and checked between body chunks; docs say what can
+- [ ] One deadline per request: `request_timeout`, or the call's own
+  timeout, which replaces it, shortened by any deadline or cancellation the
+  call runs under; in Go `request_timeout` is a cap, said in its docs;
+  enforced by the platform's deadline, or the time left given to each
+  operation and checked between body chunks; docs say what can
   outlast it; every timeout is the language's one timeout error (3.2).
 - [ ] A client the caller passed is not changed: credentials and headers go
   on each request (3.1).
@@ -1176,7 +1212,8 @@ Generation and the client:
   unknown fields refused; fields marked "Required." required where the
   language can say so, and checked for a value before sending in every SDK,
   but for those whose empty value has a meaning; constants for the fields with
-  listed values, the fields still strings (3.3).
+  listed values, named by the table of 3.3, the generator failing on a field
+  it lacks, the fields still strings (3.3).
 - [ ] A client shared within a process: after a fork it uses connections
   and workers of its own; an async client from another event loop fails with
   `InvalidConfig` (3.1).
@@ -1203,7 +1240,8 @@ Payloads and validation:
 - [ ] `<method>_all` for every paged method, in the language's iterator,
   fetching a page when reached; `history_all` refuses a `limit` below 1 and
   `reverse`; `map_read_state_all` pins later pages to the first one's
-  revision; results with `offset` and `epoch` give a `StreamPosition` (3.8).
+  revision; `history_all` and `map_read_state_all` yield each item with its
+  position; results with `offset` and `epoch` give a `StreamPosition` (3.8).
 
 Errors and retries:
 
@@ -1231,8 +1269,9 @@ Broadcast, batch, automatic batching, commands, observability:
   a command added to a sent batch refused loudly (7.2).
 - [ ] `broadcast_with_retry`: one key on every attempt, made when missing;
   only the channels which may still succeed; no attempt after the deadline;
-  a negative `max_attempts` or `attempt_timeout` refused before any attempt
-  (7.3).
+  a negative `max_attempts` or `attempt_timeout` refused before any attempt;
+  `attempt_timeout` each attempt's own timeout, the call's deadline still
+  capping it (7.3).
 - [ ] Automatic batching, below `max_in_flight`: every call sent at once,
   alone; no timers, nothing waits for a batch to fill (8).
 - [ ] At the cap: calls queue first in, first out, and go out together when
@@ -1248,7 +1287,8 @@ Broadcast, batch, automatic batching, commands, observability:
 - [ ] A call whose deadline ends while queued leaves without its command
   being sent (8).
 - [ ] A batch never runs on a caller's context: until the latest deadline of
-  its calls, and at least `request_timeout` from when it is sent; a reply
+  its calls, each as 3.2 gives it, and at least `request_timeout` from when
+  it is sent; a reply
   arriving as a deadline ends is returned, not a timeout (8).
 - [ ] Callers' context values reach a batch only through `batch_context`
   (8).
@@ -1275,7 +1315,8 @@ Tokens, endpoints, shared poll, proxy:
   (11.4).
 - [ ] HTTP handlers require no particular framework (conventions).
 - [ ] Endpoints for client SDKs: statuses, headers and limits of 12; their
-  `Unauthorized` distinct from the API client's (12).
+  error is `Forbidden`, named apart from the API client's `Unauthorized`,
+  its docs linking it to client SDKs' `UnauthorizedError` (12).
 - [ ] Shared poll signature endpoint: `keys` always an array, empty
   included; a key the client did not ask for fails the request with 500
   (12).
@@ -1358,6 +1399,19 @@ Rules added:
   results holding `offset` and `epoch` (3.8).
 - The `profile` claim of connection tokens; a subscription token's `sub` is
   the connection's user (11.2).
+- `request_timeout` bounds every call; a per-call timeout replaces it, and a
+  deadline the call runs under only shortens it - in 0.2 a context or
+  signal deadline replaced it, so a long-lived one left a call unbounded.
+  `attempt_timeout` is each attempt's own timeout. A batch may outlast a
+  call's deadline (3.2, 7.3, 8).
+- `history_all` and `map_read_state_all` yield each item with its position
+  (3.8).
+- Constant names are pinned in a table of 3.3, the same in both protos,
+  instead of derived by counting messages: the generator fails on a field
+  the table lacks (3.3).
+- The endpoints for client SDKs fail with `Forbidden`, not `Unauthorized`,
+  the API client's error for refused credentials (12).
+- The required-field rules are given as three tiers (3.3).
 
 Corrections, where 0.2 said what Centrifugo does not do:
 
@@ -1422,20 +1476,26 @@ it done. gocent made each in its own commit, on its `v4_dev` branch.
 5. **Constants** (3.3). The generator reads the sentence `One of: a, b, c.`
    - after "One of:", up to the period, values separated by commas,
    lowercase letters, digits and underscores - and fails on a malformed one.
-   A constant per value, named by the field and the value, the collision
-   rule of 3.3 for fields of one name listing different values. The fields
-   stay strings. Tests: the parser, the naming rule, a tie.
+   A constant per value, named by the table of 3.3, which the generator
+   holds as a list of its own and checks against the protos. The fields
+   stay strings. Tests: the parser, the list agreeing with the protos.
 6. **Pages and positions** (3.8): the five `<method>_all` iterators,
-   written once over the cursor and once for `history`, and `position()` on
-   the six results holding `offset` and `epoch`. Tests: section 15.
-7. **Token claims** (11.2): `profile` on connection tokens, written after
+   written once over the cursor and once for `history`, the history and map
+   state ones yielding each item with its position, and `position()` on the
+   six results holding `offset` and `epoch`. Tests: section 15.
+7. **Timeouts and the endpoints' error** (3.2, 7.3, 8, 12):
+   `request_timeout` bounds every call, a per-call timeout replaces it, a
+   caller's deadline only shortens it; `attempt_timeout` replaces it per
+   attempt. The endpoints' error is renamed `Forbidden`. Both change what an
+   SDK released on 0.2 does: its changelog says so. Tests: section 15.
+8. **Token claims** (11.2): `profile` on connection tokens, written after
    `labels`, as 15.1 lists it. The vectors do not change: the claim is not in
    them.
-8. **Tests** (15): the new unit tests of steps 3 to 6, and the PRO
+9. **Tests** (15): the new unit tests of steps 3 to 7, and the PRO
    integration tests of push with rate and time limits - the test
    Centrifugo PRO needs `distributed_rate_limit` enabled with Redis (gocent:
    `testdata/centrifugo-pro.compose.yml`).
-9. **Say so**: the README's "implements spec 0.3", and a changelog entry
+10. **Say so**: the README's "implements spec 0.3", and a changelog entry
    naming the user-visible changes - the four field types of step 3, the
    earlier failures of step 4, and the new constants, iterators, positions
    and claims.

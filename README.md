@@ -58,24 +58,27 @@ numbers as doubles, and round larger integers silently.
 
 ## Timeouts
 
-Each call is bounded by its context, so calls get their own timeouts:
+Every call is bounded by `Config.RequestTimeout`, ten seconds by default. A
+context deadline shortens a call, never extends it:
 
 ```go
 ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 defer cancel()
-info, err := client.Info(ctx, gocent.InfoRequest{})
+info, err := client.Info(ctx, gocent.InfoRequest{}) // at most 500ms
 ```
 
-A call whose context has no deadline times out after `Config.RequestTimeout`,
-ten seconds by default. `http.Client.Timeout`, in `Config.HTTPClient`, bounds
-every request of the client on top of that. However a call times out,
+So a call made with an HTTP handler's context, which may live for minutes,
+still gives up on a stuck Centrifugo after `RequestTimeout`. To let calls
+take longer, raise `RequestTimeout`: a context with a later deadline does
+not. `http.Client.Timeout`, in `Config.HTTPClient`, bounds every request of
+the client on top of that. However a call times out,
 `errors.Is(err, context.DeadlineExceeded)` is true.
 
 `BroadcastWithRetry` makes several requests in one call: its context bounds
 them all, waits between them included, and
-`BroadcastRetryOptions.AttemptTimeout` bounds each one - so that an attempt
-which hangs leaves time to retry. In a retry loop of your own, give each
-attempt its own `context.WithTimeout`.
+`BroadcastRetryOptions.AttemptTimeout` is each attempt's own timeout,
+replacing `RequestTimeout` for it, longer or shorter - so that an attempt
+which hangs leaves time to retry.
 
 ## Errors
 
@@ -256,16 +259,21 @@ publications into different channels may not, unless the namespace sets
 the loop reaches it:
 
 ```go
-for pub, err := range client.HistoryAll(ctx, gocent.HistoryRequest{Channel: "news", Limit: 100}) {
+var last gocent.StreamPosition
+for item, err := range client.HistoryAll(ctx, gocent.HistoryRequest{Channel: "news", Limit: 100}) {
 	if err != nil {
 		return err
 	}
-	handle(pub)
+	handle(item.Data)
+	last = item.Position() // where to resume from
 }
 ```
 
-`Position()` on a publish, history, map publish, map remove or map read
-result is the `StreamPosition` to read on from: `HistoryRequest{Since: res.Position()}`
+`HistoryAll` yields each publication with its position, and
+`MapReadStateAll` each entry with the position of the state it was read at,
+`item.State`: what `MapReadStream` follows the state from. `Position()` on a
+publish, history, map publish, map remove or map read result is the
+`StreamPosition` to read on from: `HistoryRequest{Since: res.Position()}`
 reads what came after a publication.
 
 ## Automatic batching
@@ -402,7 +410,7 @@ mux.Handle("/centrifugo/connection_token", h.Connection(
 	func(r *http.Request) (string, error) {
 		user, ok := sessionUser(r)
 		if !ok {
-			return "", token.ErrUnauthorized // 403: the client stops asking
+			return "", token.ErrForbidden // 403: the client stops asking
 		}
 		return token.Connection(key, token.ConnectionClaims{User: user, ExpiresAt: time.Now().Add(time.Hour)})
 	}))
