@@ -167,7 +167,7 @@ saying to create one per loop, rather than with an error of the event loop's.
 | `api_key` | Sent as `X-API-Key` | No control characters but tab |
 | `bearer_token_func` | Returns a token sent as `Authorization: Bearer <token>`, per request | Not together with `api_key`: Centrifugo PRO judges a request with a bearer token by the token alone. An empty token or one with control characters fails the call before sending, with `InvalidConfig`; the function's own error fails the call wrapped, naming the function (section 4.1) |
 | `http_client` | The HTTP client | Default: section 3.2. The SDK MUST NOT change a client the caller passed - its headers, pool or redirect policy: credentials and headers go on each request |
-| `request_timeout` | Bounds every request: the most a call waits, unless the call gives a timeout of its own (section 3.2) | A default (section 17); negative refused. Zero is the default, not "no timeout": it cannot be turned off, since an unbounded call is what the rule exists to prevent; a caller wanting long calls sets a large value |
+| `request_timeout` | Bounds every request: the most a call waits, unless the call gives a timeout of its own (section 3.2) | A default (section 17); negative refused. Unset is the default - zero in Go, where unset and zero are one value - never "no timeout": it cannot be turned off, since an unbounded call is what the rule exists to prevent; a caller wanting long calls sets a large value. Where the language tells unset from zero - Python's `None` - zero is refused |
 | `header` | Extra headers on every request | MUST refuse `X-API-Key`, `Authorization`, `Content-Type`, invalid names and values with control characters but tab; `User-Agent` replaces the SDK's own; `Host`, with exactly one non-empty value, sets the request's host |
 | `auto_batch` | Section 8 | |
 | `on_request` | Section 10 | |
@@ -613,7 +613,7 @@ SHOULD show reading what came after a publication.
 | `DecodeError` | The reply is not Centrifugo's - usually a wrong endpoint | the cause |
 | `InvalidRequest` | Not sent: sections 3.4 and 3.5 | its message names the method and problem; the cause, when there is one, is wrapped |
 | `InvalidConfig` | A client the SDK refuses to use as configured: not created, used from a second event loop, or given an endpoint or token by a configured function which it cannot send (section 3.1) | its message names the field and the fix |
-| a function's error | `api_endpoint_func` or `bearer_token_func` failed | the function's own error, wrapped; the message names the function; judged by section 4.4 |
+| `FunctionError` | `api_endpoint_func` or `bearer_token_func` failed | `function`, the option's name, which the message names too; the function's own error as its cause; judged by section 4.4 by that cause. Where errors are values wrapped by the call, as in Go, the function's error wrapped, naming the function, is the kind (gocent: `"gocent: BearerTokenFunc: ..."`) |
 | `Closed` | Call after `close` | |
 | `BatchSent` / `BatchNotSent` | Batch misuse: section 7.2 | |
 | network / timeout | From the transport, wrapped | the cause |
@@ -735,7 +735,9 @@ the error:
 
 `result.replied` is true exactly when the error is nil or a
 `BroadcastFailedChannelsError`; `result.failed` lists the failed channels -
-every channel, each with that error, when the broadcast failed as a whole - a
+every channel, each with that error, when the broadcast failed as a whole,
+where the language returns the result then; with exceptions a failure as a
+whole raises its own error, without a result, as below - a
 property or field where the language has them, as `failed` on the error is
 (gocent: the method `Failed()`).
 They MUST never disagree with the error. A partial error MUST NOT match its
@@ -1444,8 +1446,9 @@ Rules added:
 - The required-field rules are given as three tiers (3.3).
 - `InvalidConfig` is the error for a client refused as configured on a call
   too: a second event loop, an endpoint or token from a configured function
-  which cannot be sent; the functions' own errors are a kind of their own,
-  wrapped and naming the function (3.1, 4.1).
+  which cannot be sent; the functions' own errors are `FunctionError`, with
+  the function's name and its error as the cause - in Go, that error wrapped
+  naming the function (3.1, 4.1).
 - On a failure as a whole, `failed` holds every channel or command, each
   with that error (7.1, 7.2).
 - `request_timeout` cannot be turned off: zero is the default (3.1).
