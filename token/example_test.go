@@ -84,11 +84,11 @@ func ExampleJWKS() {
 }
 
 // A gocent.Client calling the server API of Centrifugo PRO with tokens from
-// APITokens. The API keys are published at an endpoint of their own, never
+// APITokenSource. The API keys are published at an endpoint of their own, never
 // the one of client.token.jwks_public_endpoint, and Centrifugo requires an
 // audience and a scope only API tokens carry: otherwise a user's connection
 // token would pass as an API token.
-func ExampleAPITokens() {
+func ExampleAPITokenSource() {
 	_, apiPrivate, _ := ed25519.GenerateKey(nil)
 	apiKey := token.Ed25519(apiPrivate).WithKeyID("api-2026-10")
 
@@ -99,7 +99,7 @@ func ExampleAPITokens() {
 	mux.Handle("/centrifugo/api_jwks", token.Handlers{}.JWKS(apiKey))
 	go func() { log.Fatal(http.ListenAndServe("127.0.0.1:3000", mux)) }() //nolint:gosec // an example
 
-	apiTokens := &token.APITokens{
+	apiTokens := &token.APITokenSource{
 		Key:    apiKey,
 		Claims: token.APIClaims{Audience: "centrifugo-api", Scope: []string{"centrifugo:api"}},
 	}

@@ -18,12 +18,12 @@ import (
 	"github.com/centrifugal/gocent/v4/token"
 )
 
-// Tokens from token.APITokens authenticate API calls to Centrifugo PRO, which
+// Tokens from token.APITokenSource authenticate API calls to Centrifugo PRO, which
 // verifies them with the keys served here, at the endpoint of
 // testdata/centrifugo-pro.compose.yml: port 3101 of the host, or
 // GOCENT_TEST_API_JWKS_LISTEN. Tokens without the audience and scope it
 // requires are refused, as are tokens signed with a key not published.
-func TestIntegrationProAPITokens(t *testing.T) {
+func TestIntegrationProAPITokenSource(t *testing.T) {
 	proClient(t, gocent.AutoBatch{})
 	// The same keys on every run, from fixed seeds: Centrifugo caches keys
 	// by ID, and fetches the JWKS for an ID it does not know at most every
@@ -60,7 +60,7 @@ func TestIntegrationProAPITokens(t *testing.T) {
 		return pubErr
 	}
 
-	tokens := &token.APITokens{
+	tokens := &token.APITokenSource{
 		Key:    apiKey,
 		Claims: token.APIClaims{Audience: "centrifugo-api", Scope: []string{"centrifugo:api"}},
 	}
@@ -93,7 +93,7 @@ func TestIntegrationProAPITokens(t *testing.T) {
 		t.Errorf("connection token: %v, want ErrUnauthorized", err)
 	}
 
-	unpublished := &token.APITokens{Key: newKey("gocent-unpublished", 2), Claims: tokens.Claims}
+	unpublished := &token.APITokenSource{Key: newKey("gocent-unpublished", 2), Claims: tokens.Claims}
 	if err = publish(bearer(unpublished.Token)); !errors.Is(err, gocent.ErrUnauthorized) {
 		t.Errorf("token of an unpublished key: %v, want ErrUnauthorized", err)
 	}

@@ -53,7 +53,7 @@ type apiWire struct {
 
 // API returns a token for the server API of Centrifugo PRO with c's claims,
 // signed with key - see [APIClaims] for keeping it apart from client tokens,
-// and [APITokens] for one to send with every call. Centrifugo PRO finds the
+// and [APITokenSource] for one to send with every call. Centrifugo PRO finds the
 // key to verify it in its JWKS by the key ID, so key must be an asymmetric
 // key with an ID - see [Key.WithKeyID] - published by [JWKS].
 func API(key Key, c APIClaims) (string, error) {
@@ -78,12 +78,12 @@ func API(key Key, c APIClaims) (string, error) {
 	})
 }
 
-// APITokens issues the tokens a gocent.Client sends to Centrifugo PRO: its
+// APITokenSource issues the tokens a gocent.Client sends to Centrifugo PRO: its
 // Token method is the Client's BearerTokenFunc. It signs a token with [API]
 // and reuses it for half its lifetime, so a token sent has at least half of
 // it left. It is safe for concurrent use; it must not be copied once used.
 //
-//	tokens := &token.APITokens{
+//	tokens := &token.APITokenSource{
 //		Key:    apiKey, // its own key, not the client tokens' - see APIClaims
 //		Claims: token.APIClaims{Audience: "centrifugo-api", Scope: []string{"centrifugo:api"}},
 //	}
@@ -91,7 +91,7 @@ func API(key Key, c APIClaims) (string, error) {
 //		APIEndpoint:     "https://centrifugo.example.com/api",
 //		BearerTokenFunc: tokens.Token,
 //	})
-type APITokens struct {
+type APITokenSource struct {
 	// Key signs the tokens.
 	Key Key
 	// CurrentKey, when set, returns the key to sign each new token with,
@@ -112,7 +112,7 @@ type APITokens struct {
 
 // Token returns a token valid for at least half of TTL, signing a new one
 // when the previous one has less left.
-func (s *APITokens) Token(context.Context) (string, error) {
+func (s *APITokenSource) Token(context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
@@ -120,14 +120,14 @@ func (s *APITokens) Token(context.Context) (string, error) {
 		return s.token, nil
 	}
 	if !s.Claims.ExpiresAt.IsZero() || !s.Claims.IssuedAt.IsZero() {
-		return "", errors.New("token: APITokens sets ExpiresAt and IssuedAt itself: leave them zero in Claims, and set TTL")
+		return "", errors.New("token: APITokenSource sets ExpiresAt and IssuedAt itself: leave them zero in Claims, and set TTL")
 	}
 	ttl := s.TTL
 	if ttl == 0 {
 		ttl = 5 * time.Minute
 	}
 	if ttl < 0 {
-		return "", errors.New("token: APITokens with a negative TTL")
+		return "", errors.New("token: APITokenSource with a negative TTL")
 	}
 	key := s.Key
 	if s.CurrentKey != nil {

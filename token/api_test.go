@@ -69,12 +69,12 @@ func TestAPIErrors(t *testing.T) {
 	}
 }
 
-// APITokens reuses a token for half its TTL, then signs a new one with the
+// APITokenSource reuses a token for half its TTL, then signs a new one with the
 // current key.
-func TestAPITokens(t *testing.T) {
+func TestAPITokenSource(t *testing.T) {
 	keys := []Key{apiKey(t, "k1"), apiKey(t, "k2")}
 	current := 0
-	s := &APITokens{
+	s := &APITokenSource{
 		CurrentKey: func() (Key, error) { return keys[current], nil },
 		Claims:     APIClaims{Audience: "centrifugo-api"},
 		TTL:        time.Hour,
@@ -112,9 +112,9 @@ func TestAPITokens(t *testing.T) {
 	wg.Wait()
 }
 
-func TestAPITokensErrors(t *testing.T) {
+func TestAPITokenSourceErrors(t *testing.T) {
 	failed := errors.New("no key")
-	for name, s := range map[string]*APITokens{
+	for name, s := range map[string]*APITokenSource{
 		"ExpiresAt in claims": {Key: apiKey(t, "k"), Claims: APIClaims{Audience: "a", ExpiresAt: time.Now()}},
 		"IssuedAt in claims":  {Key: apiKey(t, "k"), Claims: APIClaims{Audience: "a", IssuedAt: time.Now()}},
 		"negative TTL":        {Key: apiKey(t, "k"), Claims: APIClaims{Audience: "a"}, TTL: -time.Second},
@@ -126,7 +126,7 @@ func TestAPITokensErrors(t *testing.T) {
 		}
 	}
 	// Default TTL: five minutes.
-	tok, err := (&APITokens{Key: apiKey(t, "k"), Claims: APIClaims{Audience: "a"}}).Token(t.Context())
+	tok, err := (&APITokenSource{Key: apiKey(t, "k"), Claims: APIClaims{Audience: "a"}}).Token(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

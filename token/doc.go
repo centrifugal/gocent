@@ -34,8 +34,8 @@
 // say - and drop the old one once its tokens expired. See the example in
 // _examples/jwks-rotation.
 //
-// [API] and [APITokens] issue tokens for the server API of Centrifugo PRO,
-// verified with the keys of its http_api.jwks.endpoint: APITokens.Token is a
+// [API] and [APITokenSource] issue tokens for the server API of Centrifugo PRO,
+// verified with the keys of its http_api.jwks.endpoint: APITokenSource.Token is a
 // gocent.Client's BearerTokenFunc. Keep them apart from client tokens: sign
 // them with other keys, published at another JWKS endpoint, and require an
 // audience or scope only they carry - otherwise any user can call the server
