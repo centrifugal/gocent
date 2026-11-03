@@ -201,35 +201,44 @@ call.
   (values: section 17).
 - A request body MUST NOT be reused or pooled while the transport may still
   read it.
-- One timeout story: every request has exactly one deadline, and the default
-  client sets no timeouts of its own. The deadline is `request_timeout` from
-  the call's start, or the call's own timeout where the language takes one
-  per call - Python's, Ruby's and PHP's `timeout` argument, JavaScript's
-  `timeout` option, C#'s and Rust's `with_timeout` - which replaces it. A
-  per-call timeout always bounds the whole call it is given to: for a method
-  that is one request; for `broadcast_with_retry` every attempt, waits
-  included. A call made of several requests bounds each with a timeout named
-  for it, replacing `request_timeout` for that request:
-  `broadcast_with_retry`'s `attempt_timeout` (section 7.3), and the
-  `<method>_all` iterators' `page_timeout` (section 3.8), which take no
-  per-call timeout, since an iteration's length is its caller's loop. A
-  deadline or cancellation the call runs under - a Go `context`, an
-  `AbortSignal`, Python's `asyncio.timeout` - only shortens that deadline,
-  never lengthens it: a call inside an HTTP handler whose context lives for
-  minutes still gives up on a stuck Centrifugo after `request_timeout`. Go
-  takes no per-call timeout, so there `request_timeout` is a cap which only
-  the configuration raises, as `http.Client.Timeout` is: its docs MUST say
-  that a context with a later deadline does not extend a call.
-  How it is enforced is the language's: a deadline or cancellation where the
-  platform has one (Go's `context`, JavaScript's `AbortSignal`, Python's
-  `asyncio.timeout`); where the HTTP library's timeouts bound each operation
-  rather than the request - a connect, each read, as Python's `httpx` and
-  Ruby's `Net::HTTP` do - each request gets the time left as its timeout, and
-  the SDK checks the deadline between the chunks of the reply's body. An SDK
-  SHOULD use its HTTP library's public API only: what it cannot bound so - a
-  reply's headers trickling in - its docs MUST say may outlast the timeout.
-  Whichever way a request times out, the SDK MUST report it as the language's
-  one timeout error (gocent: `errors.Is(err, context.DeadlineExceeded)`).
+- **One timeout story.** Every request has exactly one deadline, and the
+  default client sets no timeouts of its own. The deadline is set this way:
+  - **The bound.** `request_timeout` from the call's start, or the call's
+    own timeout where the language takes one per call, which replaces it:
+    Python's, Ruby's and PHP's `timeout` argument, JavaScript's `timeout`
+    option, C#'s and Rust's `with_timeout`.
+  - **A per-call timeout bounds the whole call it is given to.** For a
+    method, that is one request. For `broadcast_with_retry`, it is every
+    attempt, waits included.
+  - **A call made of several requests** bounds each with a timeout named for
+    it, which replaces `request_timeout` for that request:
+    `broadcast_with_retry`'s `attempt_timeout` (section 7.3), and the
+    `<method>_all` iterators' `page_timeout` (section 3.8). The iterators
+    take no per-call timeout, since an iteration lasts as long as its
+    caller's loop.
+  - **An ambient deadline only shortens.** A deadline or cancellation the
+    call runs under - a Go `context`, an `AbortSignal`, Python's
+    `asyncio.timeout` - can end a call sooner, never later. A call inside an
+    HTTP handler whose context lives for minutes still gives up on a stuck
+    Centrifugo after `request_timeout`.
+  - **Go** takes no per-call timeout, so there `request_timeout` is a cap
+    which only the configuration raises, as `http.Client.Timeout` is. Its
+    docs MUST say that a context with a later deadline does not extend a
+    call.
+
+  How the deadline is enforced is the language's:
+  - Where the platform has a deadline or cancellation - Go's `context`,
+    JavaScript's `AbortSignal`, Python's `asyncio.timeout` - it is that.
+  - Where the HTTP library's timeouts bound each operation rather than the
+    request - a connect, each read, as Python's `httpx` and Ruby's
+    `Net::HTTP` do - each request gets the time left as its timeout, and the
+    SDK checks the deadline between the chunks of the reply's body.
+  - An SDK SHOULD use its HTTP library's public API only. What it cannot
+    bound so - a reply's headers trickling in - its docs MUST say may
+    outlast the timeout.
+  - Whichever way a request times out, the SDK MUST report it as the
+    language's one timeout error (gocent: `errors.Is(err,
+    context.DeadlineExceeded)`).
 - Replies are decoded as strictly as requests are encoded: case-sensitive
   names. A reply which is not JSON of the reply's shape - an HTML page, say -
   is a `DecodeError`.
@@ -821,36 +830,42 @@ except BroadcastFailedChannelsError as e:
 
 `broadcast_with_retry(req, options)`:
 
-- sends only the channels which may still succeed: a channel which failed for
-  good is not retried, and when only those are left it stops;
-- every attempt carries the same `idempotency_key`; without one, the SDK
-  makes a random one for the call (section 17) and returns it in the result;
-- the result holds every channel's last outcome and how many attempts each
-  took;
-- `max_attempts` - a default (section 17); `attempt_timeout` is each
-  attempt's own timeout, replacing `request_timeout` for it as a per-call
-  timeout does (section 3.2); without it, each attempt gets
-  `request_timeout`. The call as a whole is bounded by its deadline - the
-  context or token it runs under, and its per-call timeout where the
-  language takes one (C#'s `WithTimeout`, Python's `timeout`) - waits
-  included, never by `request_timeout`: so for this call a per-call timeout
-  bounds the whole retry, not each attempt. An attempt ends at the earlier
-  of its own timeout and the call's deadline;
-- `on_attempt_err(attempt)` is called after each failed attempt a retry may
-  fix, except the last, with the attempt number, its error, the channels to
-  retry, the result so far and the key. It waits, logs or stops by returning
-  an error; the call then returns both errors joined - or only the
-  broadcast's error when that already wraps the callback's (a deadline, say).
-  In a language with exceptions it MAY instead return how long to wait - the
-  default when it returns nothing - and raise to stop, its exception chained
-  to the broadcast's error (pycent): a callback which only logs then cannot
-  stop the retries by accident.
-  Default: `wait(deadline, delay(attempt))` with the `delay` of an
-  `exponential_backoff` (section 17);
-- a failure no retry can fix - a 401, an invalid request - stops it without
-  calling `on_attempt_err`, and no attempt starts once the call's deadline has
-  ended;
-- a negative `max_attempts` or `attempt_timeout` fails it with
+- **Channels**: it sends only the channels which may still succeed. A
+  channel which failed for good is not retried, and when only those are
+  left it stops.
+- **The key**: every attempt carries the same `idempotency_key`. Without
+  one, the SDK makes a random one for the call (section 17) and returns it
+  in the result.
+- **The result** holds every channel's last outcome and how many attempts
+  each took.
+- **`max_attempts`**: a default (section 17).
+- **Timeouts**:
+  - `attempt_timeout` is each attempt's own timeout, replacing
+    `request_timeout` for it as a per-call timeout does (section 3.2).
+    Without it, each attempt gets `request_timeout`.
+  - The call as a whole is bounded by its deadline, waits included: the
+    context or token it runs under, and its per-call timeout where the
+    language takes one (C#'s `WithTimeout`, Python's `timeout`). It is
+    never bounded by `request_timeout`, so for this call a per-call timeout
+    bounds the whole retry, not each attempt.
+  - An attempt ends at the earlier of its own timeout and the call's
+    deadline, and no attempt starts once the call's deadline has ended.
+- **`on_attempt_err(attempt)`** is called after each failed attempt a retry
+  may fix, except the last. It gets the attempt number, its error, the
+  channels to retry, the result so far and the key.
+  - It waits, logs, or stops by returning an error. The call then returns
+    both errors joined - or only the broadcast's error when that already
+    wraps the callback's, a deadline say.
+  - In a language with exceptions it MAY instead return how long to wait -
+    the default when it returns nothing - and raise to stop, its exception
+    chained to the broadcast's error (pycent). A callback which only logs
+    then cannot stop the retries by accident. This is the one known
+    exception to unified meaning (conventions).
+  - Default: `wait(deadline, delay(attempt))`, with the `delay` of an
+    `exponential_backoff` (section 17).
+- **Stopping**: a failure no retry can fix - a 401, an invalid request -
+  stops it without calling `on_attempt_err`.
+- **Refused**: a negative `max_attempts` or `attempt_timeout` fails it with
   `InvalidRequest` before any attempt: every channel failed, 0 attempts.
 
 ## 8. Automatic batching
@@ -881,16 +896,18 @@ out.
   whole fails every call in it; no call is retried alone.
 - A call's command is encoded before it queues; once a call returns nothing
   reads its request again.
-- A call whose deadline ends while queued leaves without its command being
-  sent. A batch runs on its own, never on a caller's context, until the latest
-  of its calls' deadlines - each the deadline section 3.2 gives that call -
-  so that no caller's earlier deadline cuts it short for the others, and
-  never less than `request_timeout` from when it is sent, so that a call
-  which waited in the queue still gets a full timeout. So a batch request
-  may outlast a call's own deadline: the call then returns at its deadline,
-  and the batch goes on for the others. `request_timeout` caps calls, not
-  the batch request carrying them. A reply arriving as a caller's deadline
-  ends is returned, not a timeout.
+- Deadlines:
+  - A call whose deadline ends while queued leaves without its command being
+    sent.
+  - A batch runs on its own, never on a caller's context, until the latest
+    of its calls' deadlines - each the deadline section 3.2 gives that call -
+    so that no caller's earlier deadline cuts it short for the others.
+  - It never runs for less than `request_timeout` from when it is sent, so
+    that a call which waited in the queue still gets a full timeout.
+  - So a batch request may outlast a call's own deadline: the call then
+    returns at its deadline, and the batch goes on for the others.
+    `request_timeout` caps calls, not the batch request carrying them.
+  - A reply arriving as a caller's deadline ends is returned, not a timeout.
 - Calls made one after another keep their order: each waits for its reply.
 - In the transport error mode (section 4.2), a call sent alone gets its error
   with an HTTP status, and one in an automatic batch inside a 200 reply. The
