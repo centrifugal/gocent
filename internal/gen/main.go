@@ -12,6 +12,7 @@ package main
 
 import (
 	"bytes"
+	_ "embed"
 	"flag"
 	"fmt"
 	"go/format"
@@ -229,34 +230,76 @@ func listedValues(doc []string) ([]string, error) {
 	return values, nil
 }
 
-// constGroup is the constants of a string field with listed values: the
-// values, and the messages whose field of that name lists exactly them.
+// constGroup is the constants of the fields one pinned name covers: the
+// values they list, and the messages holding them.
 type constGroup struct {
-	field    string
+	name     string // the pinned name, such as Op
+	field    string // a field's proto name, for the doc comment
 	values   []string
 	messages []string
-	// prefix is the message name, set when the field name alone would be
-	// ambiguous.
-	prefix string
 }
 
 // constName returns the constant for one of the group's values: OpAdd for
-// the op field's "add".
+// the op fields' "add".
 func (g *constGroup) constName(value string) string {
-	return g.prefix + goName(g.field) + goName(value)
+	return g.name + goName(value)
 }
 
-// constGroups collects the fields with listed values into groups, in the
-// order of the proto. A constant is named by its field and value. Where
-// fields of one name list different values in different messages, the set
-// listed in the most messages keeps the short name and the others are named
-// by their message too - OpAdd for the topic updates, FilterNodeOpAnd for
-// FilterNode - and a tie names all of them so.
+//go:embed constants_api.txt
+var constantsAPI string
+
+//go:embed constants_proxy.txt
+var constantsProxy string
+
+// pins holds the constant names spec.md section 3.3 pins: by Message.field,
+// or by *.field for the field in every message which has it.
+type pins struct {
+	file  string
+	names map[string]string
+	used  map[string]bool
+	order []string
+}
+
+func parsePins(file, text string) (*pins, error) {
+	p := &pins{file: file, names: map[string]string{}, used: map[string]bool{}}
+	for line := range strings.SplitSeq(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			return nil, fmt.Errorf("%s: %q is not a selector and a name", file, line)
+		}
+		if _, dup := p.names[f[0]]; dup {
+			return nil, fmt.Errorf("%s: %s pinned twice", file, f[0])
+		}
+		p.names[f[0]] = f[1]
+		p.order = append(p.order, f[0])
+	}
+	return p, nil
+}
+
+// name returns the pinned name of message m's field f.
+func (p *pins) name(m, f string) (string, bool) {
+	for _, sel := range []string{m + "." + f, "*." + f} {
+		if n, ok := p.names[sel]; ok {
+			p.used[sel] = true
+			return n, true
+		}
+	}
+	return "", false
+}
+
+// constGroups collects the fields with listed values into groups by their
+// pinned names, in the order of the proto. A field without a pinned name, a
+// pin no field uses, and one name over different values all fail: a person
+// then names the field in spec.md's table and the list, for every SDK.
 // Only the messages include accepts count: those the generated package has
 // types for.
-func constGroups(s *schema, include func(name string) bool) ([]*constGroup, error) {
-	byField := map[string][]*constGroup{}
-	var order []string
+func constGroups(s *schema, include func(name string) bool, p *pins) ([]*constGroup, error) {
+	byName := map[string]*constGroup{}
+	var out []*constGroup
 	for _, m := range s.messages {
 		if !include(m.name) {
 			continue
@@ -269,32 +312,25 @@ func constGroups(s *schema, include func(name string) bool) ([]*constGroup, erro
 			if values == nil {
 				continue
 			}
-			if byField[f.name] == nil {
-				order = append(order, f.name)
+			name, ok := p.name(m.name, f.name)
+			if !ok {
+				return nil, fmt.Errorf("%s.%s lists its values but has no pinned name: name it in %s and in spec.md section 3.3's table", m.name, f.name, p.file)
 			}
-			i := slices.IndexFunc(byField[f.name], func(g *constGroup) bool { return slices.Equal(g.values, values) })
-			if i < 0 {
-				byField[f.name] = append(byField[f.name], &constGroup{field: f.name, values: values})
-				i = len(byField[f.name]) - 1
+			g := byName[name]
+			if g == nil {
+				g = &constGroup{name: name, field: f.name, values: values}
+				byName[name] = g
+				out = append(out, g)
+			} else if !slices.Equal(g.values, values) {
+				return nil, fmt.Errorf("%s.%s lists %v, but %s names %v in %v", m.name, f.name, values, name, g.values, g.messages)
 			}
-			byField[f.name][i].messages = append(byField[f.name][i].messages, m.name)
+			g.messages = append(g.messages, m.name)
 		}
 	}
-	var out []*constGroup
-	for _, name := range order {
-		groups := byField[name]
-		if len(groups) > 1 {
-			most := slices.MaxFunc(groups, func(a, b *constGroup) int { return len(a.messages) - len(b.messages) })
-			for _, g := range groups {
-				if g != most || slices.ContainsFunc(groups, func(o *constGroup) bool { return o != most && len(o.messages) == len(most.messages) }) {
-					if len(g.messages) > 1 {
-						return nil, fmt.Errorf("field %s lists %v in %v and other values elsewhere: cannot name its constants", name, g.values, g.messages)
-					}
-					g.prefix = g.messages[0]
-				}
-			}
+	for _, sel := range p.order {
+		if !p.used[sel] {
+			return nil, fmt.Errorf("%s: %s names no field with listed values: remove it, and from spec.md section 3.3's table", p.file, sel)
 		}
-		out = append(out, groups...)
 	}
 	return out, nil
 }
@@ -482,8 +518,12 @@ func emitRequired(w *writer, s *schema, cmds []command) error {
 }
 
 // emitConsts writes a const block per group of fields listing their values.
-func emitConsts(w *writer, s *schema, include func(name string) bool) error {
-	groups, err := constGroups(s, include)
+func emitConsts(w *writer, s *schema, include func(name string) bool, file, list string) error {
+	p, err := parsePins(file, list)
+	if err != nil {
+		return err
+	}
+	groups, err := constGroups(s, include, p)
 	if err != nil {
 		return err
 	}
@@ -699,7 +739,7 @@ func generate(s *schema) ([]byte, error) {
 	}
 
 	// The values of the string fields with a fixed set, as constants.
-	err = emitConsts(&w, s, func(name string) bool { return !skipType(s, name) })
+	err = emitConsts(&w, s, func(name string) bool { return !skipType(s, name) }, "constants_api.txt", constantsAPI)
 	if err != nil {
 		return nil, fmt.Errorf("api.proto: %w", err)
 	}

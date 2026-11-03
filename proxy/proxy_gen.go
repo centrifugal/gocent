@@ -836,13 +836,13 @@ type SharedPollRefreshResponse struct {
 	Error  *Error                   `json:"error,omitzero"`
 }
 
-// OpAnd, OpOr and OpNot are the values of the Op field of FilterNode. The field
-// is a string: a value Centrifugo sends or accepts which these do not name is
-// still a valid one.
+// FilterNodeOpAnd, FilterNodeOpOr and FilterNodeOpNot are the values of the Op
+// field of FilterNode. The field is a string: a value Centrifugo sends or
+// accepts which these do not name is still a valid one.
 const (
-	OpAnd = "and"
-	OpOr  = "or"
-	OpNot = "not"
+	FilterNodeOpAnd = "and"
+	FilterNodeOpOr  = "or"
+	FilterNodeOpNot = "not"
 )
 
 // CmpEq, CmpNeq, CmpIn, CmpNin, CmpEx, CmpNex, CmpSw, CmpEw, CmpCt, CmpGt,
@@ -895,12 +895,12 @@ const (
 	AllowPrs = "prs"
 )
 
-// MatchWildcard and MatchRegex are the values of the Match field of
-// ChannelsCapability. The field is a string: a value Centrifugo sends or
-// accepts which these do not name is still a valid one.
+// CapabilityMatchWildcard and CapabilityMatchRegex are the values of the Match
+// field of ChannelsCapability. The field is a string: a value Centrifugo sends
+// or accepts which these do not name is still a valid one.
 const (
-	MatchWildcard = "wildcard"
-	MatchRegex    = "regex"
+	CapabilityMatchWildcard = "wildcard"
+	CapabilityMatchRegex    = "regex"
 )
 
 // KeyModeIfNew and KeyModeIfExists are the values of the KeyMode field of
@@ -911,10 +911,10 @@ const (
 	KeyModeIfExists = "if_exists"
 )
 
-// TypeOccupied and TypeVacated are the values of the Type field of
-// ChannelEvent. The field is a string: a value Centrifugo sends or accepts
-// which these do not name is still a valid one.
+// ChannelEventTypeOccupied and ChannelEventTypeVacated are the values of the
+// Type field of ChannelEvent. The field is a string: a value Centrifugo sends
+// or accepts which these do not name is still a valid one.
 const (
-	TypeOccupied = "occupied"
-	TypeVacated  = "vacated"
+	ChannelEventTypeOccupied = "occupied"
+	ChannelEventTypeVacated  = "vacated"
 )

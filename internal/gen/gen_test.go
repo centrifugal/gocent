@@ -98,56 +98,54 @@ func TestListedValues(t *testing.T) {
 }
 
 func TestConstGroups(t *testing.T) {
-	s, err := parse(strings.NewReader(`
+	src := `
 message A {
     string op = 1; // One of: add, remove.
+    string protocol = 2; // One of: json.
 }
 message B {
     string op = 1; // One of: add, remove.
+    string protocol = 2; // One of: json.
 }
 message C {
     string op = 1; // One of: and, or.
-    string mode = 2; // One of: if_new.
-}`), "test.proto")
-	if err != nil {
-		t.Fatal(err)
+}`
+	groups := func(list string) ([]*constGroup, error) {
+		s, err := parse(strings.NewReader(src), "test.proto")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := parsePins("test.txt", list)
+		if err != nil {
+			return nil, err
+		}
+		return constGroups(s, func(string) bool { return true }, p)
 	}
-	groups, err := constGroups(s, func(string) bool { return true })
+
+	// Names come from the list, by Message.field or *.field.
+	got, err := groups("A.op Op\nB.op Op\nC.op LogicOp\n*.protocol Protocol")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var names []string
-	for _, g := range groups {
+	for _, g := range got {
 		for _, v := range g.values {
 			names = append(names, g.constName(v))
 		}
 	}
-	want := []string{"OpAdd", "OpRemove", "COpAnd", "COpOr", "ModeIfNew"}
-	if !slices.Equal(names, want) {
+	if want := []string{"OpAdd", "OpRemove", "ProtocolJSON", "LogicOpAnd", "LogicOpOr"}; !slices.Equal(names, want) {
 		t.Errorf("constants %v, want %v", names, want)
 	}
 
-	// A tie names every group by its message.
-	s, err = parse(strings.NewReader(`
-message A {
-    string op = 1; // One of: add.
-}
-message C {
-    string op = 1; // One of: and.
-}`), "test.proto")
-	if err != nil {
-		t.Fatal(err)
-	}
-	groups, err = constGroups(s, func(string) bool { return true })
-	if err != nil {
-		t.Fatal(err)
-	}
-	names = names[:0]
-	for _, g := range groups {
-		names = append(names, g.constName(g.values[0]))
-	}
-	if want := []string{"AOpAdd", "COpAnd"}; !slices.Equal(names, want) {
-		t.Errorf("constants %v, want %v", names, want)
+	for name, list := range map[string]string{
+		"a field without a pinned name":  "A.op Op\nB.op Op\n*.protocol Protocol",
+		"a pin no field uses":            "A.op Op\nB.op Op\nC.op LogicOp\n*.protocol Protocol\nD.mode Mode",
+		"one name over different values": "A.op Op\nB.op Op\nC.op Op\n*.protocol Protocol",
+		"a pin given twice":              "A.op Op\nA.op Op",
+	} {
+		if _, err := groups(list); err == nil {
+			t.Errorf("%s: no error", name)
+		}
 	}
 }
 

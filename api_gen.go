@@ -1655,16 +1655,6 @@ const (
 	FilterNodeOpNot = "not"
 )
 
-// OpAdd, OpRemove and OpSet are the values of the Op field of
-// DeviceTopicsUpdate, DeviceTopicUpdateRequest and UserTopicUpdateRequest. The
-// field is a string: a value Centrifugo sends or accepts which these do not
-// name is still a valid one.
-const (
-	OpAdd    = "add"
-	OpRemove = "remove"
-	OpSet    = "set"
-)
-
 // CmpEq, CmpNeq, CmpIn, CmpNin, CmpEx, CmpNex, CmpSw, CmpEw, CmpCt, CmpGt,
 // CmpGte, CmpLt and CmpLte are the values of the Cmp field of FilterNode. The
 // field is a string: a value Centrifugo sends or accepts which these do not
@@ -1702,6 +1692,16 @@ const (
 	PlatformIOS     = "ios"
 	PlatformAndroid = "android"
 	PlatformWeb     = "web"
+)
+
+// OpAdd, OpRemove and OpSet are the values of the Op field of
+// DeviceTopicsUpdate, DeviceTopicUpdateRequest and UserTopicUpdateRequest. The
+// field is a string: a value Centrifugo sends or accepts which these do not
+// name is still a valid one.
+const (
+	OpAdd    = "add"
+	OpRemove = "remove"
+	OpSet    = "set"
 )
 
 // StatusDelivered and StatusInteracted are the values of the Status field of

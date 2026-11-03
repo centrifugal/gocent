@@ -60,7 +60,7 @@ func generateProxy(s *schema) ([]byte, error) {
 
 	// The values of the string fields with a fixed set, as constants: what a
 	// handler compares a request's fields with, or sets in a result.
-	if err := emitConsts(&w, s, func(name string) bool { return used[name] }); err != nil {
+	if err := emitConsts(&w, s, func(name string) bool { return used[name] }, "constants_proxy.txt", constantsProxy); err != nil {
 		return nil, fmt.Errorf("proxy.proto: %w", err)
 	}
 
