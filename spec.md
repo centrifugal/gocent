@@ -300,27 +300,29 @@ The protos' "Required." marks give three tiers of fields. Only the exact
 Either way a call missing a required field fails before anything is sent,
 in every language, and in the signature where there is one.
 
-A field whose comment lists its values - in the sentence `One of: add,
-remove, set.`, which the protos write for every string field with a fixed
-set of values, `proxy.proto`'s as `api.proto`'s - gets a constant per value
-in the SDK, generated from that sentence, so that a value Centrifugo adds
-reaches every SDK with its next sync, and a typo fails at compile or import
-time rather than at Centrifugo - or, in a proxy handler comparing a
-request's `encoding` with a value, rather than never. The field stays a
-string, never a closed enum: Centrifugo adds values, and one the SDK does
-not name MUST still be sendable.
+A field whose comment lists its values gets a constant per value:
 
-A constant's name is the field's name from the table below, then the value,
-spelled the language's way: `ProviderFCM` in Go, `PROVIDER_FCM` in Rust,
-Python and JavaScript; where the language puts constants in a type, one per
-field - C# `ProviderValues.Fcm`, PHP `Provider::FCM`. The names are pinned
-here rather than derived, so that they never change because an unrelated
-message appeared, and they are chosen so that no language's reserved words
-or platform types clash with them. Each SDK's generator holds the table as a
-list of its own, like the required fields' (section 2), and fails when a
-"One of:" sentence of the protos is not in it, or one in it is gone: a
-person then names the new field here, for every SDK at once. The same field
-in both protos has the same name.
+- **Where the values come from.** The sentence `One of: add, remove, set.`,
+  which the protos write for every string field with a fixed set of
+  values, in `proxy.proto` as in `api.proto`. The constants are generated
+  from it, so a value Centrifugo adds reaches every SDK with its next sync.
+- **Why.** A typo fails at compile or import time rather than at
+  Centrifugo - or, in a proxy handler comparing a request's `encoding`
+  with a value, rather than never.
+- **The field stays a string**, never a closed enum: Centrifugo adds
+  values, and one the SDK does not name MUST still be sendable.
+- **The name** is the field's name from the table below, then the value,
+  spelled the language's way: `ProviderFCM` in Go, `PROVIDER_FCM` in Rust,
+  Python and JavaScript. Where the language puts constants in a type, it is
+  one type per field: C# `ProviderValues.Fcm`, PHP `Provider::FCM`.
+- **The names are pinned here, not derived**, so that they never change
+  because an unrelated message appeared. They are chosen so that no
+  language's reserved words or platform types clash with them. The same
+  field in both protos has the same name.
+- **Each SDK's generator holds the table as a list of its own**, like the
+  required fields' (section 2). It fails when a "One of:" sentence of the
+  protos is not in the list, or one in the list is gone: a person then
+  names the new field here, for every SDK at once.
 
 | Field | Name | Values |
 |---|---|---|
@@ -598,24 +600,28 @@ written once, in the SDK:
   that the items of a paged method change under the iteration: a device
   registered while listing may or may not be seen.
 
-Every result holding `offset` and `epoch` - `publish`'s, `history`'s,
-`map_read_state`'s, `map_read_stream`'s, `map_publish`'s and
-`map_remove`'s today; a generator can find them by the two fields - MUST
-give them as a `StreamPosition`, the type of
-`history`'s `since` and of `subscribe`'s `recover_since` (gocent: the method
-`Position()`), so that what a publish returned is what the next history call
-asks from, with no fields copied by hand. `map_read_stream` takes its
-position apart, as `since_offset` and `since_epoch`: an SDK MAY give its
-request a setter taking a `StreamPosition`, where the language has one for
-its requests (Rust's builders), and otherwise the caller copies the two.
-Where results are structural types - TypeScript interfaces - a position is
-a getter of the decoded result: a result answered by section 15.3's fake
-transport has it, being decoded, and so does a partial-failure result built
-with the SDK's constructor. A result an application builds by hand is its
-own, and needs no position unless its code reads one. A position whose epoch is no
-longer the stream's fails with code 112, `UnrecoverablePosition`: the
-stream was reset, and reading from its start is the only recovery. Docs
-SHOULD show reading what came after a publication.
+Every result holding `offset` and `epoch` MUST give them as a
+`StreamPosition`, the type of `history`'s `since` and of `subscribe`'s
+`recover_since` (gocent: the method `Position()`):
+
+- **Which results**: `publish`'s, `history`'s, `map_read_state`'s,
+  `map_read_stream`'s, `map_publish`'s and `map_remove`'s today. A
+  generator can find them by the two fields.
+- **Why**: what a publish returned is what the next history call asks
+  from, with no fields copied by hand.
+- **`map_read_stream`** takes its position apart, as `since_offset` and
+  `since_epoch`. An SDK MAY give its request a setter taking a
+  `StreamPosition`, where the language has one for its requests (Rust's
+  builders); otherwise the caller copies the two.
+- **Structural result types** - TypeScript interfaces - give the position
+  as a getter of the decoded result. A result answered by section 15.3's
+  fake transport has it, being decoded, and so does a partial-failure
+  result built with the SDK's constructor. A result an application builds
+  by hand is its own, and needs no position unless its code reads one.
+- **A position whose epoch is no longer the stream's** fails with code 112,
+  `UnrecoverablePosition`: the stream was reset, and reading from its start
+  is the only recovery.
+- **Docs** SHOULD show reading what came after a publication.
 
 ## 4. Errors
 
@@ -755,38 +761,44 @@ the error:
 - any other error: it failed as a whole, no channel got a reply, and every
   entry carries that error.
 
-`result.replied` is true exactly when the error is nil or a
-`BroadcastFailedChannelsError`; `result.failed` lists the failed channels -
-every channel, each with that error, when the broadcast failed as a whole,
-where the language returns the result then; with exceptions a failure as a
-whole raises its own error, without a result, as below - a
-property or field where the language has them, as `failed` on the error is
-(gocent: the method `Failed()`).
-They MUST never disagree with the error. A partial error MUST NOT match its
-parts' errors: one unknown channel among many does not make the broadcast
-match `UnknownChannel`. This holds in every case, so that every language
-behaves the same: a broadcast into one channel, or one where every channel
-failed, does not match `UnknownChannel` either - `failed` holds each
-channel's error. For one channel, `publish` is the call.
-`retryable_channels()` returns the channels a retry should go to.
+What the result says, and how the error reads:
 
-A partial error's message SHOULD say how many parts failed and that the others
-succeeded. A broadcast's SHOULD also say - when some failure is retryable - to
-retry only those channels, with the same `idempotency_key`; a batch's commands
-differ from each other, so a batch has no such advice (gocent: "broadcast: 2
-of 50 channels failed, 48 got the publication: ... (retry only
-RetryableChannels, with the same IdempotencyKey)"). Where an error usually
-means nothing happened, as an exception does, a caller retrying the whole
-broadcast would publish twice into the channels which got it.
+- **`result.replied`** is true exactly when the error is nil or a
+  `BroadcastFailedChannelsError`.
+- **`result.failed`** lists the failed channels, a property or field where
+  the language has them, as `failed` on the error is (gocent: the method
+  `Failed()`). When the broadcast failed as a whole, it holds every
+  channel, each with that error - where the language returns the result
+  then. With exceptions, a failure as a whole raises its own error, without
+  a result, as below.
+- **They MUST never disagree with the error.**
+- **A partial error MUST NOT match its parts' errors.** One unknown channel
+  among many does not make the broadcast match `UnknownChannel`. This holds
+  in every case, so that every language behaves the same: a broadcast into
+  one channel, or one where every channel failed, does not match
+  `UnknownChannel` either - `failed` holds each channel's error. For one
+  channel, `publish` is the call.
+- **`retryable_channels()`** returns the channels a retry should go to.
+- **A partial error's message** SHOULD say how many parts failed and that
+  the others succeeded. A broadcast's SHOULD also say, when some failure is
+  retryable, to retry only those channels, with the same `idempotency_key`
+  (gocent: "broadcast: 2 of 50 channels failed, 48 got the publication:
+  ... (retry only RetryableChannels, with the same IdempotencyKey)"). A
+  batch's commands differ from each other, so a batch has no such advice.
+  Where an error usually means nothing happened, as an exception does, a
+  caller retrying the whole broadcast would publish twice into the channels
+  which got it.
 
-In a language with exceptions, the exception raised for a partial failure
-carries its result (`err.result`): the same object a Go call returns beside
-its error, every channel's or command's outcome included. A failure as a whole
-raises its own error, the network's say: its result would only say that every
-part failed with it. There is no
-mode which returns a partial result instead of raising: the core rule
-(section 4.3) holds in every language. Docs SHOULD show how to log the
-failures and go on:
+In a language with exceptions:
+
+- **The exception raised for a partial failure carries its result**
+  (`err.result`): the same object a Go call returns beside its error, every
+  channel's or command's outcome included.
+- **A failure as a whole raises its own error**, the network's say: its
+  result would only say that every part failed with it.
+- **There is no mode which returns a partial result instead of raising**:
+  the core rule (section 4.3) holds in every language.
+- **Docs SHOULD show** how to log the failures and go on:
 
 ```python
 try:
