@@ -9,6 +9,12 @@ release (map and shared poll methods: v6.8.0 or newer). Import path
 `github.com/centrifugal/gocent/v4`. Upgrading from v3: see the
 Migrating from v3 section below and [MIGRATING.md](https://github.com/centrifugal/gocent/blob/master/MIGRATING.md).
 
+Generated from Centrifugo's protos at
+[e21aeb50](https://github.com/centrifugal/centrifugo/commit/e21aeb50ab6fc4d525fc817473574f728da6c3ad)
+on its master, after v6.10.2: the same messages as v6.10.2, with the
+comments the constants are generated from, and `ConnectResult.profile` for
+the connect proxy, which Centrifugo PRO newer than v6.10.2 reads.
+
 * **Every API method.** Types and methods are generated from Centrifugo's
   `api.proto`, so every method - including map, shared poll and the Centrifugo
   PRO methods - is a `Client` method, and every request field is a struct

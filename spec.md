@@ -13,7 +13,7 @@ does not list can be decided the same way. Section 15.2 lists every rule to
 check an SDK against; section 17 lists gocent's values.
 
 The spec has a version of its own, which an SDK's README names ("implements
-spec 1.2"). From 1.0, released with gocent v4:
+spec 1.2"). From 1.0:
 
 - a major version makes an existing rule stricter, so that an SDK following
   the previous one may no longer conform;
@@ -104,7 +104,10 @@ its README.
   MUST NOT hand-edit generated code. Generated code MUST be checked to be
   current in CI.
 - The protos MUST be copied from a released Centrifugo tag before an SDK
-  release. A branch MAY be used during development.
+  release, or from a commit of Centrifugo's default branch when the release
+  needs changes no tag has yet - comments generation reads, a field - in
+  which case the release's changelog names the commit. A branch MAY be used
+  during development.
 - The proto comments become the SDK's documentation of every type, field and
   method. Three phrases in them are read by the generator: "Required."
   (section 3.3), "Centrifugo PRO only" (below) and "One of:" (section 3.3).
@@ -1248,7 +1251,8 @@ full and why. A rule added to a section is added here too.
 Generation and the client:
 
 - [ ] Request and result types generated from the protos, never edited by
-  hand, checked current in CI; protos from a released tag (2).
+  hand, checked current in CI; protos from a released tag, or a commit of
+  Centrifugo's default branch which the changelog names (2).
 - [ ] Field names on the wire exactly the protos', case-sensitive; zero
   values not sent, a set but empty message included; presence wrappers
   optional and sent whenever set, even empty (2).
@@ -1489,6 +1493,9 @@ Rules added:
 - The endpoints for client SDKs fail with `Forbidden`, not `Unauthorized`,
   the API client's error for refused credentials (12).
 - The required-field rules are given as three tiers (3.3).
+- A release may take its protos from a commit of Centrifugo's default
+  branch, when it needs changes no tag has yet, naming the commit in its
+  changelog (2).
 - `InvalidConfig` is the error for a client refused as configured on a call
   too: a second event loop, an endpoint or token from a configured function
   which cannot be sent; the functions' own errors are `FunctionError`, with
@@ -1529,10 +1536,10 @@ it done. gocent made each in its own commit, on its `v4_dev` branch.
 
 1. **Sync the protos.** Copy `api.proto` and `proxy.proto` from a Centrifugo
    release with the "One of:" sentences in both - centrifugal/centrifugo#1308
-   for `api.proto`, and the change following it for `proxy.proto` - until
-   one is tagged, from `master`, and again from the tag before the SDK's
-   release. The comments change and `ConnectResult` gains `profile`; the
-   messages are otherwise as before.
+   and #1309, and #1310's comment - or, until one is tagged, from Centrifugo's
+   `master` at e21aeb50, which the release's changelog then names (section
+   2). The comments change and `ConnectResult` gains `profile`; the messages
+   are otherwise as before.
 2. **Fix the docs the corrections touch.** Nothing in an SDK's behaviour
    changes, but its docs and messages may repeat what 0.2 said: that a
    Centrifugo version stops accepting other spellings of field names (2,

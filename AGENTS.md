@@ -158,9 +158,11 @@ variables in `.github/workflows/ci.yml`: a setting added to
 `testdata/centrifugo.json` must be added there too.
 
 CI and `testdata/centrifugo-pro.compose.yml` use one Centrifugo release, now
-v6.10.2, for OSS and PRO, the one `api.proto` is synced from. Moving to a new
-release changes all three together: `make sync-proto CENTRIFUGO_REF=<tag>`, the
-OSS image in `ci.yml` and the PRO image in the compose file.
+v6.10.2, for OSS and PRO: the latest release, which `api.proto` is synced from
+or, when a release needs changes no tag has yet, a commit of master is synced
+on top of. Moving to a new release changes all three together: `make
+sync-proto CENTRIFUGO_REF=<tag>`, the OSS image in `ci.yml` and the PRO image
+in the compose file.
 
 The PRO methods are covered by `pro_integration_test.go`, which skips against
 OSS. To run them, start Centrifugo PRO with what they need - Redis,
@@ -181,8 +183,9 @@ docker compose -f testdata/centrifugo-pro.compose.yml down
    Centrifugo's `internal/apiproto/api.proto` at that tag over `api.proto`,
    and its `internal/proxyproto/proxy.proto` over `proxy/proxy.proto`, and
    runs `make generate`. For work which needs unreleased Centrifugo changes,
-   `CENTRIFUGO_BRANCH=master` syncs from a branch instead; sync from a tag
-   again before releasing. A new command appears as a `Client` method, a `Batch`
+   `CENTRIFUGO_BRANCH=master` syncs from a branch instead. A release takes the
+   protos from a tag, or from a commit of master when it needs changes no tag
+   has yet; its changelog entry then names the commit (spec section 2). A new command appears as a `Client` method, a `Batch`
    method and a request type with `APIMethod`, with no hand-written code. A
    command whose comment in `Command` says "Centrifugo PRO only" is marked so
    in `methodNames`, which the 404 hint uses.
