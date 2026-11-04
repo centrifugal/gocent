@@ -8,6 +8,12 @@ option to v4.
 Change the import path to `github.com/centrifugal/gocent/v4` first. v4 needs
 Go 1.27.
 
+One behaviour to know before the programs: every call is bounded by
+`Config.RequestTimeout`, 10 seconds by default, and a context deadline only
+shortens a call. Code which gave a context a long deadline to let a slow call
+finish - a broadcast to many channels, say - now needs a larger
+`RequestTimeout` instead.
+
 ## Publish
 
 v3:

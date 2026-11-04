@@ -1,8 +1,13 @@
 # v4.0.0
 
-A new major version for Centrifugo v6: every API method, the current HTTP API
-endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
-`github.com/centrifugal/gocent/v4`.
+A new major version for Centrifugo v6, rewritten to the
+[Centrifugo server SDK specification](https://github.com/centrifugal/gocent/blob/master/spec.md) 0.3, which the SDKs for other
+languages share: every API method, the current HTTP API endpoints, typed
+errors, retries, automatic batching, tokens, the proxy handlers and the
+endpoints client SDKs call. Requires Go 1.27 and works with any Centrifugo v6
+release (map and shared poll methods: v6.8.0 or newer). Import path
+`github.com/centrifugal/gocent/v4`. Upgrading from v3: see the
+Migrating from v3 section below and [MIGRATING.md](https://github.com/centrifugal/gocent/blob/master/MIGRATING.md).
 
 * **Every API method.** Types and methods are generated from Centrifugo's
   `api.proto`, so every method - including map, shared poll and the Centrifugo
@@ -71,8 +76,9 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   `Attempts`, on the result and on each channel, and `BroadcastResult.Failed()`
   tell what happened.
   `BroadcastFailedChannelsError.RetryableChannels()` gives the channels to retry
-  for a loop of your own. `BroadcastRetryOptions.AttemptTimeout` bounds each
-  attempt, while the context bounds the call. `HTTPError.Header` holds the
+  for a loop of your own. `BroadcastRetryOptions.AttemptTimeout` is each
+  attempt's own timeout, replacing `RequestTimeout` for it, while the context
+  bounds the call. `HTTPError.Header` holds the
   response's headers: a proxy's request ID, or a `Retry-After`.
 * **Shutdown.** `client.Close(ctx)` refuses new calls with `gocent.ErrClosed`
   and waits for those in progress, calls queued for an automatic batch
@@ -98,8 +104,8 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
   function, which `gocent.Retryable` judges by its cause.
 * **Safer defaults.** A default HTTP client with a connection pool - at most
   256 connections to the server, all kept while idle, so bursts of calls do
-  not open and close connections - and a per-request timeout when the context
-  has none. Redirects are not followed:
+  not open and close connections - and `Config.RequestTimeout`, 10 seconds by
+  default, bounding every call. Redirects are not followed:
   Centrifugo's API never redirects a call, and following one would send the
   API key to wherever it points. A redirect is an `HTTPError` naming the
   likely cause, a wrong scheme or path in `APIEndpoint`.
@@ -137,7 +143,7 @@ endpoints, typed errors and automatic batching. Requires Go 1.27. Import path
 
 ### Migrating from v3
 
-[MIGRATING.md](MIGRATING.md) has complete programs for publishing,
+[MIGRATING.md](https://github.com/centrifugal/gocent/blob/master/MIGRATING.md) has complete programs for publishing,
 broadcasting and batching, as written with v3 and with v4.
 
 Change the import path to `github.com/centrifugal/gocent/v4`, then:
@@ -147,7 +153,7 @@ Change the import path to `github.com/centrifugal/gocent/v4`, then:
 | `c := gocent.New(gocent.Config{Addr: addr, Key: key})` | `c, err := gocent.New(gocent.Config{APIEndpoint: addr, APIKey: key})` - it returns an error for a wrong config |
 | `Config.GetAddr func() (string, error)` | `Config.APIEndpointFunc func(context.Context) (string, error)` |
 | `c.SetHTTPClient(hc)` | `Config.HTTPClient: hc` - the field itself is unchanged |
-| `DefaultHTTPClient` variable, with a 1 second timeout | `gocent.DefaultHTTPClient()`, returning a new client with no timeout of its own; `Config.RequestTimeout` (10 seconds by default) bounds each call whose context has no deadline |
+| `DefaultHTTPClient` variable, with a 1 second timeout | `gocent.DefaultHTTPClient()`, returning a new client with no timeout of its own; `Config.RequestTimeout` (10 seconds by default) bounds every call, and a context deadline only shortens it |
 | `c.Publish(ctx, ch, data, gocent.WithSkipHistory(true))` | `c.Publish(ctx, gocent.PublishRequest{Channel: ch, Data: data, SkipHistory: true})` |
 | `WithTags`, `WithIdempotencyKey`, `WithDelta`, `WithVersion`, `WithVersionEpoch`, `WithB64data` | `Tags`, `IdempotencyKey`, `Delta`, `Version`, `VersionEpoch`, `B64Data` fields |
 | `c.Broadcast(ctx, channels, data)`; `res.Responses[i].Error`, `res.Responses[i].Result` | `c.Broadcast(ctx, gocent.BroadcastRequest{Channels: channels, Data: data})`; `res.Channels[i].Err`, `res.Channels[i].Result`, and `res.Channels[i].Channel` |
@@ -175,7 +181,7 @@ Behaviour to check when migrating:
   some parts failed. Code which checked each reply keeps working: `res.Channels`
   still holds every channel's outcome and every `Pending` its command's. Code
   which only checked `err` now sees failures it used to miss. See the examples
-  below, and [MIGRATING.md](MIGRATING.md#failed-channels-are-errors-now) for
+  below, and [MIGRATING.md](https://github.com/centrifugal/gocent/blob/master/MIGRATING.md#failed-channels-are-errors-now) for
   why, and for keeping v3's behaviour where failed channels are expected.
 * **Batches are ordered unless asked otherwise.** `BatchOptions{}` runs the
   commands one by one, in the order they were added; `Parallel: true` runs
@@ -193,7 +199,7 @@ Behaviour to check when migrating:
 * **A failed broadcast still has every channel.** v3 returned no responses
   when the request failed as a whole; v4 returns an entry per channel, each
   with that error. A channel's `Result` is a value, not a pointer: check
-  `Err`, not `Result != nil`. See [MIGRATING.md](MIGRATING.md#broadcast-checklist).
+  `Err`, not `Result != nil`. See [MIGRATING.md](https://github.com/centrifugal/gocent/blob/master/MIGRATING.md#broadcast-checklist).
 * **Timeouts.** v3's default HTTP client gave up after 1 second. v4 bounds
   every call by `Config.RequestTimeout`, 10 seconds by default; a context
   deadline shortens a call, never extends it, so a call made with a
