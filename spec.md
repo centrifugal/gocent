@@ -10,7 +10,8 @@ and gocent disagree, it is a bug in one of them, to be fixed in both.
 The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119. Each
 section states its rules with the reasons for them, so that a case the spec
 does not list can be decided the same way. Section 15.2 lists every rule to
-check an SDK against; section 17 lists gocent's values.
+check an SDK against; section 17 lists gocent's values; appendix A holds
+an implementation of JavaScript's `bigIntegers` option.
 
 The spec has a version of its own, which an SDK's README names ("implements
 spec 1.2"). From 1.0:
@@ -35,11 +36,11 @@ Conventions:
   an `AbortSignal` and a timeout option in JavaScript; in Python, which has no
   deadline object, a per-call timeout argument - in async code too, since it
   cannot read the deadline of an enclosing `asyncio.timeout`, which still ends
-  a call sooner, as cancelling its task does. An
-  "error" is an error value or an exception, whichever the language uses, and
-  "matches" is its way to test one (`errors.Is`, `isinstance`, `instanceof`).
-  `batch_context` and context values exist only where the language has
-  request-scoped context: Go's `context.Context`, Python's `contextvars`.
+  a call sooner, as cancelling its task does. An "error" is an error value or
+  an exception, whichever the language uses, and "matches" is its way to test
+  one (`errors.Is`, `isinstance`, `instanceof`). `batch_context` and context
+  values exist only where the language has request-scoped context: Go's
+  `context.Context`, Python's `contextvars`.
 - **Unified meaning, idiomatic spelling.** What a call means is the same in
   every SDK: the methods and the words of their fields, results, error kinds
   and codes, the behaviour this document sets, tokens, handlers and vectors.
@@ -116,28 +117,29 @@ its README.
   folding, and ignores a name it does not know: `Channel` works, but
   `idempotencyKey` is dropped without a word. The exact name is the one
   spelling every version accepts.
-- A field left at its zero value is not sent - a message field too, when
-  every field in it is zero, whether the language holds it as a value, an
-  `Option` or a nullable reference: an SDK MUST NOT send a set but empty
-  message which is not a presence wrapper. This is the rule for requests: a
-  proxy handler's answer is section 14's, where an empty `result` is sent,
-  `{"result":{}}`, since it accepts the request as sent. Centrifugo reads some messages by
-  whether they are there: `send_push_notification` with `"limit_strategy":
-  {}` is refused with code 107 for want of `expire_at`, while the same
-  request without it is sent. The
-  exception is a presence
-  wrapper: a message with one field, which Centrifugo reads by whether it is
-  there. A `BoolValue` is one - absent leaves the server's setting alone,
-  which `false` cannot say, and `Int32Value` alike. So are `device_update`'s `user_update`,
+- **Zero values are not sent.** A field left at its zero value is not
+  sent, and nor is a message field when every field in it is zero, whether
+  the language holds it as a value, an `Option` or a nullable reference: an
+  SDK MUST NOT send a set but empty message which is not a presence wrapper.
+  Centrifugo reads some messages by whether they are there:
+  `send_push_notification` with `"limit_strategy": {}` is refused with code
+  107 for want of `expire_at`, while the same request without it is sent.
+  This is the rule for requests; a proxy handler's answer follows section
+  14, where an empty `result` is sent, `{"result":{}}`, since Centrifugo
+  accepts it as sent.
+- **Presence wrappers are the exception**: a message with one field, which
+  Centrifugo reads by whether it is there. A `BoolValue` is one - absent
+  leaves the server's setting alone, which `false` cannot say - and so is
+  an `Int32Value`. So are `device_update`'s `user_update`,
   `timezone_update`, `locale_update` and `meta_update`: an empty `user`
   detaches the devices from their user, an empty timezone, locale or meta
   clears it, and an absent one changes nothing. A generator finds them in
   the proto: a message named `*Value` whose field is `value`, or one whose
   only field's comment gives its empty value a meaning after "Required."
-  (`"" clears it`, `An empty map clears it.`). An SDK MUST represent a
-  presence wrapper as optional - a pointer in Go, `None`, `undefined` - and
-  send it whenever it is set, even empty, with a helper for `BoolValue`
-  (gocent: `gocent.Bool(true)`).
+  (`"" clears it`, `An empty map clears it.`).
+- **An SDK MUST represent a presence wrapper as optional** - a pointer in
+  Go, `None`, `undefined` - and send it whenever it is set, even empty, with
+  a helper for `BoolValue` (gocent: `gocent.Bool(true)`).
 - Payload fields (`bytes` in the protos: data, info, meta) are JSON values in
   the API and the proxy: section 3.4 says how an SDK takes and returns them.
 - A method whose comment says "Centrifugo PRO only" MUST be marked so in the
@@ -291,14 +293,15 @@ The protos' "Required." marks give three tiers of fields. Only the exact
   ...". The field stays optional, and is not checked: the condition is
   Centrifugo's to judge.
 - **Required but unchecked**: a required field whose comment gives its empty
-  value a meaning - after "Required.", it mentions `""` or the word
-  "empty". It is required in the signature but not checked, since a check
-  could not tell empty from missing, and it is written out empty,
+  value a meaning - after "Required.", it mentions `""` or the word "empty". It
+  is required in the signature where there is one, and not checked - so in Go,
+  whose structs have no signature, nothing is done for it - since a check could
+  not tell empty from missing, and it is written out empty,
   `DeviceUserUpdate(user="")`, rather than as an empty message. Today:
   `invalidate_user_tokens`'s `user`, where empty means anonymous users;
-  `user_topic_update`'s `user`, where empty is the global binding; the
-  `user`, `timezone`, `locale` and `meta` of `device_update`'s updates,
-  where empty clears.
+  `user_topic_update`'s `user`, where empty is the global binding; the `user`,
+  `timezone`, `locale` and `meta` of `device_update`'s updates, where empty
+  clears.
 
 Either way a call missing a required field fails before anything is sent,
 in every language, and in the signature where there is one.
@@ -422,7 +425,7 @@ not list is decided the same way:
 |---|---|---|---|---|---|---|
 | Go | `encoding/json/v2` | raw JSON only (rule 7): `json.Marshal(v)` | `jsontext.Value` | `jsontext.Value` | `json.Unmarshal(v, &x)` | |
 | Python | `json` | `dict`, `list`, `str`, `int`, `float`, `bool`, `None`, or raw JSON | `RawJSON` of the SDK, holding `bytes` or `str` | decoded values | `Model.model_validate(data)` (pydantic) | encode with `allow_nan=False`: by default `json.dumps` writes `NaN`, and an HTTP library's own encoder may too (aiohttp's does). Request and result types are generated dataclasses: never pydantic models in the API, which would tie applications to one major version of it |
-| JavaScript, TypeScript | `JSON` | objects, arrays, `string`, `number`, `bigint`, `boolean`, `null`, or raw JSON | `rawJSON(text)` of the SDK - `JSON.rawJSON` takes primitives only | decoded values; integers past 2^53 as `bigint` with the `bigIntegers` option | a cast, or a schema library | `JSON.stringify` writes NaN and infinities as `null` and drops `undefined`: refuse non-finite numbers. Integers past 2^53: the note below the table |
+| JavaScript, TypeScript | `JSON` | objects, arrays, `string`, `number`, `bigint`, `boolean`, `null`, or raw JSON | `rawJSON(text)` of the SDK - `JSON.rawJSON` takes primitives only | decoded values; integers past 2^53 as `bigint` with the `bigIntegers` option | a cast, or a schema library | `JSON.stringify` writes NaN and infinities as `null` and drops `undefined`: refuse non-finite numbers. Integers past 2^53: the note below the table, and appendix A |
 | PHP | `ext-json` | arrays, `stdClass`, scalars, `null`, `JsonSerializable`, or raw JSON | `RawJson` of the SDK, holding a `string` | objects: `json_decode($json, false)` | a DTO's constructor | `JSON_THROW_ON_ERROR`, `JSON_PRESERVE_ZERO_FRACTION`. Objects, not associative arrays: arrays turn `{}` and `{"0":"a"}` into JSON arrays when sent on. An empty object in a request is `new \stdClass()` - `[]` is an array |
 | Ruby | `json` 2.10+ (bundled from Ruby 4.0; a gem dependency before) | `Hash`, `Array`, `String`, `Integer`, `Float`, `true`, `false`, `nil`, or raw JSON | `JSON::Fragment` | `JSON.parse`: `Hash` with `String` keys | `Model.new(**h.transform_keys(&:to_sym))` | |
 | Java | Jackson, internal to the SDK | POJOs, `Map`, `List`, scalars, or raw JSON | `RawJson` of the SDK, holding the text | `RawJson`: `toString()` is the JSON | `raw.decode(Foo.class)` | Never Jackson types in the API: Jackson 3 moved them from `com.fasterxml.jackson` to `tools.jackson`, and an application uses one or the other. Disable `WRITE_NAN_AS_STRINGS`, which writes NaN as `"NaN"` by default |
@@ -452,39 +455,21 @@ SDK, for applications which cannot change how their payloads are written.
 Off by default: payloads decode with plain `JSON.parse`, integers past 2^53
 rounded. With `bigIntegers: true`, integers a `number` cannot hold exactly
 decode as `bigint`, and every other number stays a `number`. A `bigint` in a
-request is always encoded as a JSON number, exactly:
+request is always encoded as a JSON number, exactly. Appendix A shows an
+implementation.
 
-```js
-const integerLiteral = /^-?\d+$/;
-function decode(text, bigIntegers) {
-  // An integer past 2^53 has 16 digits or more: most replies skip the reviver.
-  if (!bigIntegers || !hasSourceText || !/\d{16}/.test(text)) return JSON.parse(text);
-  return JSON.parse(text, (key, value, ctx) =>
-    typeof value === "number" && !Number.isSafeInteger(value) && integerLiteral.test(ctx.source)
-      ? BigInt(ctx.source) // the original digits, not the rounded number
-      : value);
-}
-
-function encode(value) {
-  return JSON.stringify(value, (key, v) => {
-    if (typeof v === "bigint") return JSON.rawJSON(v.toString());
-    if (typeof v === "number" && !Number.isFinite(v)) throw new TypeError(`${key}: ${v} is not a JSON number`);
-    return v;
-  });
-}
-```
-
-- The reviver's third argument holds each primitive's source text, and
+- The implementation rests on two additions to `JSON`: the reviver's third
+  argument holds each primitive's source text, and
   `JSON.rawJSON` writes a primitive's text verbatim: Chrome and Edge 114+,
   Firefox 135+, Safari 18.4+, Node.js 21+, Deno 1.33+, Bun 1.1.43+, and
   edge runtimes on V8.
 - `hasSourceText` is found once, at startup:
   `JSON.parse("1", (k, v, ctx) => ...)` sees whether `ctx.source` is `"1"`.
   Without it, `bigIntegers: true` fails creating the client with
-  `InvalidConfig`, naming the runtimes which have it: a server's runtime is
-  its owner's choice, and one asking for exact integers must not get rounded
-  ones. (centrifuge-js ignores the option there instead: a browser is the
-  visitor's choice, and refusing would break the page.)
+  `InvalidConfig`, naming the runtimes which have it: a server's runtime is its
+  owner's choice, and one asking for exact integers must not get rounded ones.
+  (centrifuge-js ignores the option there instead: a browser is the visitor's
+  choice, and refusing would break the page.)
 - Only integer literals outside the safe range become `bigint`: `1e300` and
   `1.5` stay numbers, and so does every integer a `number` holds exactly.
 - Without `JSON.rawJSON`, a `bigint` in a request fails with
@@ -527,11 +512,12 @@ and because the signature already says them where it can.
 ### 3.6 Shutdown
 
 `close(deadline)` MUST refuse new calls with a `Closed` error and wait for the
-calls in progress - requests on their way, calls queued for an automatic
-batch, batches whose callers left, and a broadcast retry's attempt in flight:
-the retry stops at its next attempt, which fails with `Closed`. It returns
-the deadline's error if that ends first, leaving the rest to go on, and MAY be
-called again. With its default HTTP client the SDK then closes idle connections.
+calls in progress - requests on their way, calls queued for an automatic batch,
+batches whose callers left, and a broadcast retry's attempt in flight: the
+retry stops at its next attempt, which fails with `Closed`. It returns the
+deadline's error if that ends first, leaving the rest to go on, and MAY be
+called again. With its default HTTP client the SDK then closes idle
+connections.
 
 ### 3.7 Results as JSON
 
@@ -576,14 +562,11 @@ written once, in the SDK:
   with `map_read_stream`, without copying fields by hand. The item is a
   small type of the SDK's holding the two (gocent: `HistoryItem`,
   `MapStateItem`). The other iterators yield the items as they are.
-- **Timeouts**: each page is bounded by `page_timeout` where the SDK takes
-  per-call timeouts, replacing `request_timeout` for it, as `attempt_timeout`
-  does for a retry's attempt; by `request_timeout` without one, and in Go,
-  which takes none. The iterator takes no per-call timeout: the iteration
-  lasts as long as its caller's loop, which no timeout of the SDK's should
-  bound. A deadline or cancellation the caller holds across the loop - a Go
-  context, an `AbortSignal` - ends the iteration when it ends. A
-  `page_timeout` of zero is refused, as a per-call timeout's is.
+- **Timeouts** follow section 3.2: each page is a request bounded by
+  `page_timeout` where the SDK takes per-call timeouts, by `request_timeout`
+  otherwise, and the iteration itself by nothing but the caller's deadline or
+  cancellation held across the loop. A `page_timeout` of zero is refused, as
+  a per-call timeout's is.
 - **`history_all`** refuses with `InvalidRequest`, before sending anything,
   a `limit` below 1 - 0 asks for the position alone, -1 for everything in
   one call - and `reverse`, since `since` has no counterpart running back.
@@ -735,15 +718,14 @@ The SDK's docs MUST explain, wherever retries are:
   the first failure, doubling, capped at `limit`, each delay a uniformly
   random time in `[d/2, d]`. A negative base counts as 0, a limit below base
   as base, an attempt below 1 as 1; doubling MUST NOT overflow.
-- Retrying a single call, such as `publish`, belongs to the application: a
-  loop of the call, `retryable(err)` and `wait(deadline, delay(attempt))`,
-  with the same `idempotency_key` on every attempt. Docs SHOULD show it
-  (gocent: `ExampleRetryable`).
-  A broadcast is not retried this way: `retryable(err)` is true when any
-  channel may still succeed, and repeating the call resends to the channels
-  which got it - twice on the NATS broker, which ignores keys. Retry only
-  `retryable_channels()`, or use `broadcast_with_retry` (section 7.3), which
-  does that.
+- Retrying a single call, such as `publish`, belongs to the application: a loop
+  of the call, `retryable(err)` and `wait(deadline, delay(attempt))`, with the
+  same `idempotency_key` on every attempt. Docs SHOULD show it (gocent:
+  `ExampleRetryable`). A broadcast is not retried this way: `retryable(err)` is
+  true when any channel may still succeed, and repeating the call resends to
+  the channels which got it - twice on the NATS broker, which ignores keys.
+  Retry only `retryable_channels()`, or use `broadcast_with_retry` (section
+  7.3), which does that.
 - `wait(deadline, d)` waits for `d` or until the call's deadline or
   cancellation, and returns that error - never a sleep the deadline cannot
   end. A language without a deadline object - Python - has no such helper: its
@@ -854,17 +836,12 @@ except BroadcastFailedChannelsError as e:
 - **The result** holds every channel's last outcome and how many attempts
   each took.
 - **`max_attempts`**: a default (section 17).
-- **Timeouts**:
-  - `attempt_timeout` is each attempt's own timeout, replacing
-    `request_timeout` for it as a per-call timeout does (section 3.2).
-    Without it, each attempt gets `request_timeout`.
-  - The call as a whole is bounded by its deadline, waits included: the
-    context or token it runs under, and its per-call timeout where the
-    language takes one (C#'s `WithTimeout`, Python's `timeout`). It is
-    never bounded by `request_timeout`, so for this call a per-call timeout
-    bounds the whole retry, not each attempt.
-  - An attempt ends at the earlier of its own timeout and the call's
-    deadline, and no attempt starts once the call's deadline has ended.
+- **Timeouts** follow section 3.2: each attempt is a request bounded by
+  `attempt_timeout`, or `request_timeout` without it, and the call as a
+  whole, waits included, by its deadline and per-call timeout, never by
+  `request_timeout`. An attempt ends at the earlier of its own timeout and
+  the call's deadline, and no attempt starts once the call's deadline has
+  ended.
 - **`on_attempt_err(attempt)`** is called after each failed attempt a retry
   may fix, except the last. It gets the attempt number, its error, the
   channels to retry, the result so far and the key.
@@ -939,24 +916,23 @@ out.
 A command per API method (gocent: `NewCommand(req)`; Python:
 `command.publish(channel=..., data=...)`; JavaScript:
 `command.publish({ channel, data })`) returns `{method, payload}`: the API
-method and the request as JSON. It MUST validate the request as a call would (section 3.5), so that a
-command Centrifugo could not run fails when written rather than in a consumer
-which drops it. Encoded as JSON it is the `{"method": ..., "payload": ...}`
-message consumers take whole (Kafka, NATS JetStream). Encoded through the
-language's own JSON mechanism - `json.Marshal`, `JSON.stringify` of a value
-holding it, `json_encode`, `as_json` - a command MUST give `payload` as the
-JSON object, never as a string of it. Where the method comes apart from the
-payload - the outbox table's `method` column, a message header or
-attribute - Centrifugo reads the payload as the request itself, so a string
-is a bad request, dropped with only Centrifugo's log saying so. Only a
-message which is a whole command, `{"method": ..., "payload": ...}`, may
-hold its payload as a string of JSON, for CDC pipelines (Debezium writes a
+method and the request as JSON. It MUST validate the request as a call would
+(section 3.5), so that a command Centrifugo could not run fails when written
+rather than in a consumer which drops it. Encoded as JSON it is the
+`{"method": ..., "payload": ...}` message consumers take whole (Kafka, NATS
+JetStream). Encoded through the language's own JSON mechanism - `json.Marshal`,
+`JSON.stringify` of a value holding it, `json_encode`, `as_json` - a command
+MUST give `payload` as the JSON object, never as a string of it. Where the
+method comes apart from the payload - the outbox table's `method` column, a
+message header or attribute - Centrifugo reads the payload as the request
+itself, so a string is a bad request, dropped with only Centrifugo's log saying
+so. Only a message which is a whole command, `{"method": ..., "payload": ...}`,
+may hold its payload as a string of JSON, for CDC pipelines (Debezium writes a
 `jsonb` column as a string): a courtesy to them, not a format for an SDK to
-rely on. Docs SHOULD show
-writing `payload` to a `jsonb` column, as the PostgreSQL outbox has it. Docs MUST say that a
-consumer keeps commands in order only within a partition: a channel's
-commands keep their order only when every writer derives their partition from
-the channel the same way.
+rely on. Docs SHOULD show writing `payload` to a `jsonb` column, as the
+PostgreSQL outbox has it. Docs MUST say that a consumer keeps commands in order
+only within a partition: a channel's commands keep their order only when every
+writer derives their partition from the channel the same way.
 
 ## 10. Observability
 
@@ -1057,10 +1033,10 @@ keys by ID. An example SHOULD show rotation by activation time (gocent:
 one without an ID (PRO verifies through JWKS by `kid`), claims with neither
 audience nor scope, a missing expiry.
 
-`api_token_source` is a token source for `bearer_token_func`: it signs with a key
-(or the key a function returns, for rotation), reuses each token for half its
-TTL (its default: section 17), and is safe for concurrent use. It
-refuses an expiry or issue time set in its claims, and a negative TTL.
+`api_token_source` is a token source for `bearer_token_func`: it signs with a
+key (or the key a function returns, for rotation), reuses each token for half
+its TTL (its default: section 17), and is safe for concurrent use. It refuses
+an expiry or issue time set in its claims, and a negative TTL.
 
 Docs MUST say: PRO accepts a token signed with any key of its JWKS endpoint,
 and checks audience, issuer and scope only when configured to - so API tokens
@@ -1170,17 +1146,18 @@ An SDK MUST have:
   not in Dart on the web) and a float with a zero fraction included.
 - Requests (sections 2, 3.3, 3.5): an unconditional "Required." field left
   unset fails with `InvalidRequest` naming its path - nested ones included,
-  `LimitStrategy.RateLimit.Policies[0].Rate` - and nothing is sent; an
-  optional nested message left unset is not checked; a field whose empty
-  value has a meaning is sent empty; a presence wrapper set empty is sent
-  as `{}`, and one left unset is not sent; any other message set but empty
-  is not sent; a required field given empty fails like a missing one. A test pins the presence wrappers
-  and the required fields whose empty value has a meaning, as the generator
-  finds them in the proto, so that a changed comment fails it. Each constant generated from a "One of:"
-  sentence equals its value, and a value without a constant is still sent;
-  the generator fails on a "One of:" field the pinned names of 3.3 lack.
-  The test that every API method reaches its endpoint fills every field of
-  its requests, so that the required-field checks let them through.
+  `LimitStrategy.RateLimit.Policies[0].Rate` - and nothing is sent; an optional
+  nested message left unset is not checked; a field whose empty value has a
+  meaning is sent empty; a presence wrapper set empty is sent as `{}`, and one
+  left unset is not sent; any other message set but empty is not sent; a
+  required field given empty fails like a missing one. A test pins the presence
+  wrappers and the required fields whose empty value has a meaning, as the
+  generator finds them in the proto, so that a changed comment fails it. Each
+  constant generated from a "One of:" sentence equals its value, and a value
+  without a constant is still sent; the generator fails on a "One of:" field
+  the pinned names of 3.3 lack. The test that every API method reaches its
+  endpoint fills every field of its requests, so that the required-field checks
+  let them through.
 - Pages (section 3.8): each `<method>_all` against a fake, over no items,
   one, exactly a page and several pages: every item once and in order; each
   request after the first carries the cursor, or `since`, of the reply
@@ -1212,8 +1189,6 @@ An SDK MUST have:
   a `<method>_all` reads every device page by page.
 - The vectors below.
 
-Section 15.2 lists what the tests check.
-
 ### 15.1 Vectors
 
 The vectors fix `iat`: to check them, an SDK needs a way to sign at a given
@@ -1240,8 +1215,10 @@ matches byte for byte when its JSON is written compactly, the header as
 Byte equality is a convenience for tests, not a requirement: Centrifugo reads
 claims in any order.
 
-- connection: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsImV4cCI6MTcwMDAwMzYwMCwiaWF0IjoxNzAwMDAwMDAwfQ.HKZwmcYmHVbRESuYd4swVgAH7gg41giR57F_K5FEmEY`
-- subscription to `news`: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsImV4cCI6MTcwMDAwMzYwMCwiaWF0IjoxNzAwMDAwMDAwLCJjaGFubmVsIjoibmV3cyJ9.v_Quw-azNV1qFjm9ZQnkp6QBtK6LmtFxY74YcUHlJcA`
+- connection:
+  `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsImV4cCI6MTcwMDAwMzYwMCwiaWF0IjoxNzAwMDAwMDAwfQ.HKZwmcYmHVbRESuYd4swVgAH7gg41giR57F_K5FEmEY`
+- subscription to `news`:
+  `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsImV4cCI6MTcwMDAwMzYwMCwiaWF0IjoxNzAwMDAwMDAwLCJjaGFubmVsIjoibmV3cyJ9.v_Quw-azNV1qFjm9ZQnkp6QBtK6LmtFxY74YcUHlJcA`
 
 ### 15.2 Checklist
 
@@ -1269,7 +1246,9 @@ Generation and the client:
   sending; both with `InvalidConfig`, and the functions' own errors with
   `FunctionError` (3.1, 4.1).
 - [ ] `header` refuses credentials, `Content-Type` and invalid names and
-  values (3.1).
+  values; its `User-Agent` replaces the SDK's own, and its `Host` sets the
+  request's host (3.1).
+- [ ] No credentials at all is a valid configuration (3.1).
 - [ ] `POST {api_endpoint}/{method}`, never the legacy `/api` (3.2).
 - [ ] Redirects not followed (3.2).
 - [ ] The default HTTP client keeps connections alive in a pool sized for
@@ -1368,9 +1347,8 @@ Broadcast, batch, automatic batching, commands, observability:
 - [ ] A call whose deadline ends while queued leaves without its command
   being sent (8).
 - [ ] A batch never runs on a caller's context: until the latest deadline of
-  its calls, each as 3.2 gives it, and at least `request_timeout` from when
-  it is sent; a reply
-  arriving as a deadline ends is returned, not a timeout (8).
+  its calls, each as 3.2 gives it, and at least `request_timeout` from when it
+  is sent; a reply arriving as a deadline ends is returned, not a timeout (8).
 - [ ] Callers' context values reach a batch only through `batch_context`
   (8).
 - [ ] Commands validate as a call does; encoded as JSON the language's way,
@@ -1391,9 +1369,9 @@ Tokens, endpoints, shared poll, proxy:
 - [ ] `api_token` refuses HMAC keys, keys without an ID, neither audience
   nor scope, no expiry, an empty scope or one with a space; docs: keys and
   an endpoint of their own (11.4).
-- [ ] `api_token_source` reuses a token for half its TTL, is safe for concurrent
-  use, and refuses an expiry or issue time in its claims and a negative TTL
-  (11.4).
+- [ ] `api_token_source` reuses a token for half its TTL, is safe for
+  concurrent use, and refuses an expiry or issue time in its claims and a
+  negative TTL (11.4).
 - [ ] HTTP handlers require no particular framework (conventions).
 - [ ] Endpoints for client SDKs: statuses, headers and limits of 12; their
   error is `Forbidden`, named apart from the API client's `Unauthorized`,
@@ -1421,8 +1399,9 @@ transport or server answering `publish`, `broadcast` and a batch, partial
 failures included, with Centrifugo's reply shapes -
 
 - a method: `{"result": {...}}`, or `{"error": {"code": ..., "message": ...}}`;
-- a broadcast: `{"result": {"responses": [{"result": {...}} | {"error": {...}}, ...]}}`,
-  one per channel, in order;
+- a broadcast:
+  `{"result": {"responses": [{"result": {...}} | {"error": {...}}, ...]}}`, one
+  per channel, in order;
 - a batch: `{"replies": [{"<method>": {...}} | {"error": {...}}, ...]}`, one
   per command, in order.
 
@@ -1512,6 +1491,8 @@ Rules added:
   field clashing with a pinned constant name gets a qualified name (3.3);
   `on_attempt_err` named as the known exception to unified meaning
   (conventions); why adding to a sent batch fails loudly (7.2).
+- The `bigIntegers` implementation moved to appendix A; its rules stay in
+  3.4.
 
 Corrections, where 0.2 said what Centrifugo does not do:
 
@@ -1560,19 +1541,19 @@ it done. gocent made each in its own commit, on its `v4_dev` branch.
    Tests: the wrappers pinned; an empty one sent as `{}`; any other message
    set but empty not sent; against PRO, an empty timezone update clears it.
 4. **Required fields checked before sending** (3.3, 3.5), in every SDK: a
-   signature which requires a field still lets it be passed empty, and an
-   empty one goes out as a missing one. Generated from the "Required." marks, skipping "Required unless
-   ...", "Required when ..." and the fields whose empty value has a meaning. A nested message is
-   checked when set, a required one must be set, and a list's elements are
-   checked each: the error names the path, `TopicsUpdate.Op is required`.
-   The hand-written checks of `publish`'s `channel` and `broadcast`'s
-   `channels` give way to the generated ones, with the same messages; the
-   `data` rules stay. Users see a call which Centrifugo refused with code 107
-   fail before sending, with `InvalidRequest`: a change their changelog
-   says. Every check gocent generates was compared with Centrifugo PRO's own
-   validation; none refuses what Centrifugo accepts. Tests: the endpoint
-   test fills every field; a missing field fails with its path and nothing
-   is sent.
+   signature which requires a field still lets it be passed empty, and an empty
+   one goes out as a missing one. Generated from the "Required." marks,
+   skipping "Required unless ...", "Required when ..." and the fields whose
+   empty value has a meaning. A nested message is checked when set, a required
+   one must be set, and a list's elements are checked each: the error names the
+   path, `TopicsUpdate.Op is required`. The hand-written checks of `publish`'s
+   `channel` and `broadcast`'s `channels` give way to the generated ones, with
+   the same messages; the `data` rules stay. Users see a call which Centrifugo
+   refused with code 107 fail before sending, with `InvalidRequest`: a change
+   their changelog says. Every check gocent generates was compared with
+   Centrifugo PRO's own validation; none refuses what Centrifugo accepts.
+   Tests: the endpoint test fills every field; a missing field fails with its
+   path and nothing is sent.
 5. **Constants** (3.3). The generator reads the sentence `One of: a, b, c.`
    - after "One of:", up to the period, values separated by commas,
    lowercase letters, digits and underscores - and fails on a malformed one.
@@ -1665,3 +1646,29 @@ The first version. Rules settled while it was reviewed:
   a caller's HTTP client is never changed (3.1); one deadline also over
   per-operation timeouts (3.2); no pydantic types in a Python SDK's API
   (3.4).
+
+## Appendix A. JavaScript's `bigIntegers`
+
+An implementation of section 3.4's `bigIntegers` option. `hasSourceText` is
+found once, at startup, as section 3.4 says; the SDK's own `rawJSON` for an
+object or array is spliced in separately.
+
+```js
+const integerLiteral = /^-?\d+$/;
+function decode(text, bigIntegers) {
+  // An integer past 2^53 has 16 digits or more: most replies skip the reviver.
+  if (!bigIntegers || !hasSourceText || !/\d{16}/.test(text)) return JSON.parse(text);
+  return JSON.parse(text, (key, value, ctx) =>
+    typeof value === "number" && !Number.isSafeInteger(value) && integerLiteral.test(ctx.source)
+      ? BigInt(ctx.source) // the original digits, not the rounded number
+      : value);
+}
+
+function encode(value) {
+  return JSON.stringify(value, (key, v) => {
+    if (typeof v === "bigint") return JSON.rawJSON(v.toString());
+    if (typeof v === "number" && !Number.isFinite(v)) throw new TypeError(`${key}: ${v} is not a JSON number`);
+    return v;
+  });
+}
+```
