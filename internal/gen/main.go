@@ -1,0 +1,841 @@
+// Command gen writes api_gen.go from api.proto: the request and result types of
+// every Centrifugo server API method, and the Client and Batch methods sending
+// them. With -mode proxy it writes the proxy package's types from proxy.proto
+// instead: the requests, results and responses of Centrifugo's proxy protocol.
+//
+// It runs through go generate in each package directory:
+//
+//	go generate ./...
+//
+// The output is committed. `make generate-check` fails when it is stale.
+package main
+
+import (
+	"bytes"
+	_ "embed"
+	"flag"
+	"fmt"
+	"go/format"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+)
+
+func main() {
+	in := flag.String("in", "api.proto", "proto file to read")
+	out := flag.String("out", "api_gen.go", "Go file to write")
+	mode := flag.String("mode", "api", `"api" for the server API, "proxy" for the proxy protocol`)
+	flag.Parse()
+	if err := run(*in, *out, *mode); err != nil {
+		fmt.Fprintln(os.Stderr, "gen:", err)
+		os.Exit(1)
+	}
+}
+
+func run(in, out, mode string) error {
+	gen := generate
+	switch mode {
+	case "api":
+	case "proxy":
+		gen = generateProxy
+	default:
+		return fmt.Errorf("unknown mode %q", mode)
+	}
+	f, err := os.Open(in) // #nosec G304 -- path given by go generate
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	s, err := parse(f, filepath.Base(in))
+	if err != nil {
+		return err
+	}
+	src, err := gen(s)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(out, src, 0o600)
+}
+
+var scalarTypes = map[string]string{
+	"string": "string",
+	"bool":   "bool",
+	"int32":  "int32",
+	"int64":  "int64",
+	"uint32": "uint32",
+	"uint64": "uint64",
+	"double": "float64",
+	"float":  "float32",
+	// Payloads in the API are JSON. jsontext.Value keeps them raw and is
+	// checked for validity when a request is encoded, so invalid JSON fails in
+	// the client instead of reaching Centrifugo.
+	"bytes": "jsontext.Value",
+}
+
+// omittedCommands are API commands the SDK does not offer. rpc calls
+// server API extensions, which Centrifugo does not provide.
+var omittedCommands = map[string]bool{"rpc": true}
+
+// Messages the generator does not turn into exported types. Each is either
+// written by hand (Error, BroadcastResult) or only used on the wire, where the
+// package has its own unexported form of it (the batch envelope, and the
+// error-or-result envelope every method replies with).
+func skipType(s *schema, name string) bool {
+	switch name {
+	case "Error", "BroadcastResult", "Command", "Reply", "BatchRequest", "BatchResponse":
+		return true
+	}
+	// The request and result of a command the SDK leaves out.
+	if cmd, reply := s.byName["Command"], s.byName["Reply"]; cmd != nil && reply != nil {
+		for _, set := range [][]*field{cmd.fields, reply.fields} {
+			for _, f := range set {
+				if omittedCommands[f.name] && f.typ == name {
+					return true
+				}
+			}
+		}
+	}
+	return isEnvelope(s, name)
+}
+
+// isEnvelope reports a method's response message: an error and a result.
+func isEnvelope(s *schema, name string) bool {
+	for _, rpc := range s.methods {
+		if rpc.response == name {
+			return true
+		}
+	}
+	return false
+}
+
+// isWrapper reports a message holding a single "value" field, like BoolValue.
+// Such a field is optional in a way its scalar is not: absent means "leave the
+// server's setting alone", which a false or a zero cannot express. In Go it is
+// a pointer.
+func isWrapper(m *message) bool {
+	if m == nil || len(m.fields) != 1 {
+		return false
+	}
+	if strings.HasSuffix(m.name, "Value") && m.fields[0].name == "value" {
+		return true
+	}
+	return emptyHasMeaning(m.fields[0])
+}
+
+// required reports a field the proto marks "Required." without a condition:
+// "Required unless ..." is conditional, and so is not.
+func required(f *field) bool {
+	return strings.Contains(strings.Join(f.doc, " "), "Required.")
+}
+
+// emptyHasMeaning reports a required field whose comment gives its empty
+// value a meaning - `"" detaches the devices`, `An empty map clears it.` - in
+// what follows "Required.". Such a field is not checked before sending, since
+// empty is a value of it. A message holding only such a field is a presence
+// wrapper, as the update messages of device_update are: Centrifugo reads
+// whether it is there, so an empty one says something an absent one does not,
+// and in Go it is a pointer, as BoolValue is.
+func emptyHasMeaning(f *field) bool {
+	_, after, ok := strings.Cut(strings.Join(f.doc, " "), "Required.")
+	return ok && (strings.Contains(after, `""`) || strings.Contains(strings.ToLower(after), "empty"))
+}
+
+// Handwritten forms of messages which appear inside generated types.
+var handwritten = map[string]string{
+	"Error":           "*Error",
+	"BroadcastResult": "broadcastWire",
+}
+
+func goBaseType(s *schema, typ string) string {
+	if t, ok := scalarTypes[typ]; ok {
+		return t
+	}
+	if t, ok := handwritten[typ]; ok {
+		return t
+	}
+	if isWrapper(s.byName[typ]) {
+		return "*" + typ
+	}
+	return typ
+}
+
+func goFieldType(s *schema, f *field) string {
+	base := goBaseType(s, f.typ)
+	switch {
+	case f.mapKey != "":
+		return "map[string]" + base
+	case f.repeated:
+		return "[]" + base
+	}
+	return base
+}
+
+// Words written in Go with a fixed capitalization.
+var initialisms = map[string]string{
+	"id": "ID", "ids": "IDs", "uid": "UID", "url": "URL", "urls": "URLs",
+	"ttl": "TTL", "api": "API", "json": "JSON", "http": "HTTP", "rpc": "RPC",
+	"apns": "APNS", "fcm": "FCM", "hms": "HMS", "ip": "IP", "ios": "IOS",
+}
+
+func goName(snake string) string {
+	var b strings.Builder
+	for part := range strings.SplitSeq(snake, "_") {
+		if w, ok := initialisms[part]; ok {
+			b.WriteString(w)
+			continue
+		}
+		// Base64 variants of fields - b64data, b64info, b64stream_data -
+		// keep the "B64" prefix whole: B64Info, not B64info.
+		if rest, ok := strings.CutPrefix(part, "b64"); ok && rest != "" {
+			b.WriteString("B64" + strings.ToUpper(rest[:1]) + rest[1:])
+			continue
+		}
+		if part != "" {
+			b.WriteString(strings.ToUpper(part[:1]) + part[1:])
+		}
+	}
+	return b.String()
+}
+
+// reValue matches a value listed by "One of:": a wire value, lowercase.
+var reValue = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
+// listedValues returns the values a field's comment lists in the sentence
+// "One of: add, remove, set.", or nil without one. The sentence is api.proto's
+// convention for a string field with a fixed set of values, which become
+// constants; one which is malformed fails the generation rather than being
+// skipped.
+func listedValues(doc []string) ([]string, error) {
+	_, after, ok := strings.Cut(strings.Join(doc, " "), "One of:")
+	if !ok {
+		return nil, nil
+	}
+	list, _, ok := strings.Cut(after, ".")
+	if !ok {
+		return nil, fmt.Errorf(`the values after "One of:" must end with a period`)
+	}
+	var values []string
+	for v := range strings.SplitSeq(list, ",") {
+		v = strings.TrimSpace(v)
+		if !reValue.MatchString(v) {
+			return nil, fmt.Errorf("%q is not a value: lowercase letters, digits and underscores", v)
+		}
+		if slices.Contains(values, v) {
+			return nil, fmt.Errorf("value %q listed twice", v)
+		}
+		values = append(values, v)
+	}
+	return values, nil
+}
+
+// constGroup is the constants of the fields one pinned name covers: the
+// values they list, and the messages holding them.
+type constGroup struct {
+	name     string // the pinned name, such as Op
+	field    string // a field's proto name, for the doc comment
+	values   []string
+	messages []string
+}
+
+// constName returns the constant for one of the group's values: OpAdd for
+// the op fields' "add".
+func (g *constGroup) constName(value string) string {
+	return g.name + goName(value)
+}
+
+//go:embed constants_api.txt
+var constantsAPI string
+
+//go:embed constants_proxy.txt
+var constantsProxy string
+
+// pins holds the constant names spec.md section 3.3 pins: by Message.field,
+// or by *.field for the field in every message which has it.
+type pins struct {
+	file  string
+	names map[string]string
+	used  map[string]bool
+	order []string
+}
+
+func parsePins(file, text string) (*pins, error) {
+	p := &pins{file: file, names: map[string]string{}, used: map[string]bool{}}
+	for line := range strings.SplitSeq(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			return nil, fmt.Errorf("%s: %q is not a selector and a name", file, line)
+		}
+		if _, dup := p.names[f[0]]; dup {
+			return nil, fmt.Errorf("%s: %s pinned twice", file, f[0])
+		}
+		p.names[f[0]] = f[1]
+		p.order = append(p.order, f[0])
+	}
+	return p, nil
+}
+
+// name returns the pinned name of message m's field f.
+func (p *pins) name(m, f string) (string, bool) {
+	for _, sel := range []string{m + "." + f, "*." + f} {
+		if n, ok := p.names[sel]; ok {
+			p.used[sel] = true
+			return n, true
+		}
+	}
+	return "", false
+}
+
+// constGroups collects the fields with listed values into groups by their
+// pinned names, in the order of the proto. A field without a pinned name, a
+// pin no field uses, and one name over different values all fail: a person
+// then names the field in spec.md's table and the list, for every SDK.
+// Only the messages include accepts count: those the generated package has
+// types for.
+func constGroups(s *schema, include func(name string) bool, p *pins) ([]*constGroup, error) {
+	byName := map[string]*constGroup{}
+	var out []*constGroup
+	for _, m := range s.messages {
+		if !include(m.name) {
+			continue
+		}
+		for _, f := range m.fields {
+			values, err := listedValues(f.doc)
+			if err != nil {
+				return nil, fmt.Errorf("%s.%s: %w", m.name, f.name, err)
+			}
+			if values == nil {
+				continue
+			}
+			name, ok := p.name(m.name, f.name)
+			if !ok {
+				return nil, fmt.Errorf("%s.%s lists its values but has no pinned name: name it in %s and in spec.md section 3.3's table", m.name, f.name, p.file)
+			}
+			g := byName[name]
+			if g == nil {
+				g = &constGroup{name: name, field: f.name, values: values}
+				byName[name] = g
+				out = append(out, g)
+			} else if !slices.Equal(g.values, values) {
+				return nil, fmt.Errorf("%s.%s lists %v, but %s names %v in %v", m.name, f.name, values, name, g.values, g.messages)
+			}
+			g.messages = append(g.messages, m.name)
+		}
+	}
+	for _, sel := range p.order {
+		if !p.used[sel] {
+			return nil, fmt.Errorf("%s: %s names no field with listed values: remove it, and from spec.md section 3.3's table", p.file, sel)
+		}
+	}
+	return out, nil
+}
+
+// checks finds the messages whose required fields the client checks: every
+// request, and each message a request holds - directly, in a list or in a
+// map - which has required fields of its own or holds such a message. zero
+// finds the messages whose emptiness a check must test: an optional nested
+// message is checked only when it is set, and a required one must be set.
+type checks struct {
+	s    *schema
+	need map[string]bool
+	zero map[string]bool
+}
+
+// needs reports whether a message has fields to check, itself or below.
+func (c *checks) needs(name string) bool {
+	if v, ok := c.need[name]; ok {
+		return v
+	}
+	c.need[name] = false // a message holding itself checks nothing more
+	m := c.s.byName[name]
+	v := false
+	for _, f := range m.fields {
+		if required(f) && !emptyHasMeaning(f) {
+			v = true
+		}
+		if c.s.byName[f.typ] != nil && !isWrapper(c.s.byName[f.typ]) && c.needs(f.typ) {
+			v = true
+		}
+	}
+	c.need[name] = v
+	return v
+}
+
+// markZero records that a message needs an isZero method, and so does each
+// message held by value in it.
+func (c *checks) markZero(name string) {
+	if c.zero[name] {
+		return
+	}
+	c.zero[name] = true
+	for _, f := range c.s.byName[name].fields {
+		if m := c.s.byName[f.typ]; m != nil && !isWrapper(m) && !f.repeated && f.mapKey == "" {
+			c.markZero(f.typ)
+		}
+	}
+}
+
+// emptyCheck returns the Go condition true when field f of r is unset.
+func emptyCheck(s *schema, f *field) (string, error) {
+	name := "r." + goName(f.name)
+	switch {
+	case f.repeated || f.mapKey != "":
+		return "len(" + name + ") == 0", nil
+	case isWrapper(s.byName[f.typ]):
+		return name + " == nil", nil
+	case s.byName[f.typ] != nil:
+		return name + ".isZero()", nil
+	}
+	switch scalarTypes[f.typ] {
+	case "string", "jsontext.Value":
+		if scalarTypes[f.typ] == "string" {
+			return name + ` == ""`, nil
+		}
+		return "len(" + name + ") == 0", nil
+	case "bool":
+		return "", fmt.Errorf("bool field %s cannot be required: false and unset are one value", f.name)
+	}
+	return name + " == 0", nil
+}
+
+func emitRequired(w *writer, s *schema, cmds []command) error {
+	c := &checks{s: s, need: map[string]bool{}, zero: map[string]bool{}}
+	isRequest := map[string]bool{}
+	for _, cmd := range cmds {
+		isRequest[cmd.request.name] = true
+	}
+	// The messages to write a required method for, in proto order.
+	var visit func(name string)
+	seen := map[string]bool{}
+	visit = func(name string) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
+		for _, f := range s.byName[name].fields {
+			if m := s.byName[f.typ]; m != nil && !isWrapper(m) && c.needs(f.typ) {
+				if f.mapKey != "" {
+					panic("unreachable") // refused below
+				}
+				visit(f.typ)
+				if !f.repeated {
+					c.markZero(f.typ)
+				}
+			}
+			if m := s.byName[f.typ]; m != nil && !isWrapper(m) && required(f) && !f.repeated && f.mapKey == "" {
+				c.markZero(f.typ)
+			}
+		}
+	}
+	for _, cmd := range cmds {
+		for _, f := range cmd.request.fields {
+			if f.mapKey != "" && s.byName[f.typ] != nil && c.needs(f.typ) {
+				return fmt.Errorf("api.proto: %s.%s: a map of messages with required fields is not supported", cmd.request.name, f.name)
+			}
+		}
+		visit(cmd.request.name)
+	}
+
+	for _, m := range s.messages {
+		if !seen[m.name] || (!isRequest[m.name] && !c.needs(m.name)) {
+			continue
+		}
+		w.p("")
+		w.p("// required returns the path of a field the proto marks required which r")
+		w.p("// leaves unset, or \"\" when there is none.")
+		w.p("func (r *%s) required() string {", m.name)
+		for _, f := range m.fields {
+			if required(f) && !emptyHasMeaning(f) {
+				cond, err := emptyCheck(s, f)
+				if err != nil {
+					return fmt.Errorf("api.proto: %s: %w", m.name, err)
+				}
+				w.p("\tif %s {", cond)
+				w.p("\t\treturn %q", goName(f.name))
+				w.p("\t}")
+			}
+			nested := s.byName[f.typ]
+			if nested == nil || isWrapper(nested) || !c.needs(f.typ) {
+				continue
+			}
+			g := goName(f.name)
+			if f.repeated {
+				w.p("\tfor i := range r.%s {", g)
+				w.p("\t\tif p := r.%s[i].required(); p != \"\" {", g)
+				w.p("\t\t\treturn indexPath(%q, i) + \".\" + p", g)
+				w.p("\t\t}")
+				w.p("\t}")
+				continue
+			}
+			w.p("\tif !r.%s.isZero() {", g)
+			w.p("\t\tif p := r.%s.required(); p != \"\" {", g)
+			w.p("\t\t\treturn %q + p", g+".")
+			w.p("\t\t}")
+			w.p("\t}")
+		}
+		w.p("\treturn \"\"")
+		w.p("}")
+	}
+
+	for _, m := range s.messages {
+		if !c.zero[m.name] {
+			continue
+		}
+		var conds []string
+		for _, f := range m.fields {
+			name := "r." + goName(f.name)
+			switch {
+			case f.repeated || f.mapKey != "" || scalarTypes[f.typ] == "jsontext.Value":
+				conds = append(conds, "len("+name+") == 0")
+			case isWrapper(s.byName[f.typ]):
+				conds = append(conds, name+" == nil")
+			case s.byName[f.typ] != nil:
+				conds = append(conds, name+".isZero()")
+			case scalarTypes[f.typ] == "string":
+				conds = append(conds, name+` == ""`)
+			case scalarTypes[f.typ] == "bool":
+				conds = append(conds, "!"+name)
+			default:
+				conds = append(conds, name+" == 0")
+			}
+		}
+		w.p("")
+		w.p("// isZero reports whether r is unset: every field at its zero value.")
+		w.p("func (r *%s) isZero() bool {", m.name)
+		if len(conds) == 0 {
+			w.p("\treturn true")
+		} else {
+			w.p("\treturn %s", strings.Join(conds, " &&\n\t\t"))
+		}
+		w.p("}")
+	}
+	return nil
+}
+
+// emitConsts writes a const block per group of fields listing their values.
+func emitConsts(w *writer, s *schema, include func(name string) bool, file, list string) error {
+	p, err := parsePins(file, list)
+	if err != nil {
+		return err
+	}
+	groups, err := constGroups(s, include, p)
+	if err != nil {
+		return err
+	}
+	for _, g := range groups {
+		names := make([]string, len(g.values))
+		for i, v := range g.values {
+			names[i] = g.constName(v)
+		}
+		w.p("")
+		w.doc("", wrap(fmt.Sprintf("%s are the values of the %s field of %s. The field is a string: a value Centrifugo sends or accepts which these do not name is still a valid one.", joinAnd(names), goName(g.field), joinAnd(g.messages)), 77), "", "")
+		w.p("const (")
+		for i, v := range g.values {
+			w.p("\t%s = %q", names[i], v)
+		}
+		w.p(")")
+	}
+	return nil
+}
+
+// joinAnd joins words as a sentence does: "a, b and c".
+func joinAnd(words []string) string {
+	if len(words) < 2 {
+		return strings.Join(words, "")
+	}
+	return strings.Join(words[:len(words)-1], ", ") + " and " + words[len(words)-1]
+}
+
+// wrap breaks text into lines of at most width characters, at spaces.
+func wrap(text string, width int) []string {
+	var lines []string
+	line := ""
+	for word := range strings.FieldsSeq(text) {
+		switch {
+		case line == "":
+			line = word
+		case len(line)+1+len(word) > width:
+			lines = append(lines, line)
+			line = word
+		default:
+			line += " " + word
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// command pairs an API method with its request and result, as the batch
+// Command and Reply messages declare them: the field name is the method.
+type command struct {
+	method  string // "presence_stats"
+	goName  string // "PresenceStats"
+	request *message
+	result  string // result message name
+	// proOnly is set for a command its comment in Command says only
+	// Centrifugo PRO has.
+	proOnly bool
+}
+
+func commands(s *schema) ([]command, error) {
+	cmd, reply := s.byName["Command"], s.byName["Reply"]
+	if cmd == nil || reply == nil {
+		return nil, fmt.Errorf("api.proto: Command and Reply messages are required")
+	}
+	results := map[string]string{}
+	for _, f := range reply.fields {
+		results[f.name] = f.typ
+	}
+	var out []command
+	for _, f := range cmd.fields {
+		if omittedCommands[f.name] {
+			continue
+		}
+		req := s.byName[f.typ]
+		res, ok := results[f.name]
+		if req == nil || !ok {
+			return nil, fmt.Errorf("api.proto: Command.%s has no request message or no Reply.%s", f.name, f.name)
+		}
+		if want := goName(f.name) + "Request"; !strings.EqualFold(f.typ, want) {
+			return nil, fmt.Errorf("api.proto: Command.%s is %s, expected %s", f.name, f.typ, want)
+		}
+		out = append(out, command{
+			method:  f.name,
+			goName:  strings.TrimSuffix(f.typ, "Request"),
+			request: req,
+			result:  res,
+			proOnly: strings.Contains(strings.Join(f.doc, " "), "Centrifugo PRO only"),
+		})
+	}
+	return out, nil
+}
+
+type writer struct {
+	bytes.Buffer
+	// goNames maps every proto field name in the schema to its Go name, for
+	// rewriting the names comments mention.
+	goNames map[string]string
+}
+
+var (
+	reBackticked = regexp.MustCompile("`([a-z0-9_]+)`")
+	reSnake      = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b|\bb64[a-z]+\b`)
+	// reOption matches what follows a configuration option's name, such as
+	// "join_leave channel option": that name is Centrifugo's, not a field's.
+	reOption = regexp.MustCompile(`^\s+(?:channel\s+)?option\b`)
+)
+
+// goDoc rewrites the proto names a comment mentions into Go ones, so that
+// the documentation of UserID talks about UserID, not user_id. A comment
+// opening with the documented field's own name has that name rewritten even
+// when it is a single word ("version, when set, ..."); elsewhere only names
+// which cannot be ordinary words are - backticked ones, and snake_case ones.
+// A name followed by "option" is a configuration option's, and is kept.
+// line may span several lines of a comment.
+func (w *writer) goDoc(line, protoName, goIdent string) string {
+	if protoName != "" && strings.HasPrefix(line, protoName) {
+		rest := line[len(protoName):]
+		if rest == "" || !isIdentByte(rest[0]) {
+			line = goIdent + rest
+		}
+	}
+	line = reBackticked.ReplaceAllStringFunc(line, func(m string) string {
+		if g, ok := w.goNames[m[1:len(m)-1]]; ok {
+			return g
+		}
+		return m
+	})
+	var b strings.Builder
+	last := 0
+	for _, loc := range reSnake.FindAllStringIndex(line, -1) {
+		name := line[loc[0]:loc[1]]
+		g, ok := w.goNames[name]
+		if !ok || reOption.MatchString(line[loc[1]:]) {
+			continue
+		}
+		b.WriteString(line[last:loc[0]])
+		b.WriteString(g)
+		last = loc[1]
+	}
+	b.WriteString(line[last:])
+	return b.String()
+}
+
+func isIdentByte(c byte) bool {
+	return c == '_' || '0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
+}
+
+// article returns "an" for a word starting with a vowel, "a" otherwise.
+func article(word string) string {
+	if word != "" && strings.ContainsRune("aeiou", rune(word[0])) {
+		return "an"
+	}
+	return "a"
+}
+
+func (w *writer) p(layout string, args ...any) { fmt.Fprintf(&w.Buffer, layout+"\n", args...) }
+
+// doc writes a comment block, renaming the proto identifier it opens with to
+// the Go one, so "user_id is ..." documents UserID as "UserID is ...".
+func (w *writer) doc(indent string, lines []string, protoName, goIdent string) {
+	// Rewritten as one text, so that a name is seen with what follows it on
+	// the next line.
+	joined := w.goDoc(strings.Join(lines, "\n"), protoName, goIdent)
+	for l := range strings.SplitSeq(joined, "\n") {
+		if l == "" {
+			w.p("%s//", indent)
+			continue
+		}
+		w.p("%s// %s", indent, l)
+	}
+}
+
+func generate(s *schema) ([]byte, error) {
+	cmds, err := commands(s)
+	if err != nil {
+		return nil, err
+	}
+	w := writer{goNames: map[string]string{}}
+	for _, m := range s.messages {
+		for _, f := range m.fields {
+			w.goNames[f.name] = goName(f.name)
+		}
+	}
+	w.p("// Code generated by internal/gen from api.proto. DO NOT EDIT.")
+	w.p("")
+	w.p("package gocent")
+	w.p("")
+	w.p("import (")
+	w.p("\t\"context\"")
+	w.p("\t\"encoding/json/jsontext\"")
+	w.p(")")
+
+	for _, m := range s.messages {
+		if skipType(s, m.name) {
+			continue
+		}
+		w.p("")
+		if len(m.doc) > 0 {
+			w.doc("", m.doc, m.name, m.name)
+		} else {
+			w.p("// %s is the %s message of the Centrifugo server API.", m.name, m.name)
+		}
+		w.p("type %s struct {", m.name)
+		for i, f := range m.fields {
+			if i > 0 && len(f.doc) > 0 {
+				w.p("")
+			}
+			w.doc("\t", f.doc, f.name, goName(f.name))
+			w.p("\t%s %s `json:\"%s,omitzero\"`", goName(f.name), goFieldType(s, f), f.name)
+		}
+		w.p("}")
+	}
+
+	// The values of the string fields with a fixed set, as constants.
+	err = emitConsts(&w, s, func(name string) bool { return !skipType(s, name) }, "constants_api.txt", constantsAPI)
+	if err != nil {
+		return nil, fmt.Errorf("api.proto: %w", err)
+	}
+
+	// What the client checks before sending: the fields the proto marks
+	// required.
+	err = emitRequired(&w, s, cmds)
+	if err != nil {
+		return nil, err
+	}
+
+	// Every request knows its method name, and how it sits in a batch.
+	for _, c := range cmds {
+		w.p("")
+		w.p("// APIMethod returns %q, the Centrifugo server API method a [%s] is sent to.", c.method, c.request.name)
+		w.p("// With the request encoded as JSON it makes the method and payload of an")
+		w.p("// event for Centrifugo's async consumers.")
+		w.p("func (%s) APIMethod() string { return %q }", c.request.name, c.method)
+		w.p("")
+		w.p("func (r *%s) addTo(c *command) { c.%s = r }", c.request.name, c.goName)
+		w.p("")
+		w.p("func (r %s) asRequest() request { return &r }", c.request.name)
+	}
+
+	w.p("")
+	w.p("// command is one entry of a batch: exactly one of its fields is set.")
+	w.p("type command struct {")
+	for _, c := range cmds {
+		w.p("\t%s *%s `json:\"%s,omitzero\"`", c.goName, c.request.name, c.method)
+	}
+	w.p("}")
+	w.p("")
+	w.p("// reply is one entry of a batch reply: an error, or the result of the")
+	w.p("// command at the same position.")
+	w.p("type reply struct {")
+	w.p("\tError *Error `json:\"error,omitzero\"`")
+	for _, c := range cmds {
+		w.p("\t%s *%s `json:\"%s,omitzero\"`", c.goName, strings.TrimPrefix(goBaseType(s, c.result), "*"), c.method)
+	}
+	w.p("}")
+
+	w.p("")
+	w.p("// methodNames holds every API method, batch included, so that New can")
+	w.p("// refuse an APIEndpoint which already ends with one. A method is true")
+	w.p("// when only Centrifugo PRO has it.")
+	w.p("var methodNames = map[string]bool{")
+	w.p("\t\"batch\": false,")
+	for _, c := range cmds {
+		w.p("\t%q: %t,", c.method, c.proOnly)
+	}
+	w.p("}")
+
+	for _, c := range cmds {
+		if c.method == "broadcast" {
+			continue // written by hand: its result is a result per channel
+		}
+		emitMethods(&w, s, c)
+	}
+
+	src, err := format.Source(w.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("formatting generated code: %w\n%s", err, w.Bytes())
+	}
+	return src, nil
+}
+
+func emitMethods(w *writer, s *schema, c command) {
+	result := goBaseType(s, c.result)
+	summary := methodSummary(c)
+
+	w.p("")
+	for _, l := range summary {
+		w.p("// %s", w.goDoc(l, "", ""))
+	}
+	// Every method takes its request, one without fields - InfoRequest - too:
+	// a call is written the same way whatever the method.
+	w.p("func (c *Client) %s(ctx context.Context, req %s) (%s, error) {", c.goName, c.request.name, result)
+	w.p("\treturn invoke(ctx, c, &req, func(r *reply) *%s { return r.%s })", result, c.goName)
+	w.p("}")
+
+	w.p("")
+	w.p("// %s adds %s %s command to the batch. Its outcome is what [Client.%s]", c.goName, article(c.method), c.method, c.goName)
+	w.p("// would have returned; read it with [Pending.Result] once the batch is sent.")
+	w.p("func (b *Batch) %s(req %s) *Pending[%s] {", c.goName, c.request.name, result)
+	w.p("\treturn add(b, &req, func(r *reply) (%s, error) { return deref(r.%s), nil })", result, c.goName)
+	w.p("}")
+}
+
+// methodSummary turns the request's comment, "PublishRequest publishes data
+// into a channel.", into the method's, "Publish publishes data into a
+// channel."
+func methodSummary(c command) []string {
+	doc := slices.Clone(c.request.doc)
+	if len(doc) > 0 && strings.HasPrefix(doc[0], c.request.name+" ") {
+		doc[0] = c.goName + strings.TrimPrefix(doc[0], c.request.name)
+		return doc
+	}
+	return []string{fmt.Sprintf("%s calls the %s method of the Centrifugo server API.", c.goName, c.method)}
+}
