@@ -91,6 +91,64 @@ func TestCloseDrainsAutoBatch(t *testing.T) {
 	}
 }
 
+// Close called concurrently: each call waits for the call in progress.
+func TestCloseConcurrently(t *testing.T) {
+	f := newFake(t)
+	f.delay = 150 * time.Millisecond
+	c := newClient(t, f)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data}); err != nil {
+			t.Errorf("the call in progress: %v", err)
+		}
+	}()
+	waitForRequests(t, f, 1)
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			if err := c.Close(t.Context()); err != nil {
+				t.Errorf("Close: %v", err)
+			}
+			select {
+			case <-done:
+			default:
+				t.Error("a Close returned before the call in progress ended")
+			}
+		})
+	}
+	wg.Wait()
+}
+
+// Close waits for a batch in flight whose callers all left.
+func TestCloseWaitsForAbandonedBatch(t *testing.T) {
+	f := newFake(t)
+	f.delay = 150 * time.Millisecond
+	c := newClient(t, f, autoBatch(gocent.AutoBatch{MaxInFlight: 1}))
+	go func() { _, _ = c.Publish(t.Context(), gocent.PublishRequest{Channel: "news", Data: data}) }()
+	waitForRequests(t, f, 1)
+	// Queued behind the first call, sent as a batch when it ends at 150 ms,
+	// and left by their callers at 200 ms, while the batch is in flight.
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Go(func() {
+			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			defer cancel()
+			_, _ = c.Publish(ctx, gocent.PublishRequest{Channel: "news", Data: data})
+		})
+	}
+	wg.Wait()
+	if f.inFlight.Load() != 1 {
+		t.Fatalf("%d requests in progress after the callers left, want the batch", f.inFlight.Load())
+	}
+	if err := c.Close(t.Context()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if n := f.inFlight.Load(); n != 0 {
+		t.Errorf("Close returned with %d requests in progress", n)
+	}
+}
+
 // When its context ends first, Close returns, and the call in progress goes
 // on.
 func TestCloseContextEnds(t *testing.T) {

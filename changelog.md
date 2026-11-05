@@ -1,7 +1,7 @@
 # v4.0.0
 
 A new major version for Centrifugo v6, rewritten to the
-[Centrifugo server SDK specification](https://github.com/centrifugal/gocent/blob/master/spec.md) 0.3, which the SDKs for other
+[Centrifugo server SDK specification](https://github.com/centrifugal/gocent/blob/master/spec.md) 0.4, which the SDKs for other
 languages share: every API method, the current HTTP API endpoints, typed
 errors, retries, automatic batching, tokens, the proxy handlers and the
 endpoints client SDKs call. Requires Go 1.27 and works with any Centrifugo v6
@@ -122,8 +122,9 @@ the connect proxy, which Centrifugo PRO newer than v6.10.2 reads.
   `APIMethod()` on every request gives the method name alone.
 * **Tokens.** The new `token` package signs connection and subscription
   tokens with Centrifugo's claims - `token.Connection`, `token.Subscription` -
-  with HMAC, RSA, ECDSA or Ed25519 keys (Ed25519 with Centrifugo's
-  `ed25519_public_key` since v6.10.2, or through JWKS) - Centrifugo PRO's
+  with HMAC, RSA (2048 bits or more), ECDSA or Ed25519 keys (Ed25519 with
+  Centrifugo's `ed25519_public_key` since v6.10.2, or through JWKS) -
+  Centrifugo PRO's
   claims included: capabilities, labels,
   server-side tag filters - and `token.Handlers` serves the
   endpoints the `getToken` callbacks of client SDKs call: `{"token": ...}`,
