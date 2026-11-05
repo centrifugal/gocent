@@ -116,6 +116,11 @@ func TestErrors(t *testing.T) {
 		}(),
 		"nil RSA":   func() error { _, err := Connection(RSA(nil), ConnectionClaims{NoExpiry: true}); return err }(),
 		"nil ECDSA": func() error { _, err := Connection(ECDSA(nil), ConnectionClaims{NoExpiry: true}); return err }(),
+		"RSA under 2048 bits": func() error {
+			rk, _ := rsa.GenerateKey(rand.Reader, 1024) //nolint:gosec // the small key refused
+			_, err := Connection(RSA(rk), ConnectionClaims{NoExpiry: true})
+			return err
+		}(),
 		"P-224": func() error {
 			ek, _ := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
 			_, err := Connection(ECDSA(ek), ConnectionClaims{NoExpiry: true})

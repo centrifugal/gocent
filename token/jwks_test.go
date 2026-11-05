@@ -97,6 +97,10 @@ func TestJWKSRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	small, err := rsa.GenerateKey(rand.Reader, 1024) //nolint:gosec // the small key refused
+	if err != nil {
+		t.Fatal(err)
+	}
 	ok := Ed25519(priv).WithKeyID("a")
 	for name, keys := range map[string][]Key{
 		"no keys":           nil,
@@ -106,6 +110,7 @@ func TestJWKSRefuses(t *testing.T) {
 		"invalid Ed25519":   {Ed25519(ed25519.PrivateKey{1}).WithKeyID("b")},
 		"unsupported curve": {ECDSA(p224).WithKeyID("c")},
 		"nil RSA":           {RSA(nil).WithKeyID("d")},
+		"RSA under 2048":    {RSA(small).WithKeyID("e")},
 		"zero key":          {Key{}.WithKeyID("z")},
 	} {
 		if _, err := JWKS(keys...); err == nil {

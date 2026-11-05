@@ -3,6 +3,7 @@ package token
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"errors"
 	"sync"
 	"testing"
@@ -51,6 +52,10 @@ func TestAPIClaims(t *testing.T) {
 func TestAPIErrors(t *testing.T) {
 	key := apiKey(t, "api-1")
 	exp := time.Now().Add(time.Minute)
+	small, err := rsa.GenerateKey(rand.Reader, 1024) //nolint:gosec // the small key refused
+	if err != nil {
+		t.Fatal(err)
+	}
 	for name, c := range map[string]struct {
 		key    Key
 		claims APIClaims
@@ -58,6 +63,7 @@ func TestAPIErrors(t *testing.T) {
 		"HMAC":                 {HMAC([]byte("k")).WithKeyID("h"), APIClaims{Audience: "a", ExpiresAt: exp}},
 		"no key ID":            {apiKey(t, ""), APIClaims{Audience: "a", ExpiresAt: exp}},
 		"zero key":             {Key{}, APIClaims{Audience: "a", ExpiresAt: exp}},
+		"RSA under 2048 bits":  {RSA(small).WithKeyID("r"), APIClaims{Audience: "a", ExpiresAt: exp}},
 		"no audience or scope": {key, APIClaims{Issuer: "app", ExpiresAt: exp}},
 		"no expiry":            {key, APIClaims{Audience: "a"}},
 		"empty scope":          {key, APIClaims{Scope: []string{""}, ExpiresAt: exp}},

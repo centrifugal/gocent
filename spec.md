@@ -5,7 +5,7 @@ Centrifugo, as opposed to a client SDK in browsers and apps - provides, and
 how it behaves. gocent is its reference implementation: where this document
 and gocent disagree, it is a bug in one of them, to be fixed in both.
 
-**Version 0.3 (draft)**, 2026-11-03. Changes: section 18.
+**Version 0.4 (draft)**, 2026-11-05. Changes: section 18.
 
 The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119. Each
 section states its rules with the reasons for them, so that a case the spec
@@ -244,6 +244,12 @@ call.
   - Whichever way a request times out, the SDK MUST report it as the
     language's one timeout error (gocent: `errors.Is(err,
     context.DeadlineExceeded)`).
+- A successful reply is read whole, with no bound on its size: its size is
+  what the request asked for - a history `limit`, a large channel's
+  presence - from the application's own Centrifugo, and the call's deadline
+  bounds how long reading it takes. A caller wanting smaller replies asks for
+  less, or pages (section 3.8). Only the bodies of other statuses, which may
+  come from anything between, are bounded (above).
 - Replies are decoded as strictly as requests are encoded: case-sensitive
   names. A reply which is not JSON of the reply's shape - an HTML page, say -
   is a `DecodeError`.
@@ -516,8 +522,8 @@ calls in progress - requests on their way, calls queued for an automatic batch,
 batches whose callers left, and a broadcast retry's attempt in flight: the
 retry stops at its next attempt, which fails with `Closed`. It returns the
 deadline's error if that ends first, leaving the rest to go on, and MAY be
-called again. With its default HTTP client the SDK then closes idle
-connections.
+called again, concurrently too: each call waits the same way. With its default
+HTTP client the SDK then closes idle connections.
 
 ### 3.7 Results as JSON
 
@@ -868,9 +874,14 @@ out.
 
 - `max_in_flight` (0 disables): below it, every call is sent at once, alone.
   There are no timers: nothing ever waits for a batch to fill.
-- At the cap, calls queue first in, first out, and when a request finishes
-  all those queued go out as one batch, at most `max_batch_size`. Requests in
-  flight never exceed `max_in_flight`. A larger `max_in_flight` batches less:
+- At the cap, calls queue first in, first out. `max_in_flight` counts HTTP
+  requests, an automatic batch being one, never the calls they carry.
+- When a request finishes and calls are queued, its slot passes straight to
+  one batch: the calls at the head of the queue, at most `max_batch_size`,
+  skipping those whose callers left. Calls beyond it stay queued, in order,
+  for the next request to finish; nothing else sends a batch. So requests in
+  flight never exceed `max_in_flight`, and a call is sent no later than any
+  call queued after it. A larger `max_in_flight` batches less:
   above the calls a process has in flight at once it never batches, and just
   below it batches calls one at a time, only limiting them. Docs SHOULD say
   who it is for - processes making many calls at once - and how to choose the
@@ -966,14 +977,18 @@ writer derives their partition from the channel the same way.
 | Key | Algorithm | Centrifugo option |
 |---|---|---|
 | HMAC secret, not empty | HS256 | `client.token.hmac_secret_key` |
-| RSA private key | RS256 | `client.token.rsa_public_key` |
+| RSA private key, 2048 bits or more | RS256 | `client.token.rsa_public_key` |
 | ECDSA private key | ES256 / ES384 / ES512 for P-256 / P-384 / P-521; other curves refused | `client.token.ecdsa_public_key` |
 | Ed25519 private key | EdDSA | `client.token.ed25519_public_key` (Centrifugo v6.10.2+), or JWKS |
 
 A key MAY carry a key ID, written as the token header's `kid`. A JWT is
 `base64url(header).base64url(claims).base64url(signature)`, unpadded, header
 `{"alg": ..., "typ": "JWT", "kid": ...}` (`kid` only when set). ECDSA
-signatures are `r || s`, each padded to the curve's size. Payloads in the
+signatures are `r || s`, each padded to the curve's size. An RSA key under
+2048 bits is refused as an ECDSA key on another curve is, at the same point
+and with the same error: Go and Centrifugo refuse keys under 1024 bits
+outright, and 2048 is the floor of NIST SP 800-131A and the default of key
+generators. The same keys sign API tokens (section 11.4). Payloads in the
 claims - `info`, `data`, `meta` - follow section 3.4; one which is not valid
 JSON fails at signing.
 
@@ -1128,7 +1143,12 @@ deadline ending with the proxy's timeout) and returning a result or an error.
 - Binary mode (`binary_encoding`): payloads arrive in the `b64` fields and
   `encoding` is `"binary"`; a result MAY answer with either form.
 - Docs MUST say to keep proxy endpoints reachable by Centrifugo only: anyone
-  else could claim any user.
+  else could claim any user. They SHOULD name the ways: a network only
+  Centrifugo reaches; a secret header Centrifugo adds to every proxy request
+  (the proxy's `static_headers` option) which the application checks before
+  the handler; TLS where the traffic leaves a trusted network. The handler's
+  body limit and the deadline it passes on are its own share of the
+  protection.
 
 ## 15. Testing an SDK
 
@@ -1173,6 +1193,12 @@ An SDK MUST have:
   shorter; a broadcast retry's attempt ends at the earlier of
   `attempt_timeout` and the call's deadline; a `<method>_all` page ends at
   `page_timeout`, where the SDK takes one, and zero is refused.
+- Shutdown (section 3.6): `close` waits for a call in progress and refuses
+  calls made after it; calls queued for an automatic batch are still sent,
+  and a batch whose callers left is waited for; a broadcast retry stops at
+  its next attempt with `Closed`; when `close`'s deadline ends first it
+  returns that error and the call goes on; `close` called again, and
+  concurrently, waits the same way.
 - Automatic batching under random concurrency, with a race detector where the
   language has one.
 - Integration tests of every OSS method against the `centrifugo/centrifugo`
@@ -1230,9 +1256,10 @@ Generation and the client:
 - [ ] Request and result types generated from the protos, never edited by
   hand, checked current in CI; protos from a released tag, or a commit of
   Centrifugo's default branch which the changelog names (2).
-- [ ] Field names on the wire exactly the protos', case-sensitive; zero
-  values not sent, a set but empty message included; presence wrappers
-  optional and sent whenever set, even empty (2).
+- [ ] Field names on the wire exactly the protos', case-sensitive (2).
+- [ ] Zero values not sent; a set but empty message not sent either, unless
+  it is a presence wrapper; a presence wrapper optional, and sent whenever
+  set, even empty (2).
 - [ ] `BoolValue` fields optional, with a helper; PRO-only methods marked
   (2).
 - [ ] Safe for concurrent use; creation validates all it can, with
@@ -1290,8 +1317,8 @@ Payloads and validation:
 - [ ] A request the client can tell is wrong is not sent: `InvalidRequest`
   for what cannot be encoded, a "Required." field without a value, and the
   `data` rules; no other Centrifugo rule copied (3.5).
-- [ ] `close` refuses new calls with `Closed` and waits for those in progress
-  (3.6).
+- [ ] `close` refuses new calls with `Closed` and waits for those in progress;
+  called again or concurrently, it waits the same way (3.6).
 - [ ] Results encoded as JSON the language's way give wire names, and errors
   in them as `{code, message}` (3.7).
 - [ ] `<method>_all` for every paged method, in the language's iterator,
@@ -1334,9 +1361,10 @@ Broadcast, batch, automatic batching, commands, observability:
   capping it (7.3).
 - [ ] Automatic batching, below `max_in_flight`: every call sent at once,
   alone; no timers, nothing waits for a batch to fill (8).
-- [ ] At the cap: calls queue first in, first out, and go out together when
-  a request finishes, at most `max_batch_size`; requests in flight never
-  exceed `max_in_flight` (8).
+- [ ] At the cap: calls queue first in, first out; a finished request's slot
+  passes to one batch of the queue's head, at most `max_batch_size`, the
+  rest waiting for the next; `max_in_flight` counts HTTP requests, never
+  exceeded (8).
 - [ ] Refused at creation: negative values, `max_batch_size` without
   `max_in_flight`, `max_batch_size` of 1 (8).
 - [ ] An automatic batch goes to `/api/batch` with `parallel: true`, even
@@ -1359,8 +1387,8 @@ Broadcast, batch, automatic batching, commands, observability:
 Tokens, endpoints, shared poll, proxy:
 
 - [ ] Keys, algorithms and JWTs as in 11.1; ECDSA curves other than P-256,
-  P-384 and P-521 refused; a payload claim which is not valid JSON fails
-  signing (11.1).
+  P-384 and P-521 refused, and RSA keys under 2048 bits; a payload claim which
+  is not valid JSON fails signing (11.1).
 - [ ] An expiry required, "never" chosen explicitly, contradictions refused;
   `channels` and `subs` not both; the `profile` claim; docs on
   `meta` (11.2).
@@ -1381,10 +1409,10 @@ Tokens, endpoints, shared poll, proxy:
   (12).
 - [ ] Shared poll signatures as in 13; an expiry required, never chosen
   explicitly, integers and durations refused (13).
-- [ ] Proxy handlers: `POST` only, body limit, exactly one of result, error
-  and disconnect, 500 for anything else; docs: keep them internal, the code
-  ranges, the reason's limit and what an empty response means per proxy
-  (14).
+- [ ] Proxy handlers: `POST` only, body limit, exactly one of result, error and
+  disconnect, 500 for anything else; docs: keep them internal and the ways to,
+  the code ranges, the reason's limit and what an empty response means per
+  proxy (14).
 - [ ] Proxy payloads as in 3.4; binary mode: payloads in the `b64` fields
   (14).
 - [ ] The tests of 15, and the vectors of 15.1 (15).
@@ -1437,6 +1465,37 @@ here; the sections they belong to say what they are for.
 | Proxy handlers | bodies up to 16 MiB, configurable | 14 |
 
 ## 18. Changes
+
+### 0.4 - 2026-11-05
+
+Rules:
+
+- RSA keys under 2048 bits are refused, as an ECDSA key on another curve is
+  (11.1).
+- `close` called concurrently waits as a second call does (3.6).
+- Docs SHOULD name the ways to keep proxy endpoints internal: a network of
+  their own, a secret header from the proxy's `static_headers`, TLS (14).
+- Tests of shutdown (15).
+
+Made explicit, as gocent and the SDKs already do it:
+
+- How automatic batching drains its queue: a finished request's slot passes
+  to one batch of the queue's head, at most `max_batch_size`, the rest
+  waiting for the next; `max_in_flight` counts HTTP requests (8).
+- A successful reply is read whole, unbounded, and why (3.2).
+- The checklist line for empty messages, split so that it cannot be read as
+  sending them (15.2).
+
+#### Upgrading an SDK from 0.3
+
+1. **RSA keys** (11.1): refuse a key under 2048 bits wherever a wrong ECDSA
+   curve is refused, with the same error, for connection, subscription and
+   API tokens; a test with a 1024-bit key.
+2. **Shutdown** (3.6, 15): the tests of section 15's shutdown line, and
+   concurrent `close` calls waiting alike.
+3. **Proxy docs** (14): name the ways to keep the endpoints internal.
+4. **Automatic batching** (8): check that the queue drains as section 8 now
+   says; no change is expected.
 
 ### 0.3 - 2026-11-03
 

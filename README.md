@@ -12,7 +12,7 @@ go get github.com/centrifugal/gocent/v4
 ```
 
 No dependencies. gocent implements the
-[Centrifugo server SDK spec](spec.md) 0.3, as its reference implementation.
+[Centrifugo server SDK spec](spec.md) 0.4, as its reference implementation.
 
 | | Version |
 |---|---|
@@ -394,15 +394,18 @@ mux.Handle("/centrifugo/subscribe", h.Subscribe(
 Return a result to accept the request, a `*proxy.Error` to reject it with an
 error the client receives, or a `*proxy.Disconnect` to close the client's
 connection; any other error fails the request, and goes to `OnError` to be
-logged. Keep proxy endpoints reachable
-by Centrifugo only: whoever can call them can claim to be any user. See the
+logged. Keep proxy endpoints reachable by Centrifugo only: whoever can call
+them can claim to be any user. Put them on a network only Centrifugo reaches,
+or check a secret header Centrifugo adds with the proxy's `static_headers`
+option before the handler, and use TLS where the traffic leaves a trusted
+network. See the
 [package docs](https://pkg.go.dev/github.com/centrifugal/gocent/v4/proxy).
 
 ## Tokens
 
 The `token` package issues the JWTs Centrifugo authenticates clients with -
 connection and subscription tokens, with Centrifugo's claims, signed with
-HMAC, RSA, ECDSA or Ed25519 - and serves the endpoints the `getToken`
+HMAC, RSA (2048 bits or more), ECDSA or Ed25519 - and serves the endpoints the `getToken`
 callbacks of client SDKs call:
 
 ```go

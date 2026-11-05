@@ -37,9 +37,20 @@ func HMAC(secret []byte) Key {
 	}}
 }
 
+// minRSABits is the smallest RSA key signing tokens: the floor of NIST SP
+// 800-131A, and the default of key generators.
+const minRSABits = 2048
+
 // RSA returns a key signing with RS256 and private, whose public key is
-// Centrifugo's client.token.rsa_public_key.
+// Centrifugo's client.token.rsa_public_key. A key under 2048 bits signs
+// nothing: signing returns an error, as with an ECDSA key on another curve.
 func RSA(private *rsa.PrivateKey) Key {
+	if private != nil && private.N.BitLen() < minRSABits {
+		bits := private.N.BitLen()
+		return Key{alg: "RS256", sign: func([]byte) ([]byte, error) {
+			return nil, fmt.Errorf("token: RSA key of %d bits, want %d or more", bits, minRSABits)
+		}}
+	}
 	k := Key{alg: "RS256", sign: func(data []byte) ([]byte, error) {
 		if private == nil {
 			return nil, errors.New("token: nil RSA key")
